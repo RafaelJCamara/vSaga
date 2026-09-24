@@ -42,7 +42,7 @@ public sealed class ChildSagaFinishedOptInTests : IAsyncDisposable
             .AddSaga<TestRiskyChildSaga, TestRiskyChildState>());
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
         _reader = _provider.GetRequiredService<ISagaSummaryReader>();
         _log = _provider.GetRequiredService<ISagaEventLogStore>();
 

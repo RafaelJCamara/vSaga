@@ -4,6 +4,25 @@
 seam that `MiddlewarePipelineTransport` already wraps every transport in, so it works identically
 across all six adapters with no adapter-specific code. It is opt-in and never registered by default.
 
+**Including the in-memory transport** — which is the local-dev and `SagaTestHarness` path most people
+reach for first, and which is the one adapter this did *not* cover until recently: it registered its
+bare transport directly rather than through the pipeline, so `AddVSagaChaos` appeared to take effect
+and then silently injected nothing. `AddVSagaInMemoryTransport()` now applies the same unconditional
+wrap every broker adapter does (see [`transports/index.md`](transports/index.md#the-two-decorators-every-adapter-is-wrapped-in)),
+so faults configured against it genuinely fire. Note what that does and does not buy you: an
+in-memory drop or duplicate is real, but the in-memory transport dispatches synchronously on the
+publisher's own call stack, so an injected `Delay` blocks the publisher rather than modelling a slow
+broker.
+
+**Inside `SagaTestHarness`, reach for `Drop` and `Duplicate` — not `Delay`.** Passing `AddVSagaChaos`
+through the harness's `configureServices` works now that the in-memory transport is wrapped. But the
+harness registers its `FakeTimeProvider` as the ambient `TimeProvider` *before* `configureServices`
+runs, so `AddVSagaChaos`'s own `TryAddSingleton(TimeProvider.System)` is a no-op and the delay
+middlewares await the fake clock. The only thing that advances that clock is `AdvanceTimeByAsync`,
+which the test cannot reach while it is still awaiting the publish that triggered the delay — so an
+enabled `Delay` hangs the test rather than slowing it. `Drop` and `Duplicate` touch no clock and behave
+there exactly as they do against a broker. See [`testing.md`](testing.md).
+
 **.NET-only, today.** There is no TypeScript equivalent of `VSaga.Chaos` — fault injection is a .NET
 runtime-only capability; a Node participant in a mixed-runtime saga cannot delay, drop, or duplicate its
 own messages this way.
@@ -23,8 +42,9 @@ defaults.
 ## Fault types
 
 - **Delay** — waits a random `[MinDelay, MaxDelay]` before the publish/delivery continues through the
-  rest of the pipeline. Driven by an injected `TimeProvider` (not `Task.Delay` directly), so unit tests
-  use `FakeTimeProvider` instead of actually waiting.
+  rest of the pipeline. Driven by an injected `TimeProvider` (not `Task.Delay` directly), so a unit test
+  that drives the middleware directly uses `FakeTimeProvider` instead of actually waiting — but see the
+  `SagaTestHarness` caveat above, where nothing is in a position to advance that clock.
 - **Drop** — outbound sets `OutboundMessageContext.Suppressed` (the publish call returns normally;
   nothing ever arrives, simulating an unroutable or lost publish). Inbound sets
   `InboundMessageContext.Suppressed` **and acks the delivery itself** before returning without calling

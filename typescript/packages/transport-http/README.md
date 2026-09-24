@@ -58,6 +58,20 @@ app.listen(8080);
   own body parser consume it first (each adapter's README covers the details for that framework).
 - No broker underneath: a reply is fed straight back into whichever local subscriber the reply's
   message type resolves to.
+- **Ack model.** `ack()` drops the delivery. `nack(requeue: false)` has no dead-letter queue to go
+  to, so it logs at error with the message type, correlation id and message id — that log line _is_
+  the dead-letter record, and the saga's own state timeout is the safety net.
+  `nack(requeue: true)` depends on where the delivery came from:
+  - a message this transport enqueued itself — a same-process `publish()`/`send()` that resolved to
+    a local subscriber, or a `200` synchronous reply to our own outbound POST — is genuinely
+    re-dispatched, byte-identically (same message id, same headers, `x-vsaga-delivery-attempt`
+    included), up to 5 requeues per delivery before it is dropped with an error log;
+  - a message that arrived as an **inbound HTTP request** cannot be redelivered by this process: it
+    is dispatched inline and the peer's response is decided by that dispatch's outcome, so the peer
+    that POSTed it owns the retry. Both nack forms log at error and drop.
+
+  Settling is idempotent in both cases: first settle wins, so an `ack()` followed by a `nack()` on
+  an unwinding path redelivers nothing. Matches `VSaga.Transport.Http` on .NET exactly.
 
 ## License
 

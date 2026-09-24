@@ -133,10 +133,11 @@ public sealed class SagaOrchestrator<TState>(
                 state.Status = SagaStatus.Failed;
                 await PersistAsync(state, isNew: false, expectedVersion, cancellationToken);
 
-                // production-readiness.md §6/§8.18's terminal-status wiring missed this third site --
-                // HandleStepSuccessAsync and RecordTimeoutOutcomeAsync are the other two -- because this
-                // dead-letter path predates it. Recorded only after the persist above actually commits,
-                // same reasoning as the other two sites.
+                // production-readiness.md §6/§8.18's terminal-status wiring missed this site because the
+                // dead-letter path predates it. The rule is that every path reaching a terminal status
+                // records the duration; the other three are RecordTimeoutOutcomeAsync,
+                // HandleStepFailureAsync, and PersistAndFinalizeStepSuccessAsync. Recorded only after the
+                // persist above actually commits, same reasoning as those three.
                 VSagaDiagnostics.SagasFailed.Add(1, new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));
                 VSagaDiagnostics.SagaDuration.Record((timeProvider.GetUtcNow() - state.CreatedAtUtc).TotalMilliseconds,
                     new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));

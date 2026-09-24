@@ -31,10 +31,12 @@ internal sealed class SagaCorrelationModel<TState> where TState : SagaState, new
     }
 
     /// <summary>
-    /// Called by every <c>CorrelateBy(messageKey, stateKey)</c>. Registers as this message type's key
-    /// extractor only when <paramref name="stateProperty"/> is the property <c>CorrelateOn</c> declared —
-    /// for a saga that never called <c>CorrelateOn</c>, or that targets a different property, this is a
-    /// no-op and <c>CorrelateBy</c>'s original behaviour (assign onto state, nothing else) is unchanged.
+    /// Called by every <c>CorrelateBy(messageKey, stateKey)</c>. For a saga that never called
+    /// <c>CorrelateOn</c> this is a no-op and <c>CorrelateBy</c>'s original behaviour (assign onto state,
+    /// nothing else) is unchanged. Once <c>CorrelateOn</c> has been declared it becomes exclusive:
+    /// <paramref name="stateProperty"/> must be that same property, and only one extractor may be
+    /// registered per message type. Both violations throw <see cref="SagaDefinitionException"/> from the
+    /// saga definition's constructor rather than failing later at correlation time.
     /// </summary>
     public void RegisterExtractor<TMessage, TKey>(Type messageType, PropertyInfo stateProperty, Func<TMessage, TKey> messageKey)
     {

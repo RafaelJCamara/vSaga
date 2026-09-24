@@ -136,7 +136,7 @@ public sealed class SagaOrchestratorConcurrencyRedeliveryTests
         var messageIdB = Guid.NewGuid().ToString("N");
 
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<ConcurrencyRedeliveryRaceSaga>().SagaType;
         var snapshotStore = provider.GetRequiredService<ISagaSnapshotStore<ConcurrencyRedeliveryRaceSagaState>>();
         var eventLog = provider.GetRequiredService<ISagaEventLogStore>();
@@ -317,7 +317,7 @@ public sealed class SagaOrchestratorConcurrencyRedeliveryTests
         var messageIdB = Guid.NewGuid().ToString("N");
 
         await using var provider = await BuildDeferredProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var snapshotStore = provider.GetRequiredService<ISagaSnapshotStore<DeferredRaceSagaState>>();
         var outboxStore = provider.GetRequiredService<ISagaOutboxStore>();
 
@@ -407,7 +407,7 @@ public sealed class SagaOrchestratorConcurrencyRedeliveryTests
         var messageIdB = Guid.NewGuid().ToString("N");
 
         await using var provider = await BuildDeferredProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<DeferredConcurrencyRaceSaga>().SagaType;
         var snapshotStore = provider.GetRequiredService<ISagaSnapshotStore<DeferredRaceSagaState>>();
 

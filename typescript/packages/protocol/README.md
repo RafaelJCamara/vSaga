@@ -1,8 +1,10 @@
 # @vsaga/protocol
 
 vSaga's wire contract for Node participants: message declarations, the envelope shape, header
-names, the routing-key convention, and the PascalCase body codec. Zero runtime dependencies —
-every other `@vsaga/*` package builds on this one.
+names, the routing-key convention, and the PascalCase body codec. It pulls in no third-party
+runtime code — its single `dependencies` entry is `@types/node`, which ships type declarations
+only (the `postbuild` step references them from the emitted `.d.ts`, so consumers resolve them
+without declaring it themselves). Every other `@vsaga/*` package builds on this one.
 
 Wire-compatible with `dotnet/src/VSaga.Abstractions` — a message published from a .NET saga and
 consumed here (or vice versa) round-trips without translation.

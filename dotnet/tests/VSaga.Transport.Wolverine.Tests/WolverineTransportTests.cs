@@ -1,3 +1,4 @@
+using VSaga.Abstractions.Diagnostics;
 using VSaga.Abstractions.Transport;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -170,5 +171,45 @@ public sealed class WolverineTransportTests : IAsyncLifetime
         Assert.Equal(headers[MessageEnvelope.CausationIdHeader], received.Headers[MessageEnvelope.CausationIdHeader]);
         Assert.Equal("PostShipmentChoreography", received.Headers[MessageEnvelope.ParentSagaTypeHeader]);
         Assert.Equal(headers[MessageEnvelope.ParentCorrelationIdHeader], received.Headers[MessageEnvelope.ParentCorrelationIdHeader]);
+    }
+
+    /// <summary>
+    /// §6/production-readiness §8.17: `traceparent`/`tracestate` deliberately carry no `x-vsaga-`
+    /// prefix -- interoperability with a non-vSaga consumer is the point -- which is precisely why
+    /// the sibling four-header test above cannot stand in for this one: anything that filters inbound
+    /// headers by that prefix, or that reserves the W3C names for its own instrumentation, drops
+    /// these two silently while the prefixed four sail through. This transport carries them inside
+    /// WireEnvelope.Headers rather than Wolverine's own Envelope.Headers (see WireEnvelope's doc
+    /// comment), so the full 55-character W3C traceparent and a multi-vendor tracestate must come
+    /// back byte-identical -- not merely present, since a truncated or re-formatted traceparent still
+    /// "exists" but breaks trace stitching.
+    /// </summary>
+    [Fact]
+    public async Task PublishAndSubscribe_PropagatesTraceParentAndTraceStateHeaders()
+    {
+        var correlationId = Guid.NewGuid();
+        var tcs = new TaskCompletionSource<ReceivedMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var subscription = new TransportSubscription("TestConsumer4", [typeof(PingMessage)], "vsaga.wolverine.test.trace-queue");
+        using var handle = await _transport.SubscribeAsync(subscription, async (received, ct) =>
+        {
+            tcs.TrySetResult(received);
+            await received.Ack.AckAsync(ct);
+        });
+
+        var headers = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [VSagaDiagnostics.TraceParentHeader] = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            [VSagaDiagnostics.TraceStateHeader] = "vendor1=value1,vendor2=value2",
+        };
+
+        await _transport.PublishAsync(new PingMessage("traced"), new MessageEnvelope(correlationId, Guid.NewGuid().ToString("N"), headers));
+
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+        Assert.Same(tcs.Task, completed);
+
+        var received = await tcs.Task;
+        Assert.Equal(headers[VSagaDiagnostics.TraceParentHeader], received.Headers[VSagaDiagnostics.TraceParentHeader]);
+        Assert.Equal(headers[VSagaDiagnostics.TraceStateHeader], received.Headers[VSagaDiagnostics.TraceStateHeader]);
     }
 }

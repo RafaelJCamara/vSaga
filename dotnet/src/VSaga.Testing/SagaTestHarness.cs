@@ -50,7 +50,7 @@ public sealed class SagaTestHarness<TDefinition, TState> : IAsyncDisposable
         configureServices?.Invoke(services);
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
         Saga = _provider.GetRequiredService<TDefinition>();
 
         // SagaTimeoutDispatcherHostedService and SagaOutboxDispatcherHostedService are both

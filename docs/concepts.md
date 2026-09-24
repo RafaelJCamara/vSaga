@@ -63,7 +63,8 @@ that's just a stored value for dashboard search/traceability with no effect on m
 **Business-key correlation** (`CorrelateOn`) arms a second, fallback lookup. A saga definition that
 calls `CorrelateOn(s => s.OrderId)` in its constructor declares `OrderId` as its business key; any
 `CorrelateBy` on that same property additionally registers as that message type's business-key
-extractor. When an inbound message's transport correlation id doesn't match an existing instance, the
+extractor — and a `CorrelateBy` on any *other* property is a startup failure, not a no-op (see below).
+When an inbound message's transport correlation id doesn't match an existing instance, the
 orchestrator falls back to looking up `(SagaType, BusinessKey)` before concluding the message starts a
 new instance. This matters for messages that legitimately arrive under a *different* transport
 correlation id than the saga's own — the canonical case is a child saga's own domain events, or any
@@ -71,6 +72,18 @@ integration where an upstream system mints its own message ids but carries a sha
 identifier (an order number, an external reference) that both sides agree on. A saga that never calls
 `CorrelateOn` is unaffected: every `CorrelateBy` call site keeps its original behaviour (assign onto
 state, nothing else), and the fallback lookup never runs.
+
+**Arming a business key makes `CorrelateOn`'s property exclusive — and the enforcement is a hard
+startup failure.** Once `CorrelateOn` has been declared, a `CorrelateBy` targeting any *other* state
+property throws `SagaDefinitionException` from the saga definition's own constructor, so the saga
+never registers and the host never starts. The trap is that the offending call looks entirely
+reasonable: a saga with `CorrelateOn(s => s.OrderId)` that also writes
+`CorrelateBy(m => m.ShipmentId, s => s.ShipmentId)` on a later step does not quietly skip registering
+that second extractor — it does not construct at all. Assign non-key fields with a plain
+`.Then((ctx, msg) => ctx.Saga.ShipmentId = msg.ShipmentId)` instead. Two sibling throws come from the
+same guard: a second `CorrelateBy` for the same message type, and a second `CorrelateOn`. All three
+are constructor-time, which is the point — a mis-declared business key is caught at registration
+rather than surfacing as a mysterious correlation miss in production.
 
 The business key is persisted as `SagaState.BusinessKey`, with a **partial unique index** scoped to
 `(SagaType, BusinessKey) WHERE BusinessKey IS NOT NULL` — partial so sagas that never set a business
@@ -128,10 +141,13 @@ itself is sequential by construction.
 the saga out of that state within the delay, `SagaOrchestrator.HandleTimeoutAsync` fires the
 configured recovery step (typically `.Compensate().TransitionTo(...).Finalize(...)`). A timeout is
 only ever scheduled on a **real transition into** a state (`ToState != FromState`) — a self-transition
-(the gathering-state pattern below) neither cancels nor reschedules the pending timeout, and nothing
-ever schedules a timeout for transitioning into a saga's own *initial* state, since nothing transitions
-into it. If a milestone needs a timeout and is reached via a self-transition from the initiating event,
-give it its own distinct state so the transition is real.
+(the gathering-state pattern below) neither cancels nor reschedules the pending timeout. That rule is
+the whole rule: there is no special case for a saga's *initial* state, so a step that transitions back
+into it from some other state is a real transition and does schedule its timeout. What the rule does
+rule out is the common initiating shape — the opening event is dispatched while the instance is
+already *in* the initial state, so a step that "stays" there is a self-transition and hangs no timeout
+off itself. If a milestone needs a timeout and is reached via a self-transition from the initiating
+event, give it its own distinct state so the transition is real.
 
 **One timeout covers a whole gather.** In a fan-out/join (see below), returning the gathering state
 from `TransitionTo(Func<TState, State<TState>>)` is a self-transition, so an arriving branch does not
@@ -156,9 +172,18 @@ is last. See [`saga-dsl.md`](saga-dsl.md) for the exact signatures.
 ## Sub-saga composition
 
 A saga can start another saga as a step (`ISagaContext.StartChildAsync`), and a child can notify its
-own parent (`ISagaContext.NotifyParentAsync`) or have the engine notify on its behalf when it fails or
-times out (`ChildSagaFinished`, published by the engine itself, not through `ISagaContext`). See
-[`saga-dsl.md`](saga-dsl.md) for the method reference and
+own parent (`ISagaContext.NotifyParentAsync`) or have the engine notify on its behalf when it fails,
+or when it times out *and the timeout goes terminal* (`ChildSagaFinished`, published by the engine
+itself, not through `ISagaContext`).
+
+**`ChildSagaFinished` is not a general "the child stopped waiting" signal.** The failure path publishes
+it unconditionally, but the timeout path publishes only when the timeout step resolved a final status —
+that is, only when the child's `WithTimeout(...)` declared `.Finalize(...)`. A child whose timeout
+merely compensates and transitions tells its parent nothing at all. A parent must therefore not treat
+`ChildSagaFinished` as its recovery mechanism: give the state it waits in its own `WithTimeout(...)`,
+which is the only recovery that does not depend on how the child's DSL happens to be written.
+
+See [`saga-dsl.md`](saga-dsl.md) for the method reference and
 [`design/sub-saga-composition.md`](design/sub-saga-composition.md) for the full design history,
 including two races found in production traffic (a child that reports back from the very step that
 started it can race ahead of the parent's own not-yet-persisted transition) that are pinned by tests

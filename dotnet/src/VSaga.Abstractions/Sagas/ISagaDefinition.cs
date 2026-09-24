@@ -17,7 +17,11 @@ public interface ISagaDefinition<TState> where TState : SagaState, new()
     /// <summary>All message CLR types this saga has a handler registered for, in any state.</summary>
     IReadOnlyCollection<Type> MessageTypes { get; }
 
-    /// <summary>Message types that can start a brand new saga instance (registered under <see cref="InitialStateName"/>).</summary>
+    /// <summary>
+    /// Message types that can start a brand new saga instance. An orchestrated definition derives these
+    /// from the handlers registered under <see cref="InitialStateName"/>; a choreographed one from its
+    /// explicit <c>StartsNewInstance()</c> declarations, which are not tied to any state.
+    /// </summary>
     IReadOnlyCollection<Type> InitiatingMessageTypes { get; }
 
     bool CanInitiate(Type messageType);

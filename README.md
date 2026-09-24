@@ -159,7 +159,7 @@ dotnet/                  .NET 10 solution — engine, persistence, six transport
 typescript/
   packages/               The TypeScript SDK: @vsaga/protocol, participant, transport-http,
                            transport-rabbitmq, express, fastify, nestjs
-  samples/                Runnable Node participants — notification-participant swaps into the
+  samples/                A runnable Node participant — notification-participant swaps into the
                            OrderProcessing stack via docker-compose.node.yml
   dashboard-web/          Angular 21 SPA for the dashboard (its own toolchain — see
                            docs/typescript-participants.md)

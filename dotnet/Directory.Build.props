@@ -32,7 +32,11 @@
          debugger lands on the exact commit that built the package, not a "no source available"
          wall. PublishRepositoryUrl/EmbedUntrackedSources are Source Link's own required pair;
          ContinuousIntegrationBuild strips local machine paths from the PDB, which only matters (and
-         is only reliably true) in CI, not an arbitrary local `dotnet pack`. -->
+         is only reliably true) in CI, not an arbitrary local `dotnet pack`. Source Link itself needs
+         no PackageReference: the SDK has shipped it in-box since .NET 8, and the standalone
+         Microsoft.SourceLink.GitHub package drags in Microsoft.Build.Tasks.Git 8.0.0, whose advisory
+         (GHSA-23fw-v26w-5fgq) NuGetAudit turns into NU1902 and TreatWarningsAsErrors turns into a
+         restore failure across every project. -->
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
@@ -52,10 +56,6 @@
 
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <None Include="$(MSBuildThisFileDirectory)icon.png" Pack="true" PackagePath="" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- Versioning: MinVer derives the version from git tags, with no version string committed

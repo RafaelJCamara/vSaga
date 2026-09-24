@@ -7,6 +7,11 @@ design record rather than rewritten past tense throughout; treat every "would"/"
 describing intent that was in fact carried out, not a still-open proposal, unless a progress note says
 otherwise.
 
+**Status correction (one workstream is incomplete): the release half of §3 never shipped.** There is no
+`release.yml`, nothing is published to nuget.org or npm, and tagging/publishing are manual. That does not
+contradict the §8 claim above — `release.yml` was only ever described in §3's prose and was never given a
+numbered §8 item — which is exactly why the gap is invisible from here. See the status note at the end of §3.
+
 Written to be picked up cold in a later session: every claim about the current codebase carries a
 `file:line` so it can be re-checked rather than trusted. Line numbers were accurate at commit
 `e5ff42f` and will drift — re-grep rather than trusting them.
@@ -140,6 +145,21 @@ does not exist.
 New `.github/workflows/release.yml` on `v*` tags reusing `ci.yml`'s steps, then `dotnet pack -c
 Release` and `npm publish`. Add `permissions: contents: read` and a concurrency group, neither of
 which `ci.yml` has. Secrets needed: `NUGET_API_KEY`, `NPM_TOKEN`.
+
+> **Status note: this paragraph did not ship, and the rest of §3 did.** `.github/workflows/` still
+> contains only `ci.yml` — no `release.yml`, no `dotnet pack` or `npm publish` step anywhere in CI, and
+> neither `NUGET_API_KEY` nor `NPM_TOKEN` is referenced by any workflow. The *metadata* half of packaging
+> landed in full (§8 items 1–3: MinVer with `MinVerTagPrefix=v`, the two 0.0.0 pack guards,
+> `fetch-depth: 0` on all three CI jobs, npm `publishConfig`/metadata), so a local `dotnet pack` against a
+> tag works — but the automation and the actual publish do not exist, which
+> `dotnet/Directory.Build.props`'s own MinVer comment ("no automated release workflow exists yet, so
+> tagging and publishing are manual") and `docs/getting-started.md`'s "vSaga has not yet cut a tagged
+> release" note both acknowledge. The deferral reads as deliberate; what hides it is structural.
+> `release.yml` lives only in this section's prose and was never assigned a numbered §8 item, so §8's
+> "all 19 items in §8 are committed" is literally true while workstream 1 — packaging — is still
+> incomplete. Read §1's "**Packaging publishes for real** to nuget.org and npm, tag-triggered" as intent
+> that has not yet been carried out, and `dotnet add package VSaga.Core` (this section's stated goal) as
+> not yet working.
 
 **Confirm names before the first publish** — the `VSaga.*` NuGet prefix and `@vsaga` npm scope are
 claimed publicly and hard to undo.
@@ -369,6 +389,17 @@ Five places assert the *opposite* of the new behaviour and must be corrected: `R
   `VSaga.Core/ServiceCollectionExtensions.cs:51-56`. Because there is exactly one declared key per
   saga type, resolution tolerates `TimeoutSignal` (`StepDefinition.cs:57-61`, a synthetic message with
   no extractor registered) automatically — it simply returns null, same as any unregistered type.
+
+> **Status note: choreography has no design record of its own, and this section builds on it anyway.**
+> `ChoreographedSagaDefinition<TState>`, `ChoreographyEventBuilder` and `ChoreographySagaModel` are
+> treated above as first-class things to extend (and were — `CorrelateOn` and `TryGetCorrelationKey` are
+> on `dotnet/src/VSaga.Core/Dsl/ChoreographedSagaDefinition.cs`), but no document under `docs/design/`
+> ever designed them. The only narrative record is
+> [`docs/history/choreographed-saga-support.md`](../history/choreographed-saga-support.md), plus the
+> reference material in [`docs/concepts.md`](../concepts.md) and
+> [`docs/saga-dsl.md`](../saga-dsl.md). Read that history file first if you are picking this up cold and
+> wondering where the choreography half came from; nothing here is a substitute for it, and no
+> retroactive design doc for it exists or is planned.
 
 ### 5.3 The orchestrator change
 

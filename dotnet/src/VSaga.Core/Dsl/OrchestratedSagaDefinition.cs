@@ -76,7 +76,9 @@ public abstract class OrchestratedSagaDefinition<TState> : ISagaDefinition<TStat
     /// <c>CorrelateBy</c> targeting the same property additionally registers as that message type's key
     /// extractor, letting the orchestrator find this saga by business key when the transport correlation
     /// id misses. A saga that never calls this is unaffected — every existing <c>CorrelateBy</c> call site
-    /// keeps its original behaviour (assign onto state, nothing else).
+    /// keeps its original behaviour (assign onto state, nothing else). Calling it is exclusive, though: a
+    /// <c>CorrelateBy</c> targeting any other property then throws <see cref="SagaDefinitionException"/>
+    /// from this constructor, as does declaring <c>CorrelateOn</c> a second time.
     /// </summary>
     protected void CorrelateOn(Expression<Func<TState, object?>> selector)
     {

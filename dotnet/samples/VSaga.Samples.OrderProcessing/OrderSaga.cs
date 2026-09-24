@@ -23,6 +23,12 @@ public sealed class OrderSagaState : SagaState
 /// simulates a hung gateway to exercise it). This is the reference orchestrated saga the whole v1 slice
 /// is validated against, and — since the "Parallel fan-out and join" pass — the sample demonstration of
 /// that primitive too: reserving inventory and charging payment no longer wait on each other.
+/// <para>
+/// Caveat, on the HTTP track only (Transport:Provider=Http): the HTTP adapter's delivery model is
+/// synchronous request/response, so the two publishes below become two *blocking* round-trips and the
+/// fan-out is strictly sequential there — the parallelism above is real on every broker-backed adapter,
+/// not on that one. See docs/transports/http.md's "Known, deliberate limitations".
+/// </para>
 /// </summary>
 public sealed class OrderSaga : OrchestratedSagaDefinition<OrderSagaState>
 {

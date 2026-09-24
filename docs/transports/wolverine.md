@@ -14,6 +14,14 @@ owning dispatch to business logic. Full build history and live-verification deta
   Wolverine's own header-to-AMQP-property mapping.
 - **Publish/send** funnel through Wolverine's raw-send primitive (`IDestinationEndpoint.SendRawMessageAsync`)
   against a topic-exchange or default-exchange URI, mirroring `RabbitMqTransport`'s own split.
+- **Routing keys are the raw PascalCase type name, not kebab-case.** This adapter publishes to, and
+  binds queues with, `messageType.Name` verbatim (`OrderApproved`), whereas the RabbitMQ and Brighter
+  adapters kebab-case it (`order-approved`) — onto the same default exchange name, `vsaga.saga.events`.
+  Those two tracks therefore do **not** interoperate on one broker despite looking identically shaped:
+  a mismatched publish is silently unroutable here, since this gateway has no unroutable signal at all
+  (see below). Give each track its own `ExchangeName` if they share a broker, and use the PascalCase
+  form when binding a non-vSaga AMQP consumer to this adapter's exchange. See
+  [`index.md`](index.md#choosing-an-adapter) for the full comparison.
 - **Subscribe** starts a listener on the current node immediately
   (`IEndpointCollection.StartListenerAsync`) — Wolverine's higher-level `RegisterListenerAsync` API
   turned out to be its leader-elected, durability-store-backed dynamic-multi-tenancy machinery, not an

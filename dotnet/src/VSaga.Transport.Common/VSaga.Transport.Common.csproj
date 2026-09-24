@@ -3,7 +3,7 @@
   <!-- Package-specific description for nuget.org search results, overriding Directory.Build.props's
        shared fallback (MSBuild evaluates that file first, so this later value wins). -->
   <PropertyGroup>
-    <Description>Shared building blocks for vSaga's broker-based transport adapters (RabbitMQ, MassTransit, Wolverine, Brighter).</Description>
+    <Description>Shared building blocks for vSaga's transport adapters (RabbitMQ, MassTransit, Wolverine, Brighter, HTTP, in-memory).</Description>
   </PropertyGroup>
 
   <ItemGroup>

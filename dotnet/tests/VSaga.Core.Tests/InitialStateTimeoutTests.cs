@@ -92,7 +92,7 @@ public sealed class InitialStateTimeoutTests
         foreach (var hosted in provider.GetServices<IHostedService>())
             await hosted.StartAsync(CancellationToken.None);
 
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         await transport.PublishAsync(new OpensInstance("ORD-1"), MessageEnvelope.New(Guid.NewGuid()));
 
         var due = await provider.GetRequiredService<ISagaTimeoutStore>()

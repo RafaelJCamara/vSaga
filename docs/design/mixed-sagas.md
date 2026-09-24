@@ -209,6 +209,18 @@ internal interface ISagaContextDeferredPublisher
 }
 ```
 
+**Status note: `ISagaContextDeferredPublisher` survived verbatim; the `DeferredPublish` shape above did
+not, and was deliberately superseded.** `production-readiness.md` §4.3's transactional outbox needed the
+same queue to carry a durable copy of each message, so `DeferredPublish` became a **hybrid** — an outbox
+row (message type name, the full `MessageEnvelope`, the UTF-8 body, the `SendAsync` destination) *plus*
+the thin dispatch closure this section specified. The current shape is at
+`dotnet/src/VSaga.Core/Runtime/SagaContext.cs` (constructed in `QueueAsync`). §4.3 argues why the closure
+had to stay rather than the row replacing it — a pure-bytes `DeferredPublish` would force the inline
+dispatch onto `PublishRawAsync`, which type-erases the message and silently breaks
+`TimeoutDrainTests.cs`'s assertion on `p.Message`. Read that section before assuming the two-field record
+above is still the thing to change. Everything this section says about *when* the queue is drained,
+discarded and cleared is unaffected — only the struct's payload grew.
+
 **`dotnet/src/VSaga.Core/Dsl/StepExecutor.cs`** — clear in the catch, before the backoff delay, so a step being
 replayed from index 0 also discards the side effects it queued but never committed:
 
@@ -334,10 +346,12 @@ This saga never calls `CorrelateOn`, so its `CorrelateBy` below keeps the behavi
 `OrderId` is copied onto state for dashboard search/traceability only, with no effect on how later
 messages are matched to this instance — the `.Then(...)` right after it sets `OrderId` again (alongside
 `Amount`) because nothing here should be assumed to depend on `CorrelateBy` for that. Since
-production-readiness.md §5.1/§5.2 (item 13/14), a saga that *does* call `CorrelateOn` naming the same
+production-readiness.md §5.1–§5.3 (§8 items 13/14), a saga that *does* call `CorrelateOn` naming the same
 property gets a different `CorrelateBy`: it also registers as this message type's business-key
 extractor, and the orchestrator falls back to a business-key lookup when the transport correlation id
-misses.
+misses. (The dual-role `CorrelateBy` is §5.1's API decision and the fallback lookup is §5.3's
+orchestrator change; §5.2 is the `SagaState.BusinessKey` storage shape in between. Earlier drafts of this
+line and of the matching line in `sub-saga-composition.md` cited two different, incomplete pairs.)
 
 ```csharp
 During(Start)

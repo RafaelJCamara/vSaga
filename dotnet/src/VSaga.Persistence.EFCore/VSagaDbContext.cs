@@ -105,6 +105,11 @@ public sealed class VSagaDbContext(DbContextOptions<VSagaDbContext> options) : D
             b.Property(x => x.Version).IsConcurrencyToken();
             b.HasIndex(x => new { x.SagaType, x.Status });
             b.HasIndex(x => new { x.Status, x.UpdatedAtUtc });
+            // The dashboard change poller's once-a-second drain (UpdatedAtUtc > watermark, ordered by
+            // UpdatedAtUtc) — the composite above can't serve it, since its leading column is Status and
+            // the poller filters on none, leaving Postgres a sequential scan over an unbounded table.
+            // Also covers the list endpoint's unfiltered UpdatedAt sort, either direction.
+            b.HasIndex(x => x.UpdatedAtUtc);
             // Resolving a bare correlation id to the saga instance(s) tracking it — the composite key
             // can't serve this, since its leading column is SagaType.
             b.HasIndex(x => x.CorrelationId);
@@ -114,8 +119,8 @@ public sealed class VSagaDbContext(DbContextOptions<VSagaDbContext> options) : D
             // stays effectively empty rather than duplicating the table.
             b.HasIndex(x => new { x.ParentSagaType, x.ParentCorrelationId });
             b.Property(x => x.BusinessKey).HasMaxLength(400);
-            // Partial: only sagas that declare CorrelateOn (a later item) ever have a non-null BusinessKey, and
-            // every saga today leaves it null -- see EfCoreStoreTests for the regression test this protects.
+            // Partial: only sagas that declare CorrelateOn ever have a non-null BusinessKey, and one that
+            // doesn't leaves it null -- see EfCoreStoreTests for the regression test this protects.
             // Unique so two concurrent initiates for the same business key can't both win; the race is resolved
             // by reserving before the step runs, not by catching after it -- see production-readiness.md S5.2.
             b.HasIndex(x => new { x.SagaType, x.BusinessKey })

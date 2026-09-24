@@ -34,6 +34,18 @@ public sealed class SagaListFilter
     /// <summary>Case-insensitive substring match against SagaType and CorrelationId.</summary>
     public string? Search { get; init; }
 
+    /// <summary>
+    /// Keeps only instances whose <see cref="SagaSummary.UpdatedAtUtc"/> is <em>strictly</em> greater
+    /// than this value; null (the default) keeps everything, so existing callers are unaffected.
+    /// <para>
+    /// Strictly-greater, not <c>&gt;=</c>, deliberately: this exists to serve the dashboard's change
+    /// poller, whose watermark is the timestamp of a row it already pushed. With <c>&gt;=</c> that row
+    /// would come back — and be re-pushed — on every subsequent tick, forever. Implementations must
+    /// apply it before sorting and paging so the page/total arithmetic is over the filtered set.
+    /// </para>
+    /// </summary>
+    public DateTimeOffset? UpdatedSince { get; init; }
+
     public int Page { get; init; } = 1;
 
     public int PageSize { get; init; } = 25;

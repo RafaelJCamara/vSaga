@@ -10,10 +10,11 @@ Every saga instance's history is recorded as an append-only sequence of `SagaLog
 /api/sagas/{sagaType}/{correlationId}/timeline`. This is the backing data for the dashboard's Saga
 Map too (see [`dashboard.md`](dashboard.md#saga-map)) — the dashboard reads this log directly rather
 than an OTel backend, so **none of the OTel wiring below is required for the dashboard to work.**
-Entry types include `SagaStarted`, `MessageReceived`, `MessagePublished`/`MessageSent`,
-`StepSucceeded`/`StepFailed`, `CompensationStarted`/`CompensationStepSucceeded`/
-`CompensationStepFailed`, `TimeoutScheduled`/`TimeoutFired`, `ChildSagaStarted`/`ChildSagaFinished`,
-`UnexpectedEvent`, `DeliveryExhausted`, and `SagaCompleted`.
+The full `SagaEntryType` set is `SagaStarted`, `StateEntered`, `MessageReceived`,
+`MessagePublished`/`MessageSent`, `UnexpectedEvent`, `StepStarted`/`StepSucceeded`/`StepFailed`,
+`CompensationStarted`/`CompensationStepSucceeded`/`CompensationStepFailed`,
+`TimeoutScheduled`/`TimeoutFired`/`TimeoutCancelled`, `ManualRetryRequested`,
+`ChildSagaStarted`/`ChildSagaFinished`, `DeliveryExhausted`, `SagaCompleted`, and `SagaCancelled`.
 
 ## Traces
 
@@ -36,9 +37,17 @@ forward on redelivery, so `traceparent` echoes automatically — a retry of the 
 gets a `delivery.attempt` tag on its span rather than a fresh linked span, since it's the same logical
 operation, not a new one.
 
-**A failed step marks its span failed.** The consumer span's status is set to `Error` (with the
-exception recorded) on the failure path, so a trace backend can distinguish a successful hop from one
-that threw without needing to cross-reference the event log.
+**A failed step marks its span failed — but the stack is not on the span.** The failure path calls
+`activity?.SetStatus(ActivityStatusCode.Error, ex.Message)`, so a trace backend can distinguish a
+successful hop from one that threw without cross-referencing the event log. That is all it does: the
+message becomes the status *description*, and there is no `Activity.AddException`/OTel `exception`
+event, so the exception type and stack trace are **not** on the span. They are on the `StepFailed`
+log entry instead (which also records the `traceId`/`spanId` for cross-referencing back) — that entry,
+not the span, is where to look for a stack.
+
+Source and span names, for writing queries: the `ActivitySource` is named `VSaga.Saga`
+(`VSagaDiagnostics.ActivitySourceName`, same string as the meter). The consumer span is named
+`saga.step {SagaType}.{fromState}`; the producer span is named `saga.publish {MessageTypeName}`.
 
 Tag names (`VSagaDiagnostics`): `saga.type`, `saga.kind`, `saga.correlation_id`, `saga.from_state`,
 `saga.to_state`, `delivery.attempt`.
@@ -49,12 +58,29 @@ Meter name `VSaga.Saga` (`VSagaDiagnostics.Meter`):
 
 | Instrument | Kind | Meaning |
 | --- | --- | --- |
-| `vsaga.saga.started` | `Counter<long>` | Incremented when a saga instance is created. |
+| `vsaga.saga.started` | `Counter<long>` | Incremented after a new saga's **first step succeeds** and its persist commits — not when the instance is created. See the caveat below. |
 | `vsaga.saga.completed` | `Counter<long>` | Incremented when a saga reaches `Completed`. |
 | `vsaga.saga.failed` | `Counter<long>` | Incremented when a saga reaches `Failed`. |
 | `vsaga.saga.step.retries` | `Counter<long>` | Incremented per step-level retry attempt. |
 | `vsaga.saga.step.duration` | `Histogram<double>` (ms) | Duration of one step's execution. |
-| `vsaga.saga.duration` | `Histogram<double>` (ms) | Total saga duration, recorded at the two places a saga reaches a terminal status (`HandleStepSuccessAsync`, `RecordTimeoutOutcomeAsync`) as `now - state.CreatedAtUtc`. |
+| `vsaga.saga.duration` | `Histogram<double>` (ms) | Total saga duration as `now - state.CreatedAtUtc`, recorded on every path that reaches a terminal status — step success, step failure, timeout outcome, and redelivery-exhausted dead-lettering alike. |
+
+**`started` counts first-step successes, not instance creations — so don't subtract to get in-flight.**
+`SagasStarted` is incremented only under `if (isNew)` in `PersistAndFinalizeStepSuccessAsync`, i.e.
+after the first step has succeeded *and* its persist has committed. The failure path
+(`HandleStepFailureAsync`) increments `SagasFailed` but never `SagasStarted`. A brand-new saga whose
+very first step throws is therefore counted in `vsaga.saga.failed` without ever having been counted in
+`vsaga.saga.started`, and `started - (completed + failed)` is **not** a valid in-flight estimate —
+it can even go negative. Use a store-backed `COUNT(*) WHERE Status = Running` for that number (see the
+next note). (`needsInsert`, the flag selecting `PersistAsync`'s insert-vs-update branch, is unrelated
+to newness for metrics purposes; `isNew` is tracked separately.)
+
+**Every terminal path records `vsaga.saga.duration`.** The rule is the terminal status, not any one
+method: `RecordDeliveryExhaustedAsync`, `RecordTimeoutOutcomeAsync`, `HandleStepFailureAsync`, and
+`PersistAndFinalizeStepSuccessAsync` (the tail of `HandleStepSuccessAsync`) each record it once their
+own persist has committed — recording before the commit would emit a phantom duration for a transition
+a lost concurrency race then discarded. Treat that list as the current sites rather than an exhaustive
+contract; the rule is what holds.
 
 **No `vsaga.saga.running` gauge — deliberately.** An `UpDownCounter` for "how many sagas are running
 right now" was considered and rejected: it's process-local and non-idempotent, so a restart, a
@@ -83,10 +109,17 @@ This is the complete OTLP wiring — add the `OpenTelemetry.Exporter.OpenTelemet
 pass `configureTracing`/`configureMetrics` delegates as shown. `AddVSagaOpenTelemetry` itself stays
 unopinionated about exporters (no dependency on any specific one, and it never assumes a collector is
 present) — the two delegates are exactly where an app plugs in whatever exporter(s) it wants (OTLP,
-Jaeger, Prometheus, console, ...). The method also calls `Sdk.SetDefaultTextMapPropagator(...)` with
-the W3C trace-context propagator, matching the wire format described above — set explicitly so a host
-process (or another library) calling `SetDefaultTextMapPropagator` first with something else (e.g. B3)
-can't silently disagree with what vSaga actually puts on the wire.
+Jaeger, Prometheus, console, ...). The method also calls `Sdk.SetDefaultTextMapPropagator(...)` with a
+`CompositeTextMapPropagator` of `TraceContextPropagator` **and** `BaggagePropagator`. The trace-context
+half matches the wire format described above — set explicitly so a host process (or another library)
+calling `SetDefaultTextMapPropagator` first with something else (e.g. B3) can't silently disagree with
+what vSaga actually puts on the wire.
+
+**Note the side effect:** `SetDefaultTextMapPropagator` is process-wide, so calling
+`AddVSagaOpenTelemetry` enables OTel **baggage** propagation for the whole host — not just for vSaga's
+own spans — and overrides any propagator the host had already configured. vSaga itself neither reads
+nor writes baggage; the `BaggagePropagator` is there so composing with other instrumentation doesn't
+silently drop it.
 
 ```csharp
 services.AddVSagaOpenTelemetry();   // sources registered, propagator set — no exporter without the delegates above

@@ -10,10 +10,16 @@ live-verification detail: [`../history/transport-adapter-brighter.md`](../histor
 
 - **No default exchange for a direct send.** Brighter's `RmqMessageProducer` is bound to exactly one
   exchange for its whole lifetime and always publishes using the message's `Topic` as the routing key —
-  there's no "default/nameless exchange" concept anywhere in the package. `SendAsync` instead binds the
-  target queue's own name as an *extra* routing key on the shared topic exchange, so a direct send
-  publishes with that routing key — mechanically different route, functionally identical outcome to
-  RabbitMQ's own adapter.
+  there's no "default/nameless exchange" concept anywhere in the package. The substitute is a routing
+  key per queue, and it is **`SubscribeAsync` that establishes it, not `SendAsync`**: a subscription
+  binds its queue to the kebab-cased routing key of every declared message type *plus* one more — the
+  queue's own `QueueNameHint` (`.Append(new RoutingKey(subscription.QueueNameHint))`). `SendAsync` then
+  merely publishes with the destination as the routing key; it declares and binds nothing. Mechanically
+  a different route from RabbitMQ's default-exchange send, functionally identical outcome — with one
+  consequence the ordering makes unavoidable: **a send to a queue that never subscribed is silently
+  dropped**, not bound on demand. Nothing has bound that routing key, and this gateway has no
+  `mandatory` flag to return the message (see below), so the publish reports success and the message
+  is gone.
 - **One queue, many routing keys, needs a lower-level primitive.** The higher-level `Subscription`/
   `IAmAChannelFactory` API exposes only a single `RoutingKey` per subscription — `RmqMessageConsumer`'s
   own constructor (which takes a `RoutingKeys` collection) is used directly instead.

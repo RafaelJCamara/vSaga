@@ -8,15 +8,23 @@ judged against this one's shape.
   `vsaga.saga.events`); `PublishAsync` routes by a kebab-cased derivation of the message-type name as
   the routing key (`IRoutingKeyConvention`, e.g. `OrderApproved` -> `order-approved`) — not the literal
   PascalCase type name, which matters if you're binding a non-vSaga AMQP consumer directly to the
-  exchange. `SendAsync`
+  exchange. Kebab-case is *this* adapter's convention (Brighter's matches it; the Wolverine and
+  MassTransit adapters publish the raw PascalCase name onto the same default exchange name — see
+  [`index.md`](index.md#choosing-an-adapter) before assuming the advice above carries across).
+  `SendAsync`
   targets AMQP's default (nameless) exchange directly, routing key = destination — a genuine direct
   send, not a topic-exchange trick. `SubscribeAsync` declares one durable queue per consumer, bound to
   the shared exchange for each declared message type, plus a dead-letter exchange/queue pair
   (`DeadLetterExchangeName`, default `vsaga.dlx`) before returning.
-- **Delivery.** `AsyncEventingBasicConsumer`, one channel per `SubscribeAsync` call,
-  `BasicQosAsync(prefetchCount: 32)` — deliveries on one subscription are handled one at a time,
-  sequentially, awaited to completion before the next. (This matters when tuning chaos-injected delay
-  against this adapter — see [`../chaos.md`](../chaos.md#running-it-against-the-sample).)
+- **Delivery.** `AsyncEventingBasicConsumer`, one channel per `SubscribeAsync` call, with
+  `BasicQosAsync(prefetchCount: 32)`. Deliveries on one subscription are handled one at a time,
+  sequentially, awaited to completion before the next — but **prefetch is not what makes that true**.
+  Prefetch bounds how many unacked messages the broker will push at the consumer; dispatch concurrency
+  is a separate knob, `ConsumerDispatchConcurrency`, which `RabbitMqConnectionManager` never sets and
+  which RabbitMQ.Client 7.x documents as defaulting to `1` ("set to a value greater than one to enable
+  concurrent processing"). Raising `prefetchCount` therefore buys throughput-smoothing, not
+  parallelism; a sequential consumer is what you still have. (This matters when tuning chaos-injected
+  delay against this adapter — see [`../chaos.md`](../chaos.md#running-it-against-the-sample).)
 - **Unroutable-publish detection.** Publisher confirms plus `mandatory: true` are both enabled, so a
   broker-side nack or an unroutable message throws `MessageTransportPublishException.IsUnroutable`
   instead of vanishing silently. The most common way to hit this: publishing a message type nothing has

@@ -17,7 +17,7 @@ Seven npm packages under `typescript/packages/`, each independently published as
 
 | Package | Purpose |
 | --- | --- |
-| [`@vsaga/protocol`](../typescript/packages/protocol/README.md) | The wire contract: envelope shape, header names, routing-key convention, PascalCase body codec. Zero runtime dependencies — every other package builds on this one. |
+| [`@vsaga/protocol`](../typescript/packages/protocol/README.md) | The wire contract: envelope shape, header names, routing-key convention, PascalCase body codec. Pulls in no third-party runtime code — its one `dependencies` entry is `@types/node`, which ships types only — and every other package builds on this one. |
 | [`@vsaga/participant`](../typescript/packages/participant/README.md) | Framework-agnostic participant runtime: dispatch, duplicate-delivery dedup, ack/nack, reply-with-causation, topology reporting. |
 | [`@vsaga/transport-rabbitmq`](../typescript/packages/transport-rabbitmq/README.md) | An `amqplib`-backed `MessageTransport`, wire-compatible with [`VSaga.Transport.RabbitMQ`](transports/rabbitmq.md). |
 | [`@vsaga/transport-http`](../typescript/packages/transport-http/README.md) | A brokerless `MessageTransport` over plain HTTP, wire-compatible with [`VSaga.Transport.Http`](transports/http.md). |
@@ -72,6 +72,21 @@ four envelope headers (plus `traceparent`/`tracestate` — see
   loop.
 - A handler may legitimately reply zero times (e.g. a compensating command that must be an idempotent
   no-op).
+
+The two handler outcomes above — resolve → ack, throw → nack — are what the default `autoAck: true`
+does. Under `autoAck: false` the runtime settles nothing either way and the handler owns it via
+`ctx.ack()`/`ctx.nack()`, for work that must only acknowledge after an external commit. (The
+unknown-type and duplicate acks are not gated on it: those are the runtime's own, and happen before
+any handler runs.) See [that package's README](../typescript/packages/participant/README.md) for the
+option itself.
+
+What `ctx.nack(true)` then *means* is the transport's call. On `@vsaga/transport-rabbitmq` it is a
+broker requeue. On `@vsaga/transport-http` there is no broker, so it genuinely redelivers only for
+messages that transport enqueued itself — a same-process publish, or a `200` synchronous reply — while
+a message that arrived as an inbound HTTP request logs at error and drops, because the retry belongs
+to the peer that POSTed it. `ctx.nack(false)` always logs at error and drops there: that transport has
+no dead-letter queue, so the log line is the dead-letter record. See
+[`transports/http.md`](transports/http.md#ack-nack-and-requeue).
 
 ## Topology reporting
 

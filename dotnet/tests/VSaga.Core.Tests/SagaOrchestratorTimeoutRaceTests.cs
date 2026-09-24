@@ -99,7 +99,7 @@ public sealed class SagaOrchestratorTimeoutRaceTests
         var correlationId = Guid.NewGuid();
 
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
 
         // Drive the saga to AwaitingPayment (a real reservation happened, so a losing timeout's
         // Compensate() would have something concrete to release) and schedule/claim its timeout,
@@ -165,7 +165,7 @@ public sealed class SagaOrchestratorTimeoutRaceTests
         var correlationId = Guid.NewGuid();
 
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
 
         await transport.PublishAsync(new OrderSubmitted("ORD-RACE-2", 30m), MessageEnvelope.New(correlationId));
         await transport.PublishAsync(new InventoryReserved(), MessageEnvelope.New(correlationId));

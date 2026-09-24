@@ -11,10 +11,13 @@ namespace VSaga.Transport.Wolverine;
 /// <summary>
 /// Wolverine-based transport: publishes/sends via Wolverine's raw-send primitive
 /// (<c>IDestinationEndpoint.SendRawMessageAsync</c>) over WolverineFx.RabbitMQ, and listens via a Wolverine
-/// RabbitMQ queue endpoint registered dynamically at runtime (<c>IWolverineRuntime.RegisterListenerAsync</c>)
-/// per <see cref="SubscribeAsync"/> call. Every message — regardless of its real VSaga message type — is
-/// carried as the single marker type <see cref="RawEnvelope"/> as far as Wolverine's own handler-discovery
-/// is concerned; see that type's doc comment for why. This deliberately never touches Wolverine's own saga
+/// RabbitMQ queue endpoint started immediately on this node (<c>IEndpointCollection.StartListenerAsync</c>)
+/// per <see cref="SubscribeAsync"/> call. Do not "simplify" that to <c>IWolverineRuntime</c>'s
+/// <c>RegisterListenerAsync</c>: it is leader-elected, durability-store-backed multi-tenancy machinery that
+/// activates a listener on *some* node within a cluster-assignment cycle (default 30s), which left every
+/// test hanging past its timeout (docs/transports/wolverine.md). Every message — regardless of its real
+/// VSaga message type — is carried as the single marker type <see cref="RawEnvelope"/> as far as
+/// Wolverine's own handler-discovery is concerned; see that type's doc comment for why. This deliberately never touches Wolverine's own saga
 /// support, transactional inbox/outbox, or message-type-based handler routing for business messages —
 /// VSaga.Core's SagaOrchestrator already owns retry, redelivery, compensation, and dedup (see
 /// IMessageTransport's doc comment).

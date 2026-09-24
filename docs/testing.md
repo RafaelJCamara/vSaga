@@ -29,10 +29,10 @@ harness.AssertPublished<ChargePayment>(m => m.Amount == 42m);
 | `TimeProvider` | `FakeTimeProvider` (get) | Drives `AdvanceTimeByAsync` below; also injected as the ambient `TimeProvider` for anything the saga/engine reads time from. |
 | `CorrelationId` | `Guid` (get) | Defaults to a fresh random id; set via `Given`. |
 | `Services` | `IServiceProvider` (get) | The harness's own container, for resolving anything else you need directly. |
-| `Given` | `Given(Guid correlationId)` | Sets the correlation id subsequent `When`/assert calls act on. |
-| `WhenAsync<TMessage>` | `WhenAsync<TMessage>(TMessage message, CancellationToken ct = default)` | Publishes under the current correlation id and waits for full processing (the in-memory transport dispatches synchronously). |
-| `AdvanceTimeByAsync` | `AdvanceTimeByAsync(TimeSpan duration, CancellationToken ct = default)` | Advances the fake clock and processes any timeouts now due for this saga type — the deterministic alternative to a real wait. |
-| `RetryAsync` | `RetryAsync(CancellationToken ct = default)` | Redrives the last recorded technical failure (a `StepFailed` entry) against the saga's current, unchanged state — the narrower of the dashboard Retry button's two redrive shapes (see [`dashboard.md`](dashboard.md#manual-retry)). Only valid while the saga is `Failed` **with** a `StepFailed` entry; throws otherwise. It does **not** implement the dashboard's other shape — resetting to initial state and replaying the starting message for a business failure/timeout with no `StepFailed` entry — so it can't stand in for a test of that path. |
+| `Given` | `SagaTestHarness<TDefinition, TState> Given(Guid correlationId)` | Sets the correlation id subsequent `When`/assert calls act on. Fluent — returns the harness. |
+| `WhenAsync<TMessage>` | `Task<SagaTestHarness<TDefinition, TState>> WhenAsync<TMessage>(TMessage message, CancellationToken ct = default) where TMessage : notnull` | Publishes under the current correlation id and waits for full processing (the in-memory transport dispatches synchronously). Fluent. |
+| `AdvanceTimeByAsync` | `Task<SagaTestHarness<TDefinition, TState>> AdvanceTimeByAsync(TimeSpan duration, CancellationToken ct = default)` | Advances the fake clock and processes any timeouts now due for this saga type — the deterministic alternative to a real wait. Fluent. |
+| `RetryAsync` | `Task<SagaTestHarness<TDefinition, TState>> RetryAsync(CancellationToken ct = default)` | Fluent. Redrives the last recorded technical failure (a `StepFailed` entry) against the saga's current, unchanged state — the narrower of the dashboard Retry button's two redrive shapes (see [`dashboard.md`](dashboard.md#manual-retry)). Only valid while the saga is `Failed` **with** a `StepFailed` entry; throws otherwise. It does **not** implement the dashboard's other shape — resetting to initial state and replaying the starting message for a business failure/timeout with no `StepFailed` entry — so it can't stand in for a test of that path. |
 | `FindStateAsync` | `Task<TState?> FindStateAsync(CancellationToken ct = default)` | Raw snapshot lookup. |
 | `GetTimelineAsync` | `Task<IReadOnlyList<SagaLogEntry>> GetTimelineAsync(CancellationToken ct = default)` | Raw timeline lookup. |
 | `GetPublished` | `IReadOnlyList<object> GetPublished()` | Every message published so far, across every correlation id this harness has touched (publish and send both). |
@@ -45,6 +45,9 @@ harness.AssertPublished<ChargePayment>(m => m.Amount == 42m);
 
 ## Notes
 
+- `Given`/`WhenAsync`/`AdvanceTimeByAsync`/`RetryAsync` all return the harness (the async three as a
+  `Task<...>`), which is what lets the example above chain `.Given(...).WhenAsync(...)` in one
+  expression. The assertion and lookup members do not — they return what they assert or read.
 - `WhenAsync` relies on the in-memory transport's synchronous dispatch, so there is no need to poll or
   wait after publishing — by the time `WhenAsync` returns, the saga has fully processed the message
   (including any chain of self-published messages the in-memory transport dispatches recursively).
@@ -55,6 +58,14 @@ harness.AssertPublished<ChargePayment>(m => m.Amount == 42m);
   it inherits their single-process, non-durable characteristics — this is a unit-testing tool, not a
   substitute for the live `docker compose` verification this repo's own history
   (see [`history/`](history/)) leans on for anything envelope/header/timing-sensitive.
+- Chaos fault injection reaches the harness — `new SagaTestHarness<TDefinition, TState>(s => s.AddVSagaChaos(...))`
+  — now that `VSaga.Transport.InMemory` is wrapped in the middleware pipeline like every other adapter.
+  Two caveats. Enabling `Delay` **hangs the test**: the delay middlewares await this same
+  `FakeTimeProvider`, and the only thing that advances it is `AdvanceTimeByAsync`, which the test cannot
+  reach while it is awaiting the publish that triggered the delay. `Drop` and `Duplicate` are safe.
+  Separately, `WhenAsync` publishes through the bare transport, so an outbound fault never disturbs the
+  test's own stimulus — inbound faults and the saga's own publishes do go through the full pipeline.
+  See [`chaos.md`](chaos.md).
 - `SagaTimeoutDispatcherHostedService` and `SagaOutboxDispatcherHostedService` — the production
   crash-recovery pollers — are deliberately never started here. Both are driven by a `PeriodicTimer`
   built against this same `FakeTimeProvider`, so `AdvanceTimeByAsync` would otherwise wake their

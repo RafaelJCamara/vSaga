@@ -147,6 +147,11 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
             query = query.Where(s => s.Kind == kind);
         if (!string.IsNullOrWhiteSpace(filter.SagaType))
             query = query.Where(s => string.Equals(s.SagaType, filter.SagaType, StringComparison.Ordinal));
+        // Strictly greater-than — see SagaListFilter.UpdatedSince. Applied before ApplySort below, so
+        // the materialized list this pages over (and reports Count from) is the filtered set, matching
+        // the EF provider's filter-then-count-then-page order exactly.
+        if (filter.UpdatedSince is { } updatedSince)
+            query = query.Where(s => s.UpdatedAtUtc > updatedSince);
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
             var search = filter.Search;

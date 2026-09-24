@@ -36,7 +36,7 @@ public sealed class ParallelFanOutJoinTests : IAsyncDisposable
             .AddSaga<TestTerminalJoinSaga, TerminalJoinState>());
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
 
         foreach (var hosted in _provider.GetServices<IHostedService>())
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();

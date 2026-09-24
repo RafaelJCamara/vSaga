@@ -1,7 +1,7 @@
 {
   "name": "@vsaga/protocol",
   "version": "0.1.0",
-  "description": "vSaga wire contract: envelope, headers, routing-key convention, PascalCase body codec. Zero runtime dependencies.",
+  "description": "vSaga wire contract: envelope, headers, routing-key convention, PascalCase body codec. No third-party runtime dependencies.",
   "license": "MIT",
   "author": "Rafael Camara",
   "homepage": "https://github.com/RafaelJCamara/vSaga/tree/main/typescript/packages/protocol#readme",

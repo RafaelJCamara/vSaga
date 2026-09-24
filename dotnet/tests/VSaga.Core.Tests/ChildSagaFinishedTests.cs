@@ -46,7 +46,7 @@ public sealed class ChildSagaFinishedTests : IAsyncDisposable
             .AddSaga<TestImmediatelyFailingChildSaga, TestImmediatelyFailingChildState>());
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
         _reader = _provider.GetRequiredService<ISagaSummaryReader>();
         _log = _provider.GetRequiredService<ISagaEventLogStore>();
 
@@ -300,7 +300,7 @@ public sealed class ChildSagaFinishedTests : IAsyncDisposable
         foreach (var hosted in provider.GetServices<IHostedService>())
             await hosted.StartAsync(CancellationToken.None);
 
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var reader = provider.GetRequiredService<ISagaSummaryReader>();
 
         var parentId = Guid.NewGuid();

@@ -121,7 +121,7 @@ public sealed class SagaOrchestratorBusinessKeyRaceTests
         var correlationIdB = Guid.NewGuid();
 
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<BusinessKeyRaceSaga>().SagaType;
         var snapshotStore = provider.GetRequiredService<ISagaSnapshotStore<BusinessKeyRaceSagaState>>();
         var eventLog = provider.GetRequiredService<ISagaEventLogStore>();
@@ -180,7 +180,7 @@ public sealed class SagaOrchestratorBusinessKeyRaceTests
         var correlationIdB = Guid.NewGuid();
 
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<BusinessKeyRaceSaga>().SagaType;
         var snapshotStore = provider.GetRequiredService<ISagaSnapshotStore<BusinessKeyRaceSagaState>>();
 

@@ -32,7 +32,7 @@ public sealed class ChoreographyFanOutJoinTests : IAsyncDisposable
         services.AddVSagaEngine(o => o.AddSaga<TestFanOutChoreography, FanOutState>());
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
         _saga = _provider.GetRequiredService<TestFanOutChoreography>();
 
         foreach (var hosted in _provider.GetServices<IHostedService>())

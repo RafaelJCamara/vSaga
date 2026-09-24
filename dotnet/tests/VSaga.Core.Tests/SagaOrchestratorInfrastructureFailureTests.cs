@@ -70,7 +70,7 @@ public sealed class SagaOrchestratorInfrastructureFailureTests
     public async Task InfrastructureFailure_ThatStopsRecurring_RedeliversAndSucceeds()
     {
         await using var provider = await BuildProviderAsync(failuresBeforeSuccess: 1, maxDeliveryAttempts: 5);
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var correlationId = Guid.NewGuid();
 
         // Single await: the redelivery happens synchronously/recursively through the in-memory
@@ -96,7 +96,7 @@ public sealed class SagaOrchestratorInfrastructureFailureTests
     {
         // Fails one more time than the redelivery cap allows, so recovery never happens within budget.
         await using var provider = await BuildProviderAsync(failuresBeforeSuccess: 3, maxDeliveryAttempts: 2);
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var correlationId = Guid.NewGuid();
 
         await transport.PublishAsync(new OrderSubmitted("ORD-INFRA-2", 9m), MessageEnvelope.New(correlationId));
@@ -202,7 +202,7 @@ public sealed class SagaOrchestratorInfrastructureFailureTests
         foreach (var hosted in provider.GetServices<IHostedService>())
             await hosted.StartAsync(CancellationToken.None);
 
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<ExhaustedBusinessKeySaga>().SagaType;
         var snapshotStore = provider.GetRequiredService<ISagaSnapshotStore<ExhaustedBusinessKeySagaState>>();
 

@@ -31,7 +31,7 @@ public sealed class TimeoutDrainTests : IAsyncDisposable
         services.AddVSagaEngine(o => o.AddSaga<TimeoutDrainTestSaga, TimeoutDrainTestState>());
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
         _saga = _provider.GetRequiredService<TimeoutDrainTestSaga>();
 
         foreach (var hosted in _provider.GetServices<IHostedService>())
@@ -196,7 +196,7 @@ public sealed class TimeoutDrainTests : IAsyncDisposable
             await hosted.StartAsync(CancellationToken.None);
 
         var correlationId = Guid.NewGuid();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var saga = provider.GetRequiredService<NudgingTimeoutDrainTestSaga>();
 
         await transport.PublishAsync(new BeginDrainTest("ORD-DRAIN-RACE"), MessageEnvelope.New(correlationId));

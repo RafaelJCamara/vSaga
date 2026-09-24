@@ -65,6 +65,60 @@ on `HttpTransportOptions`, so it isn't independently tunable today) and falling
 back — on timeout only — to the same deferred-to-a-background-pump path a captured reply already uses:
 a `202` now, dispatched once the gate frees, lossless rather than a long block.
 
+## Ack, nack, and requeue
+
+`HttpInboundDispatcher` also owns [`../design/http-based-sagas.md`](../design/http-based-sagas.md)'s
+§4.4 ack model. With no broker underneath it, a requeue has exactly one place it could go — the same
+in-process local-dispatch channel — and whether it is honoured turns on one question: **can a
+redelivery reproduce the original delivery exactly?**
+
+- **Yes for a local dispatch and for a synchronous reply.** A same-process `PublishAsync`/
+  `PublishRawAsync` that resolved to a local subscriber, and a `200` reply captured off one of our own
+  outbound POSTs, both arrive through `EnqueueLocalDelivery` and get a real implementation:
+  `AckAsync` drops, `NackAsync(requeue: true)` genuinely re-enqueues onto that same channel, and
+  `NackAsync(requeue: false)` logs at error and drops (no dead-letter queue exists here by design, so
+  an error log carrying type/correlation/message id *is* the dead-letter record). Requeue is honest on
+  these paths because the redelivered copy differs from the original in nothing but time — same body,
+  the very same headers dictionary instance, same deferred-never-inline dispatch, landing back exactly
+  where the first copy came from.
+- **No for a genuine inbound HTTP request.** That delivery gets `CreateInboundRequestAck`, where
+  `AckAsync` drops and **both** nack forms log at error and drop. It is inseparable from the request
+  carrying it: it is dispatched inline under the ambient `SyncReplyCollector`, and the status and body
+  the peer receives are decided by that dispatch's own outcome. A re-enqueued copy would run later off
+  the pump with no collector installed and the response already written — so the handler's reply
+  publish, the entire point of an inbound request on this transport, would find nothing to capture it
+  and throw unroutable instead. That is a different, reply-less delivery wearing the original's name,
+  not a redelivery of it. The peer that POSTed the message owns its retry; this process cannot ask for
+  one. The same ack context is deliberately used for the copy the gate-acquire timeout defers to the
+  pump, even though that copy *does* land on the channel: letting gate contention silently decide
+  whether a nack means "redeliver" or "drop" would be worse than one flat rule.
+
+Both contexts settle idempotently behind an `Interlocked` guard, so a handler that acks and then nacks
+in a `finally`, or nacks twice down two unwinding paths, can never enqueue the same message twice —
+first settle wins.
+
+**Requeue chains are capped at `HttpInboundDispatcher.MaxRequeueAttempts` (5).** The count rides on
+each successive delivery's ack context rather than in a header, deliberately: that is what keeps a
+redelivered copy byte-identical to its original, `x-vsaga-delivery-attempt` included. The cap is also
+genuinely necessary, because it bounds something no other counter does — `SagaOrchestrator` never
+calls `NackAsync(requeue: true)` at all, it republishes through `PublishRawAsync` with an incremented
+`x-vsaga-delivery-attempt` and dead-letters at `SagaOrchestratorOptions.MaxDeliveryAttempts`. A
+requeue therefore increments nothing the orchestrator reads, so a handler that always requeues would
+spin this channel forever on a counter nobody owns. The two bounds compose rather than cancel:
+requeue chains terminate here, republish chains terminate at `MaxDeliveryAttempts` because every
+republish increments the header this dispatcher preserves, and interleaving them is bounded by their
+product.
+
+**TypeScript parity.** `@vsaga/transport-http` implements the same model, with the same split and the
+same cap of five. A delivery the transport enqueued itself — a same-process `publish()`/`send()` that
+resolved to a local subscriber, or a `200` synchronous reply to one of its own outbound POSTs —
+honours `nack(requeue: true)` by re-dispatching it byte-identically, and degrades to an error-level
+drop once the transport is closed, exactly as the .NET side does on a completed channel. A delivery
+that arrived as an inbound HTTP request logs at error and drops on both nack forms. The one divergence
+is the log sink: .NET uses `ILogger`, TypeScript uses `console.error`/`console.warn` behind a
+`[vsaga]` prefix, because `@vsaga/transport-http` takes no logger dependency — `@vsaga/participant`
+owns the `Logger` interface, and depending on it would invert the package layering.
+
 ## Known, deliberate limitations
 
 - **The local-dispatch channel is in-process and not durable.** A crash between an HTTP response and
@@ -74,6 +128,20 @@ a `202` now, dispatched once the gate frees, lossless rather than a long block.
   `.Publish(...)` calls that would be two independent fire-and-forget broker publishes become two
   blocking HTTP round trips here. Both limitations are inherent to the synchronous delivery model this
   adapter deliberately chose, not gaps in this implementation of it.
+- **`NackAsync(requeue: true)` is not honoured for a delivery that arrived as an inbound HTTP
+  request** — it logs at error and drops, exactly as `requeue: false` does. See
+  [Ack, nack, and requeue](#ack-nack-and-requeue) for why re-enqueuing a copy would be a fake rather
+  than a redelivery. Every other delivery path on this adapter requeues for real; the saga's own state
+  timeout is the net under this one, and the peer that POSTed the message is the party that can retry
+  it.
+- **A redelivered request is acknowledged, not answered.** Participant-side dedupe — the sample's
+  `ParticipantService`, and any consumer that skips a repeated `MessageId` — acks a duplicate delivery
+  without invoking its handler, which is correct on a broker because the original reply was already
+  published. Over this adapter's synchronous request/response the handler is *also* what produces the
+  response body, so a redelivered request returns `202` with no body and the calling saga gets nothing
+  until its `RequestTimeout` expires and, eventually, its own state timeout rescues it. This is
+  accepted deliberately rather than fixed: redeliveries are rare, and the alternative is making every
+  participant cache and replay its replies.
 
 ## Unroutable-publish detection
 

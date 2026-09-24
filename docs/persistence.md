@@ -8,7 +8,11 @@ vSaga ships two persistence providers, both implementing the same set of store c
 ## EF Core / Postgres
 
 `VSaga.Persistence.EFCore` implements every store against `VSagaDbContext` and is **provider-agnostic**
-— it depends only on `Microsoft.EntityFrameworkCore`, not any specific database provider.
+— it takes no dependency on any specific database provider, only on `Microsoft.EntityFrameworkCore`,
+`Microsoft.EntityFrameworkCore.Relational`, and `Microsoft.Extensions.DependencyInjection.Abstractions`.
+That `.Relational` reference is a real (if narrow) constraint: any *relational* provider works, but
+non-relational EF Core providers are out of scope — `EfCoreSagaTimeoutStore` uses `FromSqlInterpolated`,
+which relational providers alone support.
 `AddVSagaEfCore(this IServiceCollection, Action<DbContextOptionsBuilder> configureDbContext)`
 registers `VSagaDbContext` **Scoped** (a fresh `DbContext` per message/timeout/retry, matching how the
 rest of the engine resolves per-unit-of-work services) plus EF-backed implementations of all seven
@@ -44,6 +48,16 @@ try/catch around it, useful if the app might start before Postgres is reachable.
 to `(SagaType, CorrelationId)`, the Saga Map's service-map fields, sub-saga parent-linkage columns, the
 outbox table (plus its own follow-up index migration), and the business-key column with its partial
 unique index.
+
+**The five tables** `VSagaDbContext` maps, for anyone querying the database directly:
+
+| Table | Holds |
+| --- | --- |
+| `SagaInstances` | One row per saga instance (the snapshot), keyed by `(SagaType, CorrelationId)`. |
+| `SagaEventLog` | The append-only `SagaLogEntry` timeline behind the dashboard (see [`observability.md`](observability.md)). |
+| `SagaTimeouts` | Scheduled/fired timeouts, claimed by the dispatcher below. |
+| `SagaOutboxMessages` | Transactional-outbox rows, staged with the snapshot and drained inline or by the poller. |
+| `SagaConsumerRegistrations` | The service topology (`IServiceTopologyStore`), keyed by `(ServiceName, MessageType)`. |
 
 **Concurrency-safe timeout claiming.** `EfCoreSagaTimeoutStore.ClaimDueAsync` uses an atomic
 `UPDATE ... WHERE ... FOR UPDATE SKIP LOCKED ... RETURNING` on Postgres, so multiple

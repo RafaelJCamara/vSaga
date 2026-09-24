@@ -11,11 +11,17 @@ see each adapter's own page for how it plays out concretely.
 ```csharp
 public interface IMessageTransport
 {
-    Task PublishAsync<TMessage>(TMessage message, MessageEnvelope envelope, CancellationToken ct = default);
-    Task SendAsync<TMessage>(string destination, TMessage message, MessageEnvelope envelope, CancellationToken ct = default);
-    Task PublishRawAsync(string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken ct = default);
-    Task SendRawAsync(string destination, string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken ct = default);
-    Task<IDisposable> SubscribeAsync(TransportSubscription subscription, Func<ReceivedMessage, CancellationToken, Task> handler, CancellationToken ct = default);
+    Task PublishAsync<TMessage>(TMessage message, MessageEnvelope envelope, CancellationToken cancellationToken = default)
+        where TMessage : notnull;
+
+    Task SendAsync<TMessage>(string destination, TMessage message, MessageEnvelope envelope, CancellationToken cancellationToken = default)
+        where TMessage : notnull;
+
+    Task PublishRawAsync(string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken cancellationToken = default);
+
+    Task SendRawAsync(string destination, string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken cancellationToken = default);
+
+    Task<IDisposable> SubscribeAsync(TransportSubscription subscription, Func<ReceivedMessage, CancellationToken, Task> handler, CancellationToken cancellationToken = default);
 }
 ```
 
@@ -34,10 +40,29 @@ public interface IMessageTransport
   exist by the time the call completes, not lazily on first use (a gap the Brighter adapter had to work
   around; see [`brighter.md`](brighter.md)).
 
-Every adapter is wrapped in `MiddlewarePipelineTransport` (`VSaga.Transport.Common`), the shared
-decorator that `VSaga.Chaos`'s fault injection and topology recording both plug into — this is why
-chaos and the Saga Map's topology registry work identically across every adapter with zero
-adapter-specific code.
+## The two decorators every adapter is wrapped in
+
+Chaos and the Saga Map's topology registry both work across every adapter with zero adapter-specific
+code, but they are **not** the same seam. Anyone writing a third-party adapter has to satisfy both:
+
+- **`MiddlewarePipelineTransport`** (`VSaga.Transport.Common`) is the
+  `IOutboundMessageMiddleware`/`IInboundMessageMiddleware` seam, and the only one `VSaga.Chaos` plugs
+  into. Every `AddVSaga*Transport` call in this repo applies it **unconditionally** — including the
+  in-memory adapter's, which until recently registered its bare transport directly and therefore
+  silently never ran chaos at all. Unconditional rather than "only when some middleware is
+  registered", because a pipeline over an empty middleware list is a pure pass-through, so there is
+  nothing to save by skipping it — and a registration whose resolved type depends on what else
+  happens to be in the container would change shape the moment a caller adds `AddVSagaChaos`.
+- **`TopologyRecordingTransport`** (`VSaga.Abstractions.Transport`) is a *sibling* decorator, not a
+  middleware — topology recording does not go through the middleware pipeline at any point. It
+  intercepts `SubscribeAsync` and records the consumer/message-type/queue triple that every
+  `TransportSubscription` already declares, which is why no subscriber writes a line of code for the
+  Saga Map. `AddVSagaTopologyRecording()` (`VSaga.Core`) applies it by removing the *last*
+  `IMessageTransport` service descriptor and re-registering a factory that wraps whatever that
+  descriptor built. That imposes a hard requirement on an adapter: register `IMessageTransport` as a
+  **factory** (`services.AddSingleton<IMessageTransport>(sp => ...)`), never as a pre-built instance
+  or an implementation type. A descriptor with no `ImplementationFactory` makes
+  `AddVSagaTopologyRecording()` throw `InvalidOperationException` rather than silently skip recording.
 
 ## Choosing an adapter
 
@@ -55,15 +80,33 @@ exchange (`vsaga.saga.events` by default) and route by message-type name, so the
 deployment looks the same regardless of which one is chosen — see [`configuration.md`](../configuration.md#transport-options)
 for each adapter's options.
 
+**The same shape is not the same wire format.** The routing keys diverge, and no adapter's default
+exchange name diverges with them — all four default to `vsaga.saga.events`:
+
+| Adapter | Routing key for `OrderApproved` |
+| --- | --- |
+| RabbitMQ (`DefaultRoutingKeyConvention`), Brighter (`RoutingKeyConvention`) | `order-approved` (lower-kebab-case) |
+| Wolverine, MassTransit | `OrderApproved` (the raw PascalCase type name) |
+
+Two adapters from different rows are therefore **not wire-interchangeable**, and running both against
+one broker on the default exchange name is a live hazard: a Wolverine publisher's `OrderApproved`
+never reaches a RabbitMQ-adapter subscriber bound to `order-approved`, and vice versa. The message is
+simply unroutable, so what happens next is whatever that publisher's own unroutable detection does —
+an exception on the RabbitMQ and MassTransit tracks, complete silence on the Wolverine and Brighter
+ones (see [what every adapter guarantees](#what-every-adapter-guarantees)). Give each track its own
+`ExchangeName` if they must share a broker, and check which row your adapter is in before binding a
+non-vSaga AMQP consumer directly to the exchange.
+
 ## Running an adapter's own overlay
 
 RabbitMQ is what plain `docker compose up` runs (see ["Run the demo"](../../README.md#run-the-demo)).
 To try Wolverine, MassTransit, Brighter, or HTTP instead, each has its own compose overlay — but unlike
 the chaos overlay, these two things are **not optional**:
 
-- **A `-p <project-name>` compose project name.** Without it, this overlay's containers join the
-  default `bugsmq`/`vsaga` compose project instead of a distinct one, colliding with any stack already
-  up under the plain command.
+- **A `-p <project-name>` compose project name.** No compose file here sets a `name:` key, so Compose
+  derives the project name from the directory — `vsaga`. Without `-p`, this overlay's containers join
+  that same default project instead of a distinct one, colliding with any stack already up under the
+  plain command.
 - **Every host port is remapped** (`!override` in each overlay file) so the overlay's stack can run
   *alongside* the plain one rather than fighting it for `5433`/`5672`/`15672`/`5080`. Skip the `-p` flag
   and you'll bring these containers up fine, then find every URL this repo documents
@@ -100,11 +143,18 @@ that overlay's `Dashboard__ApiKey` differs from the default dev value) before ru
 
 - **All four vSaga envelope headers round-trip losslessly**: `x-vsaga-source-service`,
   `x-vsaga-causation-id`, `x-vsaga-parent-saga-type`, `x-vsaga-parent-correlation-id` — plus, since
-  production-readiness §8.17, the W3C `traceparent`/`tracestate` pair (bare names, not
-  `x-vsaga-`-prefixed — see [`../observability.md`](../observability.md#traces)). Every adapter's own
-  test suite includes a dedicated round-trip test for these; several were added specifically because an
-  earlier version of this repo shipped header-threading code with tests that hand-built the field and
-  proved nothing (see [`../history/sub-saga-parent-linkage.md`](../history/sub-saga-parent-linkage.md)).
+  [production-readiness §6](../design/production-readiness.md) (shipped as that plan's §8 item 17), the
+  W3C `traceparent`/`tracestate` pair (bare names, not `x-vsaga-`-prefixed — see
+  [`../observability.md`](../observability.md#traces)). Every adapter that puts a message on a wire —
+  RabbitMQ, Wolverine, MassTransit, Brighter, HTTP — has a dedicated round-trip test for **both** sets
+  in its own suite (`PublishAndSubscribe_PropagatesAllFourVSagaHeadersUnchanged` and its
+  traceparent/tracestate sibling); several were added specifically because an earlier version of this
+  repo shipped header-threading code with tests that hand-built the field and proved nothing (see
+  [`../history/sub-saga-parent-linkage.md`](../history/sub-saga-parent-linkage.md)). The in-memory
+  adapter is the one exception and needs no such test: it hands the publisher's own
+  `MessageEnvelope.Headers` dictionary straight to the subscriber, so there is no encode/decode step
+  for a header to be lost in — which is exactly why a header bug caught only by one of those suites is
+  invisible under `SagaTestHarness`.
 - **An unroutable publish is detected where the underlying package supports it.** RabbitMQ, MassTransit,
   and HTTP all surface it as `MessageTransportPublishException.IsUnroutable`. Wolverine's and Brighter's
   underlying gateway packages have no equivalent as of the pinned versions — confirmed absent by

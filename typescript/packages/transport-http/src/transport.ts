@@ -17,11 +17,7 @@ import {
   normalizeHeaders,
 } from '@vsaga/protocol';
 
-import {
-  HttpInboundDispatcher,
-  NO_OP_ACK_CONTEXT,
-  currentSyncReplyCollector,
-} from './dispatcher.js';
+import { HttpInboundDispatcher, currentSyncReplyCollector } from './dispatcher.js';
 import {
   type HttpTransportOptions,
   type ResolvedHttpTransportOptions,
@@ -169,13 +165,25 @@ class HttpMessageTransportImpl implements HttpTransport {
       return { status: 400 };
     }
 
+    // The one ack context in this adapter that cannot honour requeue: true
+    // (docs/design/http-based-sagas.md §4.4), and deliberately says so at error level instead of
+    // pretending. A delivery that arrives as an inbound HTTP request is inseparable from that
+    // request -- it is dispatched inline under the ambient sync-reply collector, and the
+    // status/body this peer gets back is decided by that dispatch's own outcome. Re-enqueuing a
+    // copy onto the local dispatch path (which is what this transport's own enqueueLocalDelivery
+    // deliveries do) would not redeliver *this* delivery: the copy would run later with no
+    // collector installed and the response already written, so a participant's reply publish --
+    // the entire point of an inbound request on this transport -- would find nothing to capture it
+    // and throw unroutable instead. The peer that POSTed the message is the only party that can
+    // retry it, and it has already been told the outcome. Both nack forms therefore log at error
+    // and drop, which is at least diagnosable.
     const received: ReceivedMessage = {
       messageTypeName,
       correlationId,
       messageId,
       body: request.body,
       headers: extractVSagaHeaders(headers),
-      ack: NO_OP_ACK_CONTEXT,
+      ack: this.#dispatcher.createInboundRequestAck(messageTypeName, correlationId, messageId),
     };
 
     // CancellationToken.None on the .NET side, not the request's own -- deliberately not tying a
@@ -234,14 +242,18 @@ class HttpMessageTransportImpl implements HttpTransport {
     }
 
     if (hasLocalSubscriber) {
-      this.#dispatcher.enqueueLocalDispatch({
+      // enqueueLocalDelivery, not a hand-built ReceivedMessage: this delivery is the dispatcher's
+      // own, so it gets the ack context that implements §4.4 for real -- nack(requeue: true)
+      // re-enqueues onto the very path this call is writing to, carrying these same headers
+      // (x-vsaga-delivery-attempt included, which is what keeps the orchestrator's redelivery cap
+      // bounding a redelivered copy) and nack(requeue: false) logs at error and drops.
+      this.#dispatcher.enqueueLocalDelivery(
         messageTypeName,
-        correlationId: envelope.correlationId,
-        messageId: envelope.messageId,
+        envelope.correlationId,
+        envelope.messageId,
         body,
-        headers: envelope.headers,
-        ack: NO_OP_ACK_CONTEXT,
-      });
+        envelope.headers,
+      );
     }
 
     if (remoteUrls.length === 1) {
@@ -304,10 +316,18 @@ class HttpMessageTransportImpl implements HttpTransport {
 
   /**
    * A 200 IS the reply (docs/design/http-based-sagas.md §1, §4.2) -- fed back to whatever local
-   * subscriber the reply's own type resolves to via enqueueLocalDispatch, never dispatched
+   * subscriber the reply's own type resolves to via enqueueLocalDelivery, never dispatched
    * inline: this call is itself running inside whatever gated dispatch published the original
    * message, so dispatching the reply inline would either deadlock on that same correlation's
    * gate or, worse, re-enter the saga before its own step has persisted (§3.1).
+   *
+   * The reply is enqueued as a delivery the dispatcher owns, so §4.4's ack model applies to it in
+   * full, requeue included. Worth being precise about why, since the reply arrived over HTTP and
+   * the inbound-request path deliberately cannot requeue: what makes requeue honest is not where a
+   * message came from but whether a redelivery is indistinguishable from the original delivery.
+   * This one already *is* a plain deferred dispatch -- no ambient reply collector, no HTTP response
+   * riding on its outcome -- so re-enqueuing it reproduces its delivery exactly. An inbound
+   * request's does not; see HttpInboundDispatcher.createInboundRequestAck.
    */
   async #handleSyncReply(
     response: Response,
@@ -340,14 +360,13 @@ class HttpMessageTransportImpl implements HttpTransport {
 
     const replyBody = Buffer.from(await response.arrayBuffer());
 
-    this.#dispatcher.enqueueLocalDispatch({
-      messageTypeName: replyTypeName,
-      correlationId: replyCorrelationId,
-      messageId: replyMessageId,
-      body: replyBody,
-      headers: extractVSagaHeaders(headers),
-      ack: NO_OP_ACK_CONTEXT,
-    });
+    this.#dispatcher.enqueueLocalDelivery(
+      replyTypeName,
+      replyCorrelationId,
+      replyMessageId,
+      replyBody,
+      extractVSagaHeaders(headers),
+    );
   }
 
   /**

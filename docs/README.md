@@ -40,9 +40,10 @@ new here; the rest of this index is organized by topic, roughly in the order you
 
 ## Design records
 
-- [`design/`](design/) — design documents for features as they were planned, all now shipped (see
-  `production-readiness.md`'s own status line). Read these for the *reasoning* behind a decision;
-  read the reference docs above for the shipped shape.
+- [`design/`](design/) — design documents for features as they were planned, all shipped but one: the
+  release-automation half of `production-readiness.md` §3 was never built, and that file's own status
+  lines say so. Read these for the *reasoning* behind a decision; read the reference docs above for the
+  shipped shape.
   - [`design/http-based-sagas.md`](design/http-based-sagas.md)
   - [`design/mixed-sagas.md`](design/mixed-sagas.md)
   - [`design/sub-saga-composition.md`](design/sub-saga-composition.md)

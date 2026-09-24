@@ -103,7 +103,7 @@ public sealed class SagaOrchestratorTracingTests
     public async Task ConsumerSpan_OnABrokerTransport_ExtractsTheParentFromInboundHeaders_NotAFreshRoot()
     {
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<TracingTestSaga>().SagaType;
         var correlationId = Guid.NewGuid();
 
@@ -132,7 +132,7 @@ public sealed class SagaOrchestratorTracingTests
     public async Task ConsumerSpan_WithNoInboundTraceParent_StillRootsAValidTrace()
     {
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<TracingTestSaga>().SagaType;
         var correlationId = Guid.NewGuid();
 
@@ -156,7 +156,7 @@ public sealed class SagaOrchestratorTracingTests
         // Core pipeline of its own, so a hand-started Activity plays that role here; what matters is
         // only that some unrelated Activity is ambient (Activity.Current) while the message is handled.
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<TracingTestSaga>().SagaType;
         var correlationId = Guid.NewGuid();
 
@@ -190,7 +190,7 @@ public sealed class SagaOrchestratorTracingTests
     public async Task StepFailure_SetsTheConsumerSpanStatusToError()
     {
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<TracingTestSaga>().SagaType;
         var correlationId = Guid.NewGuid();
 
@@ -209,7 +209,7 @@ public sealed class SagaOrchestratorTracingTests
     public async Task SagaDuration_RecordsOnNormalCompletion()
     {
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<TracingTestSaga>().SagaType;
         var correlationId = Guid.NewGuid();
 
@@ -231,7 +231,7 @@ public sealed class SagaOrchestratorTracingTests
     public async Task SagaDuration_RecordsOnTimeoutCompletion()
     {
         await using var provider = await BuildProviderAsync();
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<TracingTestSaga>().SagaType;
         var correlationId = Guid.NewGuid();
 
@@ -282,7 +282,7 @@ public sealed class SagaOrchestratorTracingTests
             services.AddSingleton<ISagaEventLogStore>(sp =>
                 new FlakyOnceEventLogStore(sp.GetRequiredService<InMemorySagaStore>())));
 
-        var transport = (InMemoryMessageTransport)provider.GetRequiredService<IMessageTransport>();
+        var transport = provider.GetRequiredService<InMemoryMessageTransport>();
         var sagaType = provider.GetRequiredService<TracingTestSaga>().SagaType;
         var correlationId = Guid.NewGuid();
 

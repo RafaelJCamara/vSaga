@@ -263,6 +263,16 @@ forgetting it silently breaks the map. Dedicated test.
 - Targets = configured remote routes **∪ local subscribers** (§3.3a). Unroutable ⇒ throw
   `MessageTransportPublishException(…, isUnroutable: true, …)`.
 
+**Status note: a fourth rule was added after this was written, so the three above are no longer
+exhaustive.** `Routes` now honours a **wildcard key**, `ConfigHttpRouteTable.WildcardRoute` (`"*"`, in
+`dotnet/src/VSaga.Transport.Http/IHttpRouteTable.cs`): a `PublishAsync`/`PublishRawAsync` for a type with
+no explicit `Routes` entry falls back to the wildcard's endpoints before "unroutable" is concluded. Its
+rationale is recorded on `HttpTransportOptions.Routes` — a dashboard/ops process that only ever redrives
+messages toward a single saga host has no reason to enumerate every message type that host understands —
+so it exists to serve §4.6's Dashboard.Api manual-retry fix rather than to relax routing generally. Pinned
+by `Publish_WithNoExplicitRouteForTheType_FallsBackToTheWildcardEndpoint` in
+`dotnet/tests/VSaga.Transport.Http.Tests/HttpTransportFailureTests.cs`.
+
 Worth noting this is *higher* fidelity than the Wolverine and Brighter adapters, whose tests assert
 the verified *absence* of an unroutable signal. `README.md:127` currently presents unroutable-publish
 detection as a RabbitMQ-specific property and will need correcting.
@@ -295,9 +305,25 @@ default) and falling back to the same deferred (enqueue-to-pump) path a reply al
 lossless, just delayed, and self-healing once the holder's own step finishes. See README.md's Transport
 adapter: HTTP section for the live evidence.
 
+**Status note: "`InlineGateAcquireTimeout`, 5s default" reads as a configurable knob. It is not one.** It
+shipped as a fixed `private static readonly TimeSpan` on `HttpInboundDispatcher` and is deliberately
+**absent from `HttpTransportOptions`**, so there is no way to tune it per deployment — "default" here
+means "the value", not "the value unless you override it".
+[`docs/transports/http.md`](../transports/http.md) already states this correctly; only this design record
+reads as though the value were exposed.
+
 Ack model, with no broker underneath: `AckAsync` → drop; `NackAsync(requeue: true)` → re-enqueue;
 `NackAsync(requeue: false)` → log at error and drop. **No `IHttpDeadLetterSink` abstraction** — an
 interface with one logging implementation is ceremony; add it when a second implementation exists.
+
+**Status note: this ack model went unimplemented for a long time, and was addressed later.** Phase 1
+shipped without it — every `ReceivedMessage` the HTTP adapter constructed carried a no-op ack context, so
+`NackAsync(requeue: true)` did not re-enqueue anything and `NackAsync(requeue: false)` logged nothing.
+The paragraph above therefore described intent, not behaviour, for the whole period between Phase 1 and
+the later pass that took it up. **This design record is not the authority on where that landed** — the
+adapter has more than one place a `ReceivedMessage` is constructed and not all of them have somewhere to
+re-enqueue to. See [`docs/transports/http.md`](../transports/http.md) for the current ack/nack behaviour
+and for which paths actually honour `requeue: true`.
 
 The channel is **in-process and not durable**, and the README must say so rather than implying
 at-least-once: a crash between an HTTP response and its dispatch loses that reply, and the saga's
@@ -553,12 +579,27 @@ State these in the README when the work ships, rather than discovering them live
    including the participant's 150–500ms simulated work. The sample's headline "parallel fan-out"
    demo is strictly sequential on the HTTP track, and its own doc comment (`OrderSaga.cs:20-26`) needs
    a caveat. Inherent to the chosen delivery model, not a bug.
+
+   **Status: documented.** The caveat is now on `OrderSaga`'s own class doc comment
+   (`dotnet/samples/VSaga.Samples.OrderProcessing/OrderSaga.cs`), and the substance is in
+   [`docs/transports/http.md`](../transports/http.md)'s "Known, deliberate limitations".
 2. **`ParticipantService`'s dedupe changes meaning.** `TryClaim`
    (`dotnet/samples/…/Participants/ParticipantService.cs:55-60,83-93`) acks a repeated MessageId *without*
    invoking the handler. Over RabbitMQ that is right — the original reply was already published. Over
    sync HTTP a redelivered request returns `202` with no body and the caller gets nothing until its
    timeout. Recommendation: accept it (redeliveries are rare) and document it, rather than having
    participants cache replies.
+
+   **Status: still undocumented — this section's own "state these in the README when the work ships"
+   instruction was not carried out for this item.** The *accept it* half happened (the behaviour is
+   unchanged, and still correct: `ParticipantService.HandleAsync` acks a repeated `MessageId` without
+   invoking the handler, so no reply is published, so the HTTP adapter's sync-reply collector finds
+   nothing unroutable to return). The *document it* half did not: nothing in
+   [`docs/transports/http.md`](../transports/http.md),
+   [`docs/transports/index.md`](../transports/index.md), or `ParticipantService.cs` itself mentions that
+   the dedupe's meaning changes on the HTTP track. Items 1, 4 and 6 of this list did get documented;
+   this one is the outstanding one. It belongs in `docs/transports/http.md`'s "Known, deliberate
+   limitations", not here.
 3. **Async webhook delivery is deferred, not rejected.** Participant returns `202`, then POSTs its
    reply back later as its own inbound request. The §4.2 wire format already leaves room — `202` is a
    defined response — but nothing implements the return leg. The natural third phase, and the one that

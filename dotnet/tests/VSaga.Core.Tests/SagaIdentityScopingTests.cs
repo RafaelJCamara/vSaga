@@ -45,7 +45,7 @@ public sealed class SagaIdentityScopingTests : IAsyncDisposable
             .AddSaga<TestShippingChoreography, ChoreoShippingState>());
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
 
         foreach (var hosted in _provider.GetServices<IHostedService>())
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();

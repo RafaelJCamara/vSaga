@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\VSaga.Abstractions\VSaga.Abstractions.csproj" />
+    <ProjectReference Include="..\VSaga.Transport.Common\VSaga.Transport.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -21,6 +21,7 @@ namespace VSaga.Dashboard.Api.Tests;
 public sealed class SagaChangePollingServiceTests : IDisposable
 {
     private readonly ServiceProvider _provider;
+    private readonly RecordingSummaryReader _reader;
     private readonly RecordingHubContext _hub = new();
     private readonly SagaChangePollingService _service;
 
@@ -28,7 +29,13 @@ public sealed class SagaChangePollingServiceTests : IDisposable
     {
         var services = new ServiceCollection();
         services.AddVSagaInMemoryPersistence();
+        // Wraps the real in-memory reader instead of replacing it, so every test below still runs
+        // against genuine filtering/sorting/paging while the filters the poller sends stay observable.
+        // The later ISagaSummaryReader registration wins, and the decorator is a pure pass-through.
+        services.AddSingleton(sp => new RecordingSummaryReader(sp.GetRequiredService<InMemorySagaStore>()));
+        services.AddSingleton<ISagaSummaryReader>(sp => sp.GetRequiredService<RecordingSummaryReader>());
         _provider = services.BuildServiceProvider();
+        _reader = _provider.GetRequiredService<RecordingSummaryReader>();
 
         _service = new SagaChangePollingService(
             _provider.GetRequiredService<IServiceScopeFactory>(),
@@ -62,6 +69,21 @@ public sealed class SagaChangePollingServiceTests : IDisposable
     }
 
     private List<string> GroupsPushedTo() => _hub.Recorder.SagaUpdates.Select(c => c.Group).ToList();
+
+    /// <summary>Correlation ids pushed to the list group, in push order — one entry per delivered change.</summary>
+    private List<Guid> ListGroupPushes() => _hub.Recorder.SagaUpdates
+        .Where(c => string.Equals(c.Group, SagaHub.ListGroup, StringComparison.Ordinal))
+        .Select(c => c.Summary.CorrelationId)
+        .ToList();
+
+    private async Task<List<Guid>> SeedAscendingAsync(int count, DateTimeOffset firstUpdatedAtUtc)
+    {
+        var ids = new List<Guid>(count);
+        for (var i = 0; i < count; i++)
+            ids.Add((await SeedAsync("OrderSaga", firstUpdatedAtUtc.AddMilliseconds(i))).CorrelationId);
+
+        return ids;
+    }
 
     [Fact]
     public async Task PushesEachChangedSagaToBothTheListAndItsInstanceGroup()
@@ -169,4 +191,104 @@ public sealed class SagaChangePollingServiceTests : IDisposable
         Assert.Contains(SagaHub.GroupForSaga("OrderSaga", correlationId), instanceGroups, StringComparer.Ordinal);
         Assert.Contains(SagaHub.GroupForSaga("PostShipmentChoreography", correlationId), instanceGroups, StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// The regression this poller was rewritten for. A tick used to read one capped page of the
+    /// most-recently-updated sagas and then advance the watermark to the newest row in it, so under the
+    /// sample's continuous load every change past that page was pushed to nobody — and, being older than
+    /// the new watermark, was never looked at again. One tick has to drain the whole change set.
+    /// </summary>
+    [Fact]
+    public async Task DrainsEveryChangeWhenMoreThanOnePageChangedInOneTick()
+    {
+        var since = DateTimeOffset.UtcNow;
+        var count = SagaChangePollingService.PageSize + 25;
+        var seeded = await SeedAscendingAsync(count, since.AddSeconds(1));
+
+        await _service.PollOnceAsync(since, CancellationToken.None);
+
+        // Seeded oldest-first and pushed oldest-first, so the delivered order pins both completeness and
+        // the ordering the dashboard relies on.
+        Assert.Equal(seeded, ListGroupPushes());
+    }
+
+    /// <summary>
+    /// A backlog larger than one tick's page budget must cost latency, not updates: the watermark a
+    /// truncated tick returns sits on a row it actually pushed, so everything it never reached is still
+    /// strictly newer than the watermark and stays inside the next tick's window.
+    /// </summary>
+    [Fact]
+    public async Task ABacklogBiggerThanOneTicksBudgetIsFinishedByTheNextTickWithNothingDropped()
+    {
+        var since = DateTimeOffset.UtcNow;
+        var budget = SagaChangePollingService.MaxChangePagesPerTick * SagaChangePollingService.PageSize;
+        var seeded = await SeedAscendingAsync(budget + 50, since.AddSeconds(1));
+
+        var afterFirstTick = await _service.PollOnceAsync(since, CancellationToken.None);
+        Assert.Equal(budget, ListGroupPushes().Count);
+
+        await _service.PollOnceAsync(afterFirstTick, CancellationToken.None);
+
+        var delivered = ListGroupPushes().ToHashSet();
+        Assert.All(seeded, id => Assert.Contains(id, delivered));
+    }
+
+    /// <summary>
+    /// The cost regression that came with draining ascending. <see cref="SagaListFilter"/> could sort by
+    /// UpdatedAt but not filter on it, so every tick paged through — and discarded — the entire
+    /// unchanged head of the table before reaching the changed tail: O(table size) round trips, once a
+    /// second, forever. The watermark now rides along in the filter, so a store that is mostly quiet
+    /// costs one round trip rather than one per <see cref="SagaChangePollingService.PageSize"/> rows.
+    /// <para>
+    /// Also pins that the store, not the poller's client-side guard, is what discards the old rows:
+    /// a single page came back and it held only the changed saga.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task DrainsFromTheWatermarkInTheQueryInsteadOfPagingThroughTheUnchangedHead()
+    {
+        var since = DateTimeOffset.UtcNow;
+
+        // A head comfortably larger than one page, all of it delivered by some earlier tick.
+        await SeedAscendingAsync(SagaChangePollingService.PageSize + 50, since.AddMinutes(-5));
+        var changed = await SeedAsync("OrderSaga", since.AddSeconds(1));
+
+        await _service.PollOnceAsync(since, CancellationToken.None);
+
+        var filter = Assert.Single(_reader.Filters);
+        Assert.Equal(since, filter.UpdatedSince);
+        Assert.Equal([changed.CorrelationId], ListGroupPushes());
+    }
+}
+
+/// <summary>
+/// Pass-through <see cref="ISagaSummaryReader"/> that records the filters it is asked for, so a test can
+/// assert on the query the poller issues (how many round trips, and with what watermark) rather than only
+/// on what came out the other end. Hand-written, matching this repo's fakes-over-mocking-library
+/// convention; delegating to the real <see cref="InMemorySagaStore"/> keeps the filtering under test real.
+/// </summary>
+internal sealed class RecordingSummaryReader(ISagaSummaryReader inner) : ISagaSummaryReader
+{
+    public List<SagaListFilter> Filters { get; } = [];
+
+    public Task<PagedResult<SagaSummary>> ListAsync(SagaListFilter filter, CancellationToken cancellationToken = default)
+    {
+        Filters.Add(filter);
+        return inner.ListAsync(filter, cancellationToken);
+    }
+
+    public Task<SagaSummary?> GetAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default) =>
+        inner.GetAsync(sagaType, correlationId, cancellationToken);
+
+    public Task<string?> GetDataJsonAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default) =>
+        inner.GetDataJsonAsync(sagaType, correlationId, cancellationToken);
+
+    public Task<IReadOnlyList<SagaSummary>> FindByCorrelationIdAsync(Guid correlationId, CancellationToken cancellationToken = default) =>
+        inner.FindByCorrelationIdAsync(correlationId, cancellationToken);
+
+    public Task<IReadOnlyList<SagaSummary>> FindChildrenAsync(string parentSagaType, Guid parentCorrelationId, CancellationToken cancellationToken = default) =>
+        inner.FindChildrenAsync(parentSagaType, parentCorrelationId, cancellationToken);
+
+    public Task<IReadOnlyList<SagaTypeInfo>> GetSagaTypesAsync(CancellationToken cancellationToken = default) =>
+        inner.GetSagaTypesAsync(cancellationToken);
 }

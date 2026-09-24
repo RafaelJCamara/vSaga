@@ -465,6 +465,105 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         Assert.Equal(SagaStatus.Failed, failedOnly.Items[0].Status);
     }
 
+    /// <summary>
+    /// The dashboard's change poller drains UpdatedAtUtc ascending once a second. Without a server-side
+    /// timestamp predicate it had to fetch and discard the entire unchanged head of the table before
+    /// reaching the changed tail — O(table size) round trips per tick. UpdatedSince pushes that into
+    /// SQL, and this pins the two properties the poller's loop depends on: the predicate is strictly
+    /// greater-than (a row stamped exactly at the watermark was already delivered, so `&gt;=` would
+    /// re-push it forever), and TotalCount describes the *filtered* set, because the poller's
+    /// "consumed everything?" stop check is `page * PageSize &gt;= TotalCount`.
+    /// </summary>
+    [Fact]
+    public async Task SummaryReader_UpdatedSince_KeepsOnlyStrictlyNewerRowsAndScopesTotalCount()
+    {
+        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+
+        await using (var db = NewContext())
+        {
+            var store = new EfCoreSagaSnapshotStore<TestState>(db);
+            for (var i = 0; i < 5; i++)
+            {
+                await store.InsertAsync(new TestState
+                {
+                    CorrelationId = Guid.NewGuid(),
+                    SagaType = "OrderSaga",
+                    CurrentState = "A",
+                    Status = SagaStatus.Running,
+                    CreatedAtUtc = t0,
+                    UpdatedAtUtc = t0.AddSeconds(i),
+                });
+            }
+        }
+
+        await using var db2 = NewContext();
+        var reader = new EfCoreSagaSummaryReader(db2);
+
+        // Baseline: an absent UpdatedSince leaves every existing caller's result untouched.
+        Assert.Equal(5, (await reader.ListAsync(new SagaListFilter())).TotalCount);
+
+        var changed = await reader.ListAsync(new SagaListFilter
+        {
+            UpdatedSince = t0.AddSeconds(2),
+            SortBy = SagaSortColumn.UpdatedAt,
+            SortDescending = false,
+        });
+
+        // t0+2 itself is excluded — strictly greater — leaving only t0+3 and t0+4.
+        Assert.Equal(2, changed.TotalCount);
+        Assert.Equal([t0.AddSeconds(3), t0.AddSeconds(4)], changed.Items.Select(x => x.UpdatedAtUtc).ToList());
+
+        // Paging is over the filtered set too: page 2 of size 1 is the second *changed* row, not the
+        // second row of the table, and TotalCount stays scoped so the poller's stop arithmetic counts
+        // changed rows rather than the whole store.
+        var secondChanged = await reader.ListAsync(new SagaListFilter
+        {
+            UpdatedSince = t0.AddSeconds(2),
+            SortBy = SagaSortColumn.UpdatedAt,
+            SortDescending = false,
+            Page = 2,
+            PageSize = 1,
+        });
+
+        Assert.Equal(2, secondChanged.TotalCount);
+        Assert.Equal(t0.AddSeconds(4), Assert.Single(secondChanged.Items).UpdatedAtUtc);
+
+        // A watermark sitting on the newest row selects nothing, which is what makes a quiet tick cost
+        // exactly one empty round trip instead of a full scan.
+        var none = await reader.ListAsync(new SagaListFilter { UpdatedSince = t0.AddSeconds(4) });
+        Assert.Equal(0, none.TotalCount);
+        Assert.Empty(none.Items);
+    }
+
+    /// <summary>
+    /// UpdatedSince has to compose with the other predicates rather than replace them — the same
+    /// IQueryable feeds CountAsync, so a bug that dropped one of them would silently break both the
+    /// returned page and TotalCount together, and look self-consistent while doing it.
+    /// </summary>
+    [Fact]
+    public async Task SummaryReader_UpdatedSince_ComposesWithTheOtherFilters()
+    {
+        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+
+        await using (var db = NewContext())
+        {
+            var store = new EfCoreSagaSnapshotStore<TestState>(db);
+            await store.InsertAsync(new TestState { CorrelationId = Guid.NewGuid(), SagaType = "OrderSaga", CurrentState = "A", Status = SagaStatus.Running, CreatedAtUtc = t0, UpdatedAtUtc = t0 });
+            await store.InsertAsync(new TestState { CorrelationId = Guid.NewGuid(), SagaType = "OrderSaga", CurrentState = "B", Status = SagaStatus.Running, CreatedAtUtc = t0, UpdatedAtUtc = t0.AddSeconds(5) });
+            await store.InsertAsync(new TestState { CorrelationId = Guid.NewGuid(), SagaType = "ShippingSaga", CurrentState = "C", Status = SagaStatus.Running, CreatedAtUtc = t0, UpdatedAtUtc = t0.AddSeconds(5) });
+        }
+
+        await using var db2 = NewContext();
+        var result = await new EfCoreSagaSummaryReader(db2).ListAsync(new SagaListFilter
+        {
+            SagaType = "OrderSaga",
+            UpdatedSince = t0,
+        });
+
+        Assert.Equal(1, result.TotalCount);
+        Assert.Equal("B", Assert.Single(result.Items).CurrentState);
+    }
+
     [Fact]
     public async Task GetSagaTypesAsync_ReturnsDistinctTypesAcrossInstances()
     {

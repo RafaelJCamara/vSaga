@@ -30,6 +30,15 @@ namespace VSaga.Transport.Http;
 /// finish (i.e. until after PersistAsync and the ack) before it can be dispatched.
 /// </item>
 /// </list>
+/// <para>
+/// It also owns the §4.4 ack model, which has no broker underneath it and therefore exactly one place
+/// a redelivery can go -- <see cref="_localDispatchChannel"/>. <see cref="EnqueueLocalDelivery"/>
+/// hands out a delivery whose <c>NackAsync(requeue: true)</c> genuinely re-enqueues (a redelivery off
+/// that channel is byte-identical to the original delivery, headers and all);
+/// <see cref="CreateInboundRequestAck"/> hands out one that can only log at error and drop, because an
+/// inbound request's delivery is inseparable from the HTTP request carrying it. See both members for
+/// the full reasoning, and <see cref="MaxRequeueAttempts"/> for what bounds a requeue loop.
+/// </para>
 /// </summary>
 public sealed class HttpInboundDispatcher : IAsyncDisposable
 {
@@ -75,9 +84,93 @@ public sealed class HttpInboundDispatcher : IAsyncDisposable
     public bool HasLocalSubscriber(string messageTypeName) =>
         _subscribers.Values.Any(s => MatchesType(s.Subscription, messageTypeName));
 
-    /// <summary>Queues a message for local dispatch without blocking on the correlation gate -- see the type doc for why this, never inline, is the only path other than a genuine inbound request.</summary>
+    /// <summary>Queues an already-constructed delivery for local dispatch without blocking on the correlation gate -- see the type doc for why this, never inline, is the only path other than a genuine inbound request. Keeps <paramref name="received"/>'s own ack context: deferring a delivery is a delay, not a change of custody.</summary>
     public void EnqueueLocalDispatch(ReceivedMessage received) =>
         _localDispatchChannel.Writer.TryWrite(received);
+
+    /// <summary>
+    /// How many times one delivery may be handed back by <c>NackAsync(requeue: true)</c> before this
+    /// dispatcher stops honouring the requeue and drops it with an error log instead.
+    /// <para>
+    /// This is the bound on the one genuinely unbounded shape §4.4's ack model admits. The engine's own
+    /// redelivery loop is bounded elsewhere and differently: SagaOrchestrator.HandleInfrastructureFailureAsync
+    /// republishes through <c>PublishRawAsync</c> with an incremented <c>x-vsaga-delivery-attempt</c>
+    /// header and dead-letters once it reaches <c>SagaOrchestratorOptions.MaxDeliveryAttempts</c> -- it
+    /// never calls <c>NackAsync(requeue: true)</c> at all. A requeue therefore increments nothing the
+    /// orchestrator reads, so a handler that unconditionally requeues would spin this channel forever
+    /// on a counter nobody owns. Hence a counter this dispatcher owns, carried on the ack context of
+    /// each successive delivery rather than in the headers -- which keeps a redelivery byte-identical
+    /// to its original, <c>x-vsaga-delivery-attempt</c> included (see <see cref="TryRequeue"/>).
+    /// </para>
+    /// <para>
+    /// The two bounds compose rather than cancel: a requeue chain terminates here after at most this
+    /// many hops, and a republish chain terminates at MaxDeliveryAttempts because every republish
+    /// increments the header this dispatcher preserves. Interleaving them is bounded by their product,
+    /// which is finite -- no arrangement of the two produces an unbounded redelivery loop.
+    /// </para>
+    /// </summary>
+    public const int MaxRequeueAttempts = 5;
+
+    /// <summary>
+    /// Enqueues a message whose delivery this dispatcher itself owns -- a same-process
+    /// PublishAsync/PublishRawAsync that resolved to a local subscriber, or a 200 reply to our own
+    /// outbound POST -- carrying an ack context that implements §4.4's model for real: <c>AckAsync</c>
+    /// drops, <c>NackAsync(requeue: true)</c> re-enqueues onto this same channel, and
+    /// <c>NackAsync(requeue: false)</c> logs at error and drops. Requeue is honest here precisely
+    /// because the redelivery lands back where the original delivery came from, with the same headers
+    /// and the same deferred (never inline) dispatch semantics -- nothing about the redelivered copy
+    /// differs from the first one except that it is later.
+    /// </summary>
+    public void EnqueueLocalDelivery(string messageTypeName, Guid correlationId, string messageId,
+        ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, string> headers) =>
+        EnqueueLocalDispatch(BuildLocalDelivery(messageTypeName, correlationId, messageId, body, headers, requeueCount: 0));
+
+    /// <summary>
+    /// An ack context for a delivery that arrived as a genuine inbound HTTP request and was dispatched
+    /// inline by <see cref="DispatchInlineAsync"/>: <c>AckAsync</c> drops, and <em>both</em> nack forms
+    /// log at error and drop.
+    /// <para>
+    /// <c>requeue: true</c> is deliberately not supported on this path, and re-enqueuing onto the local
+    /// channel would not be an honest implementation of it. That delivery is inseparable from the HTTP
+    /// request carrying it: it runs under the ambient <see cref="SyncReplyCollector"/>, and the status
+    /// and body the remote peer receives are decided by this very dispatch's outcome. A re-enqueued
+    /// copy would be dispatched later, off the pump, with no collector installed and the response long
+    /// since written -- so a participant's reply publish (the whole point of an inbound request here)
+    /// would find nothing to capture it and throw unroutable instead. That is a different, reply-less
+    /// delivery wearing the original's name, not a redelivery of it. The peer that POSTed the message
+    /// owns its retry; this process cannot ask for one.
+    /// </para>
+    /// <para>
+    /// Deliberately also used for the copy <see cref="DispatchInlineAsync"/> defers to the pump on a
+    /// gate-acquire timeout, even though that copy does land on the channel: that deferral is a delay
+    /// of the same delivery, and letting gate contention silently decide whether a message's nack means
+    /// "redeliver" or "drop" would be worse than one simple rule.
+    /// </para>
+    /// </summary>
+    public IMessageAckContext CreateInboundRequestAck(string messageTypeName, Guid correlationId, string messageId) =>
+        new InboundRequestAckContext(_logger, messageTypeName, correlationId, messageId);
+
+    private ReceivedMessage BuildLocalDelivery(string messageTypeName, Guid correlationId, string messageId,
+        ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, string> headers, int requeueCount)
+    {
+        var ack = new ChannelRequeueAckContext(this, requeueCount);
+        var delivery = new ReceivedMessage(messageTypeName, correlationId, messageId, body, headers, ack);
+        ack.Attach(delivery);
+        return delivery;
+    }
+
+    /// <summary>
+    /// Re-enqueues one delivery under a fresh ack context carrying an incremented requeue count (see
+    /// <see cref="MaxRequeueAttempts"/>). Everything else is passed through by reference -- the very
+    /// same headers dictionary instance, so <c>x-vsaga-delivery-attempt</c> and every other engine
+    /// header reach the redelivered copy exactly as the orchestrator wrote them, and the cap that
+    /// header feeds keeps bounding redelivery across the requeue. Returns false once the channel has
+    /// been completed (shutdown), which is the caller's cue to fall back to logging and dropping rather
+    /// than throwing into a handler that is already unwinding.
+    /// </summary>
+    private bool TryRequeue(ReceivedMessage delivery, int nextRequeueCount) =>
+        _localDispatchChannel.Writer.TryWrite(BuildLocalDelivery(
+            delivery.MessageTypeName, delivery.CorrelationId, delivery.MessageId, delivery.Body, delivery.Headers, nextRequeueCount));
 
     /// <summary>
     /// Bound on acquiring the correlation gate for a genuine inbound request before giving up and
@@ -211,6 +304,106 @@ public sealed class HttpInboundDispatcher : IAsyncDisposable
     private static bool MatchesType(TransportSubscription subscription, string messageTypeName) =>
         subscription.MessageTypes.Any(t => string.Equals(t.Name, messageTypeName, StringComparison.Ordinal));
 
+    /// <summary>
+    /// §4.4's ack model for a delivery this dispatcher owns (see <see cref="EnqueueLocalDelivery"/>):
+    /// ack drops, nack(requeue: true) re-enqueues onto the same in-process channel, nack(requeue: false)
+    /// logs at error and drops. Settling is idempotent via an <see cref="Interlocked"/> guard, so a
+    /// handler that acks and then nacks in a <c>finally</c>, or nacks twice down two unwinding paths,
+    /// can never enqueue the same message twice -- first settle wins, every later call is a no-op.
+    /// </summary>
+    private sealed class ChannelRequeueAckContext(HttpInboundDispatcher dispatcher, int requeueCount) : IMessageAckContext
+    {
+        private ReceivedMessage _delivery = null!;
+        private int _settled;
+
+        /// <summary>Completes the cycle between a delivery and its ack context; called once, before the delivery is written to the channel, so nothing can observe an unattached context.</summary>
+        internal void Attach(ReceivedMessage delivery) => _delivery = delivery;
+
+        private bool TrySettle() => Interlocked.Exchange(ref _settled, 1) == 0;
+
+        public Task AckAsync(CancellationToken cancellationToken = default)
+        {
+            TrySettle();
+            return Task.CompletedTask;
+        }
+
+        public Task NackAsync(bool requeue, CancellationToken cancellationToken = default)
+        {
+            if (!TrySettle())
+                return Task.CompletedTask;
+
+            if (!requeue)
+            {
+                // No broker and no dead-letter queue by design (§4.4: an IHttpDeadLetterSink with one
+                // logging implementation is ceremony), so an error log with enough identity to find the
+                // message in the sender's own logs IS the dead-letter record.
+                dispatcher._logger.LogError(
+                    "Dropping {MessageType} (correlation {CorrelationId}, message {MessageId}) nacked with requeue: false -- this transport has no dead-letter queue, so the saga's own state timeout is the safety net",
+                    _delivery.MessageTypeName, _delivery.CorrelationId, _delivery.MessageId);
+                return Task.CompletedTask;
+            }
+
+            if (requeueCount >= MaxRequeueAttempts)
+            {
+                dispatcher._logger.LogError(
+                    "Dropping {MessageType} (correlation {CorrelationId}, message {MessageId}) nacked with requeue: true after {RequeueCount} requeues -- the {MaxRequeueAttempts}-requeue cap is what stops a handler that always requeues from spinning the local dispatch channel forever",
+                    _delivery.MessageTypeName, _delivery.CorrelationId, _delivery.MessageId, requeueCount, MaxRequeueAttempts);
+                return Task.CompletedTask;
+            }
+
+            if (!dispatcher.TryRequeue(_delivery, requeueCount + 1))
+            {
+                dispatcher._logger.LogError(
+                    "Dropping {MessageType} (correlation {CorrelationId}, message {MessageId}) nacked with requeue: true -- the local dispatch channel is already completed (shutting down), so there is nowhere to redeliver it to",
+                    _delivery.MessageTypeName, _delivery.CorrelationId, _delivery.MessageId);
+                return Task.CompletedTask;
+            }
+
+            dispatcher._logger.LogWarning(
+                "Requeued {MessageType} (correlation {CorrelationId}, message {MessageId}) onto the local dispatch channel, requeue {RequeueCount} of {MaxRequeueAttempts}",
+                _delivery.MessageTypeName, _delivery.CorrelationId, _delivery.MessageId, requeueCount + 1, MaxRequeueAttempts);
+            return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>
+    /// §4.4's ack model for a delivery that belongs to an in-flight inbound HTTP request: ack drops,
+    /// and both nack forms log at error and drop. See <see cref="CreateInboundRequestAck"/> for why
+    /// requeue is not supported here rather than faked with a local re-enqueue. Idempotent on exactly
+    /// the same terms as <see cref="ChannelRequeueAckContext"/>, so a double nack logs once.
+    /// </summary>
+    private sealed class InboundRequestAckContext(ILogger logger, string messageTypeName, Guid correlationId, string messageId) : IMessageAckContext
+    {
+        private int _settled;
+
+        private bool TrySettle() => Interlocked.Exchange(ref _settled, 1) == 0;
+
+        public Task AckAsync(CancellationToken cancellationToken = default)
+        {
+            TrySettle();
+            return Task.CompletedTask;
+        }
+
+        public Task NackAsync(bool requeue, CancellationToken cancellationToken = default)
+        {
+            if (!TrySettle())
+                return Task.CompletedTask;
+
+            if (requeue)
+            {
+                logger.LogError(
+                    "Dropping {MessageType} (correlation {CorrelationId}, message {MessageId}) nacked with requeue: true -- it arrived as an inbound HTTP request, whose delivery this process cannot redeliver (the peer that POSTed it owns its retry); treated as requeue: false",
+                    messageTypeName, correlationId, messageId);
+                return Task.CompletedTask;
+            }
+
+            logger.LogError(
+                "Dropping {MessageType} (correlation {CorrelationId}, message {MessageId}) nacked with requeue: false -- this transport has no dead-letter queue, so the saga's own state timeout is the safety net",
+                messageTypeName, correlationId, messageId);
+            return Task.CompletedTask;
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _localDispatchChannel.Writer.TryComplete();
@@ -285,14 +478,4 @@ public static class SyncReplyCollectorAccessor
         get => Ambient.Value;
         set => Ambient.Value = value;
     }
-}
-
-/// <summary>No broker underneath means no delivery guarantee to ack/nack against -- see docs/design/http-based-sagas.md §4.4: the in-process channel is not durable, and a saga's own state timeout is the safety net, exactly as it already is for a lost broker message.</summary>
-public sealed class NoOpAckContext : IMessageAckContext
-{
-    public static readonly NoOpAckContext Instance = new();
-
-    public Task AckAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task NackAsync(bool requeue, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

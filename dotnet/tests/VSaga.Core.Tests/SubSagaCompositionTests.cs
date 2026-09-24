@@ -46,7 +46,7 @@ public sealed class SubSagaCompositionTests : IAsyncDisposable
             .AddSaga<TestArchiveSaga, TestArchiveState>());
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
         _reader = _provider.GetRequiredService<ISagaSummaryReader>();
 
         foreach (var hosted in _provider.GetServices<IHostedService>())

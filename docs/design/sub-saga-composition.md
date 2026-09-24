@@ -12,9 +12,13 @@ its parent id." It does not. `SagaContext.PublishAsync` always stamps the *publi
 correlation id, and (at the time this analysis was written) `SagaOrchestrator.HandleCoreAsync` correlated
 strictly on the inbound correlation id — so a child publishing "I'm done" sends it under the child's own
 id, where the parent never sees it. `CorrelateBy` was not a fallback for this: it was documented as a
-business key for dashboard search, explicitly not used for routing. **Since production-readiness.md §5.2/
-§5.3 shipped, that is no longer quite true** — `CorrelateBy`, paired with `CorrelateOn`, now drives a
-business-key lookup when the transport correlation id misses. It still doesn't rescue the case this
+business key for dashboard search, explicitly not used for routing. **Since production-readiness.md
+§5.1–§5.3 shipped (§8 items 13/14), that is no longer quite true** — `CorrelateBy`, paired with
+`CorrelateOn`, now drives a
+business-key lookup when the transport correlation id misses. (Which section is which, since earlier
+drafts of this line and of `mixed-sagas.md` cited different pairs: the `CorrelateOn`/`CorrelateBy` API
+decision is **§5.1**, the `SagaState.BusinessKey` storage shape and index are **§5.2**, and the
+orchestrator's fallback lookup in `HandleCoreAsync` is **§5.3**.) It still doesn't rescue the case this
 paragraph is about, though: the lookup is scoped to `(SagaType, BusinessKey)`, and a child gets a fresh
 correlation id specifically so it can start its own saga type, so it can only ever resolve to another
 instance of the *same* saga type as the one doing the lookup — never a different saga type's instance,

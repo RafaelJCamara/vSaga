@@ -38,7 +38,20 @@ public static class VSagaHttpEndpointExtensions
         var body = bodyStream.ToArray();
 
         var headers = ExtractVSagaHeaders(context.Request.Headers);
-        var received = new ReceivedMessage(messageTypeName, correlationId, messageId, body, headers, NoOpAckContext.Instance);
+
+        // The one ack context in this adapter that cannot honour requeue: true (docs/design/http-based-sagas.md
+        // §4.4), and deliberately says so at error level instead of pretending. A delivery that arrives
+        // as an inbound HTTP request is inseparable from that request -- it is dispatched inline under
+        // the ambient SyncReplyCollector, and the status/body this peer gets back is decided by that
+        // dispatch's own outcome. Re-enqueuing a copy onto the local channel (which is what the
+        // transport's own EnqueueLocalDelivery deliveries do) would not redeliver *this* delivery: the
+        // copy would run later off the pump with no collector installed and the response already
+        // written, so a participant's reply publish -- the entire point of an inbound request on this
+        // transport -- would find nothing to capture it and throw unroutable instead. The peer that
+        // POSTed the message is the only party that can retry it, and it has already been told the
+        // outcome. Both nack forms therefore log at error and drop, which is at least diagnosable.
+        var ack = dispatcher.CreateInboundRequestAck(messageTypeName, correlationId, messageId);
+        var received = new ReceivedMessage(messageTypeName, correlationId, messageId, body, headers, ack);
 
         // CancellationToken.None, not the request's RequestAborted -- exactly RabbitMqTransport's own
         // choice for the same call (DispatchReceivedAsync passes CancellationToken.None to the handler).

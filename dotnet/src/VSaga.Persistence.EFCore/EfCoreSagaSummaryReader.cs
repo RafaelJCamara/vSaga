@@ -17,6 +17,11 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
             query = query.Where(x => x.Kind == kind);
         if (!string.IsNullOrWhiteSpace(filter.SagaType))
             query = query.Where(x => x.SagaType == filter.SagaType);
+        // Strictly greater-than — see SagaListFilter.UpdatedSince. Folded into the same composable
+        // query the CountAsync below runs, so TotalCount describes the filtered set and the caller's
+        // Skip/Take arithmetic stays consistent with it.
+        if (filter.UpdatedSince is { } updatedSince)
+            query = query.Where(x => x.UpdatedAtUtc > updatedSince);
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
             var search = filter.Search;

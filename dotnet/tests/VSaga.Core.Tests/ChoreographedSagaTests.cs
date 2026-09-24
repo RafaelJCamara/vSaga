@@ -32,7 +32,7 @@ public sealed class ChoreographedSagaTests : IAsyncDisposable
         services.AddVSagaEngine(o => o.AddSaga<TestShippingChoreography, ChoreoShippingState>());
 
         _provider = services.BuildServiceProvider();
-        _transport = (InMemoryMessageTransport)_provider.GetRequiredService<IMessageTransport>();
+        _transport = _provider.GetRequiredService<InMemoryMessageTransport>();
         _saga = _provider.GetRequiredService<TestShippingChoreography>();
 
         foreach (var hosted in _provider.GetServices<IHostedService>())

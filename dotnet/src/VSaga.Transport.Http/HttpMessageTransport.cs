@@ -92,8 +92,13 @@ public sealed class HttpMessageTransport(
 
         if (hasLocalSubscriber)
         {
-            dispatcher.EnqueueLocalDispatch(new ReceivedMessage(messageTypeName, envelope.CorrelationId, envelope.MessageId, body,
-                envelope.Headers ?? new Dictionary<string, string>(StringComparer.Ordinal), NoOpAckContext.Instance));
+            // EnqueueLocalDelivery, not a hand-built ReceivedMessage: this delivery is the dispatcher's
+            // own, so it gets the ack context that implements §4.4 for real -- nack(requeue: true)
+            // re-enqueues onto the very channel this call is writing to, carrying these same headers
+            // (x-vsaga-delivery-attempt included, which is what keeps the orchestrator's redelivery cap
+            // bounding a redelivered copy) and nack(requeue: false) logs at error and drops.
+            dispatcher.EnqueueLocalDelivery(messageTypeName, envelope.CorrelationId, envelope.MessageId, body,
+                envelope.Headers ?? new Dictionary<string, string>(StringComparer.Ordinal));
         }
 
         if (remoteUrls.Count == 1)
@@ -152,6 +157,16 @@ public sealed class HttpMessageTransport(
     /// inline from here: this call is itself running inside whatever gated dispatch published the
     /// original message, so dispatching the reply inline would either deadlock on that same
     /// correlation's gate or, worse, re-enter the saga before its own step has persisted (§3.1).
+    /// <para>
+    /// The reply is enqueued as a delivery the dispatcher owns, so §4.4's ack model applies to it in
+    /// full, requeue included. Worth being precise about why, since the reply arrived over HTTP and the
+    /// inbound-request path (VSagaHttpEndpointExtensions) deliberately cannot requeue: what makes
+    /// requeue honest is not where a message came from but whether a redelivery is indistinguishable
+    /// from the original delivery. This one already *is* a plain deferred dispatch off the local
+    /// channel -- no ambient reply collector, no HTTP response riding on its outcome -- so re-enqueuing
+    /// it reproduces its delivery exactly. An inbound request's does not; see
+    /// <see cref="HttpInboundDispatcher.CreateInboundRequestAck"/>.
+    /// </para>
     /// </summary>
     private async Task HandleSyncReplyAsync(HttpResponseMessage response, string originalMessageType, Guid originalCorrelationId, CancellationToken cancellationToken)
     {
@@ -169,7 +184,7 @@ public sealed class HttpMessageTransport(
         var replyBody = await response.Content.ReadAsByteArrayAsync(cancellationToken);
         var replyHeaders = ExtractVSagaHeaders(response.Headers);
 
-        dispatcher.EnqueueLocalDispatch(new ReceivedMessage(replyTypeName, replyCorrelationId, replyMessageId, replyBody, replyHeaders, NoOpAckContext.Instance));
+        dispatcher.EnqueueLocalDelivery(replyTypeName, replyCorrelationId, replyMessageId, replyBody, replyHeaders);
     }
 
     private Uri BuildRequestUri(string baseUrl)
