@@ -1,7 +1,13 @@
 # Observability
 
-vSaga emits both OpenTelemetry traces/metrics and a fully persisted event log — the two are
-independent and either works without the other.
+vSaga emits both OpenTelemetry traces/metrics and a fully persisted event log. They are independent as
+*wiring* — either works without the other — but they are not equivalent in kind.
+
+> **The event log is a correctness input, not an observability output.**
+> `SagaOrchestrator.GetVisitedStatesAsync` derives the entire compensation set from it, and
+> `IsDuplicateAsync` is the redelivery dedupe check (`ISagaEventLogStore.cs:5-11`). It therefore cannot
+> be sampled, truncated, or retention-pruned without changing which compensations run and re-admitting
+> messages that were already processed. Traces and metrics can be sampled freely; the event log cannot.
 
 ## The persisted event log
 
