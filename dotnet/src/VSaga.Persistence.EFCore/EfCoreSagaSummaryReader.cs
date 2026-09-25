@@ -95,7 +95,11 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
         return rows.Select(r => new SagaTypeInfo(r.SagaType, r.Kind)).ToList();
     }
 
-    public async Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, CancellationToken cancellationToken = default)
+    // expectedVersion and updatedAtUtc are accepted but not yet honoured: the conformance suite's
+    // deliberately-red cases land first, then fix F4 (docs/design/persistence-contracts.md §3) wires
+    // in the version guard, the SagaConcurrencyException mapping, and the caller's timestamp as one
+    // red-to-green change.
+    public async Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default)
     {
         var entity = await db.SagaInstances.FirstOrDefaultAsync(x => x.SagaType == sagaType && x.CorrelationId == correlationId, cancellationToken)
                      ?? throw new SagaNotFoundException(sagaType, correlationId);

@@ -153,7 +153,7 @@ public static class SagaEndpoints
         return Results.Ok(SagaMapBuilder.Build(summary, timeline, topology));
     }
 
-    private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin, IMessageTransport transport, CancellationToken ct)
+    private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider, CancellationToken ct)
     {
         var summary = await reader.GetAsync(sagaType, correlationId, ct);
         if (summary is null)
@@ -188,8 +188,34 @@ public static class SagaEndpoints
         await log.AppendAsync(SagaLogEntry.Create(correlationId, summary.SagaType, SagaEntryType.ManualRetryRequested,
             fromState: summary.CurrentState, toState: resetToState, messageType: redrive.MessageType, messageId: redrive.MessageId), ct);
 
+        return await ResetAndRedriveAsync(sagaType, correlationId, summary, resetToState, redrive, admin, transport, timeProvider, ct);
+    }
+
+    /// <summary>
+    /// The reset/republish tail of <see cref="RetrySagaAsync"/> — split out to stay under the
+    /// analyzer's method-length cap, the same shape VSaga.Core's orchestrator uses for its own
+    /// persist/dispatch tails.
+    /// </summary>
+    private static async Task<IResult> ResetAndRedriveAsync(string sagaType, Guid correlationId, SagaSummary summary, string resetToState,
+        SagaLogEntry redrive, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider, CancellationToken ct)
+    {
         if (!string.Equals(resetToState, summary.CurrentState, StringComparison.Ordinal))
-            await admin.ResetStateAsync(sagaType, correlationId, resetToState, SagaStatus.Running, ct);
+        {
+            try
+            {
+                // summary.Version is the version the caller read and validated — passing it is what
+                // makes the 409 below mean "the saga changed since you looked", not "since some
+                // later server-side re-read".
+                await admin.ResetStateAsync(sagaType, correlationId, resetToState, SagaStatus.Running, summary.Version, timeProvider.GetUtcNow(), ct);
+            }
+            catch (SagaConcurrencyException)
+            {
+                // The saga advanced between the summary read and the reset — e.g. a live message
+                // was processed concurrently. Mirrors the status guard's 409: the operator is
+                // acting on a stale view and should reload before retrying again.
+                return Results.Conflict(new { error = $"Saga '{sagaType}' instance '{correlationId}' was modified concurrently with this retry; reload and try again." });
+            }
+        }
 
         // Redrive by re-publishing the message with a fresh message id (so the dedupe check
         // doesn't discard it) and the same correlation id. This deliberately does not require the

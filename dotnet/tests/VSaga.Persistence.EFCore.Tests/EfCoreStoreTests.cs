@@ -257,7 +257,7 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         await store.InsertAsync(NewState(correlationId, "OrderSaga", "Failed"));
         await store.InsertAsync(NewState(correlationId, "ShippingChoreography", "Tracking"));
 
-        await new EfCoreSagaSummaryReader(db).ResetStateAsync("OrderSaga", correlationId, "Submitted", SagaStatus.Running);
+        await new EfCoreSagaSummaryReader(db).ResetStateAsync("OrderSaga", correlationId, "Submitted", SagaStatus.Running, expectedVersion: 0, DateTimeOffset.UtcNow);
 
         await using var db2 = NewContext();
         var reader = new EfCoreSagaSummaryReader(db2);
@@ -631,7 +631,7 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         }
 
         await using (var db2 = NewContext())
-            await new EfCoreSagaSummaryReader(db2).ResetStateAsync("TestSaga", correlationId, "Submitted", SagaStatus.Running);
+            await new EfCoreSagaSummaryReader(db2).ResetStateAsync("TestSaga", correlationId, "Submitted", SagaStatus.Running, expectedVersion: 0, DateTimeOffset.UtcNow);
 
         // The entity-level columns (read via ISagaSummaryReader) and the embedded DataJson (read via
         // ISagaSnapshotStore<TState>, which is what the orchestrator actually uses) must agree —

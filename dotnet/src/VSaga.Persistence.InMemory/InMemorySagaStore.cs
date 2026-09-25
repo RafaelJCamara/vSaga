@@ -225,7 +225,11 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
     public Task<string?> GetDataJsonAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_snapshots.TryGetValue((sagaType, correlationId), out var s) ? s.Json : null);
 
-    public Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, CancellationToken cancellationToken = default)
+    // expectedVersion and updatedAtUtc are accepted but not yet honoured: the conformance suite's
+    // deliberately-red cases land first, then fix F3 (docs/design/persistence-contracts.md §3)
+    // replaces the retry loop with the version guard and patches Version/UpdatedAtUtc into the blob
+    // as one red-to-green change.
+    public Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default)
     {
         var key = (sagaType, correlationId);
 

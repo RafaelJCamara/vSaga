@@ -6,6 +6,7 @@ using VSaga.Abstractions.Persistence;
 using VSaga.Abstractions.Sagas;
 using VSaga.Dashboard.Api.Endpoints;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace VSaga.Dashboard.Api.Tests;
 
@@ -405,6 +406,52 @@ public sealed class SagaEndpointsTests : IAsyncDisposable
         var response = await _client.PostAsync($"/api/sagas/{sagaType}/{correlationId}/retry", null);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Retry_WhenTheResetLosesAConcurrentWriteRace_Returns409()
+    {
+        // The stub stands in for a saga that advanced between the handler's summary read and its
+        // reset. Neither shipped provider throws SagaConcurrencyException from ResetStateAsync yet
+        // (the conformance fixes F3/F4 land that), but the endpoint's mapping contract exists now —
+        // without it, the first provider to honour the version guard would turn a raced retry into
+        // an unhandled 500.
+        await using var raced = _factory.WithWebHostBuilder(b => b.ConfigureServices(services =>
+        {
+            services.RemoveAll<ISagaAdminStore>();
+            services.AddSingleton<ISagaAdminStore, RacedAdminStore>();
+        }));
+        using var client = raced.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Api-Key", DashboardApiFactory.TestApiKey);
+
+        var correlationId = Guid.NewGuid();
+        await raced.Services.GetRequiredService<ISagaSnapshotStore<DashboardTestState>>().InsertAsync(new DashboardTestState
+        {
+            CorrelationId = correlationId,
+            SagaType = "OrderSaga",
+            CurrentState = "Failed",
+            Status = SagaStatus.Failed,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+        });
+        // Only a SagaStarted entry, no StepFailed: the business-failure shape, whose retry resets to
+        // the initial state and therefore actually reaches ResetStateAsync.
+        await raced.Services.GetRequiredService<ISagaEventLogStore>().AppendAsync(
+            SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.SagaStarted,
+                toState: "Submitted", messageType: "OrderSubmitted", messageId: "m0", payloadJson: "{\"OrderId\":\"X\"}"));
+
+        var response = await client.PostAsync($"/api/sagas/OrderSaga/{correlationId}/retry", null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        // The not-Failed status guard also returns 409 — the body text is what proves this one came
+        // from the concurrency mapping.
+        Assert.Contains("modified concurrently", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    private sealed class RacedAdminStore : ISagaAdminStore
+    {
+        public Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default) =>
+            throw new SagaConcurrencyException(sagaType, correlationId, expectedVersion);
     }
 
     [Fact]
