@@ -1,7 +1,8 @@
 # ADR 0003: Write the persistence contracts down, and fix what that surfaces
 
 **Status:** **Accepted** — 2026-09-25. Not yet built.
-**Amended:** 2026-09-25, after auditing the plan against the code.
+**Amended:** 2026-09-25, after auditing the plan against the code; and again the same day, after the
+conformance suite's review, to add fixes F13 and F14 and restate which commits are red.
 **Relates to:** [`0001-mongodb-persistence-provider.md`](0001-mongodb-persistence-provider.md) and
 [`0002-redis-persistence-provider.md`](0002-redis-persistence-provider.md), both of which depend on this
 and neither of which this depends on.
@@ -45,10 +46,12 @@ stay `Proposed`; this one is `Accepted`. The plan is
 [`../design/persistence-contracts.md`](../design/persistence-contracts.md).
 
 Scope is the **full** version: twelve contract clauses written into `VSaga.Abstractions`, a new
-cross-provider conformance suite, the twelve behaviour fixes that suite surfaces, and the two engine
+cross-provider conformance suite, the fourteen behaviour fixes that suite surfaces, and the two engine
 bugs. (Ten clauses and seven fixes at first draft; auditing the plan against the code added clauses
-11-12 and fixes F10-F12.) The alternative of writing the clauses only, or deferring the fixes, was rejected: the clauses
-without the suite are unenforced prose, and the suite without the fixes is red on arrival.
+11-12 and fixes F10-F12; reviewing the built suite added F13, which gives outbox headers a stated copy
+rule instead of pinning in-memory's aliasing, and F14, which gives clause 11 the fix it lacked.) The
+alternative of writing the clauses only, or deferring the fixes, was rejected: the clauses without the
+suite are unenforced prose, and the suite without the fixes is red on arrival.
 
 Five substantive questions were settled along the way.
 
@@ -179,7 +182,9 @@ the long-form plans in `docs/design/`; an ADR links to its plan rather than repe
 - `ISagaAdminStore.ResetStateAsync` gains a parameter: a breaking change to a published contract.
 - Two clauses touch code outside the providers: the claim filter reaches `VSaga.Core`'s timeout
   dispatcher, and clause 7 reaches `VSaga.Dashboard.Api`.
-- Commit 5 of the sequence is deliberately red.
+- The sequence is deliberately red from commit 6, which lands every failing case at once, until the
+  last fix: each fix commit turns only its own cases green, so the suite stays red in the shrinking set
+  of cases not yet fixed.
 
 ### Neutral
 

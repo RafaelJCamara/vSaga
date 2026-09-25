@@ -61,6 +61,12 @@ public interface ISagaOutboxStore
     /// row describing a state transition that never committed, which
     /// <see cref="ClaimPendingAsync"/>'s poller would then faithfully publish.
     /// </para>
+    /// <para>
+    /// The row records <paramref name="headers"/> as they are at this call: the store keeps its own copy,
+    /// so a caller that goes on to mutate its dictionary changes nothing stored. A row describes one
+    /// message exactly as the inline dispatch it backs sent it, and a store that kept the caller's live
+    /// dictionary would let a later mutation rewrite what the recovery poller republishes.
+    /// </para>
     /// </remarks>
     Task EnqueueAsync(string sagaType, Guid correlationId, string messageId, string messageTypeName,
         ReadOnlyMemory<byte> body, string? destination, IReadOnlyDictionary<string, string> headers,
@@ -99,10 +105,17 @@ public interface ISagaOutboxStore
     /// it's given, matching <see cref="ISagaTimeoutStore.ClaimDueAsync"/>'s own <c>asOf</c> shape.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Earliest-created first for the same reason <see cref="ISagaTimeoutStore.ClaimDueAsync"/> is
     /// earliest-due first: <paramref name="batchSize"/> truncates, and ordering decides which rows wait
     /// for a later poll — an arbitrary order could strand the oldest crash-recovered publish behind
     /// newer ones indefinitely.
+    /// </para>
+    /// <para>
+    /// Each returned row's <see cref="SagaOutboxMessage.Headers"/> is a dictionary of its own, keyed
+    /// ordinally (header names match exactly, as the transports write them) — never the dictionary
+    /// <see cref="EnqueueAsync"/> was handed.
+    /// </para>
     /// </remarks>
     Task<IReadOnlyList<SagaOutboxMessage>> ClaimPendingAsync(DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken = default);
 }

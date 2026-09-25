@@ -44,7 +44,8 @@ and they have **eight verified divergences and three shared defects** today.
 | D7 | `UpdateAsync` maps a business-key collision | **No** — catches only `DbUpdateConcurrencyException` (`EfCoreSagaSnapshotStore.cs:80-88`) | Yes — `SagaAlreadyExistsException` (`:107-109`) | F7 |
 | D8 | `GetTimelineAsync` returns ascending append order | Yes — `.OrderBy(x => x.Id)` (`EfCoreSagaEventLogStore.cs:37-40`) | **No** — returns the list unsorted (`:270-274`), and `AppendAsync` takes its sequence at `:259` *before* the `AddOrUpdate` at `:262-265`, so two concurrent appends can land out of order. Clause 5 holds by luck | **F11** |
 
-Two further divergences are **decided, not fixed** — they need a clause before a fix exists:
+Two further divergences were **decided, not fixed** at first — they needed a clause before a fix could
+exist. Clause 11 now decides D9, and **F14** fixes it (added after commit 5's review); D10 stays open:
 
 | # | Behaviour | EF Core | In-memory |
 | --- | --- | --- | --- |
@@ -58,7 +59,10 @@ And two where the difference is **legitimate but must be pinned by the suite**, 
   commits immediately (`:332-346`).
 - Outbox headers — EF rebuilds through JSON into a fresh `StringComparer.Ordinal` dictionary
   (`:26`/`:139`); in-memory stores the caller's **live reference** (`:343-344`), so a caller mutating
-  that dictionary after enqueue changes the stored row on one provider only.
+  that dictionary after enqueue changes the stored row on one provider only. **No longer pinned:**
+  **F13** unifies it (added after commit 5's review). §5.1 already asked for an independence case, and a
+  pin would have needed a public `IProviderFixture` declaration enshrining in-memory's aliasing as
+  supported behaviour for third-party providers. The copy is now a stated clause on `ISagaOutboxStore`.
 
 ### 1.2 Shared defects — both providers are wrong the same way
 
@@ -147,10 +151,16 @@ and `:89-91` covers commit conventions — neither states a red-green rule.)
 | **F10** | In-memory `Update`: restore `state.Version` on the throw path | `InMemorySagaStore.cs:90-91`, `:111` |
 | **F11** | In-memory `GetTimelineAsync`: order by `SequenceNumber` | `InMemorySagaStore.cs:270-274` |
 | **F12** | Dashboard maps `SagaConcurrencyException` → `Results.Conflict`. Without it, clause 7 turns a raced retry into an unhandled 500: `SagaEndpoints.cs:192` is a bare `await` and the API has no exception-to-status mapping | `SagaEndpoints.cs` |
+| **F13** | In-memory `EnqueueAsync`: store its own `StringComparer.Ordinal` copy of the headers rather than the caller's live dictionary (§1.1's headers row) | `InMemorySagaStore.cs` `EnqueueAsync` |
+| **F14** | EF `FindAsync`/`FindByBusinessKeyAsync`: throw when the blob deserialises to null (clause 11, D9) instead of returning null. Tested EF-only — the conformance suite writes only through the contracts, so it cannot plant a bad blob | `EfCoreSagaSnapshotStore.cs` |
+
+F13 and F14 were added after commit 5's adversarial review surfaced them: §5.1's headers case would have
+been permanently red with no fix, and clause 11 was stated as contract in commit 4 with no fix in this
+sequence at all.
 
 ---
 
-## 4. Two engine bugs
+## 4. Two engine bugs, and one EF bug the engine exposes
 
 ### B1 — the recovered `ChildSagaFinished` is republished under the wrong identity
 
@@ -187,6 +197,39 @@ discard-before-log ordering (`:874-877`).
 > Moving the `LogAsync` after the guard does **not** work: on guard-false the log still runs and still
 > flushes. And a catch-all in `HandleStepFailureAsync` does not work either, because it cannot
 > distinguish the guard-true case the comment defends. The handle has to reach the guard.
+
+### B3 — a persist that loses its race at the commit poisons EF's unit of work (recorded, not fixed here)
+
+Found by commit 5's adversarial review and verified against the code (commit `ffe7568`); **recorded,
+not scheduled** in this sequence.
+
+`EfCoreSagaSnapshotStore.UpdateAsync` loads the row with a *tracked* query (`:52`). When the race is lost
+at `SaveChangesAsync` rather than at the version pre-check (`:55-56`), the catch at `:84-88` restores
+`state.Version` and maps the exception, but leaves the failed `SagaInstanceEntity` in the change tracker
+as `Modified`. The next commit anywhere in that unit of work re-issues the stale `UPDATE ... WHERE
+"Version" = n` and throws a raw `DbUpdateConcurrencyException`.
+
+That is guaranteed on the timeout path. The claim persist (`SagaOrchestrator.cs:240`) leaves the entity
+tracked, so the final persist (`:289`) gets the stale tracked instance back from the identity map, its
+pre-check passes, and a concurrent write can only surface at the commit. The discard path then runs
+`DiscardDeferredPublishesAsync` (`:292`), whose `LogAsync` (`:887`) is the next commit and re-throws.
+The message path can hit it too, but only when the rival write lands inside the window between
+`UpdateAsync`'s read and its `SaveChangesAsync`.
+
+**Consequence.** No phantom publish — the discards (`:291`, `:878-879`) run before the failing log — but
+the first `LogAsync` throws, so none of the `DeliveryExhausted` audit entries that path exists to write
+reach the timeline, and the exception escapes to `SagaTimeoutDispatcherHostedService.cs:44-46`, which
+logs a generic "Failed to handle timeout" error on top of the distinct race-loss warning `:346-348`
+already wrote. It only fires when the lost unit of work queued deferred publishes (the loop at `:881`).
+
+**Contract reading.** Clause 4 says a commit that throws leaves staged rows staged and a later
+successful commit in the same unit of work commits them; EF breaks the "later successful commit" half
+for this failure shape. The conformance suite does not yet catch it: `SelectiveDiscard_SurvivesALaterCommit`
+loses its race at the pre-check, so its later commit succeeds.
+
+**Likely fix shape**, for whoever schedules it: in `UpdateAsync`'s catch, return the entity to its
+pre-write state (detach it, or reload it) before rethrowing, plus a conformance case that loses a race at
+the commit and then commits again in the same unit of work.
 
 ---
 
@@ -241,8 +284,10 @@ plus the `TimeProvider` clock, one breaking change), clauses 11 and 12, and B2's
 | 3 | Clause 7 + the `ResetStateAsync` signature change + F12 |
 | 4 | Clauses 9, 11, 12 |
 | 5 | `VSaga.Persistence.Conformance` + fixtures, with `IsPackable`/`IsTestProject` explicit |
-| 6 | Failing cases for F1–F7, F10, F11 — one commit, deliberately red |
+| 6 | Failing cases for F1–F7, F10, F11, F13, F14 — one commit, deliberately red |
 | 7–15 | F1 … F7, F10, F11, one each |
+| 15a | F13 (in-memory headers copy) |
+| 15b | F14 (EF null blob throws) — the last red case turns green here |
 | 16 | F8 (`pageSize` clamp) — visible API change |
 | 17 | Clause 10 + F9 — **timeout store only** |
 | 18 | B1 |
@@ -252,11 +297,18 @@ plus the `TimeProvider` clock, one breaking change), clauses 11 and 12, and B2's
 
 ### 6.1 Verification
 
-Build clean with zero warnings and `dotnet test dotnet/VSaga.slnx` green at every commit except 6, with
-the suite running against SQLite, Postgres-Testcontainers and in-memory.
+Build clean with zero warnings at every commit, with the suite running against SQLite,
+Postgres-Testcontainers and in-memory.
+
+`dotnet test dotnet/VSaga.slnx` is green through commit 5 and again from 15b on. From 6 through 15a it is
+red **only** in commit 6's own cases that are not fixed yet — each fix commit turns exactly its own cases
+green and leaves the rest red, so the failing set shrinks by one fix per commit. Any failure outside that
+set blocks a commit, the same as a red build would. (An earlier draft said "green at every commit except
+6", which a commit 6 holding every failing case at once cannot deliver; every failing case landing
+before any fix was kept as the point of the sequence.)
 
 Commits 17–19 touch message flow and timing, so `CONTRIBUTING.md:69-81` makes live verification against
-`docker compose up` a prerequisite. Mutation-test F1–F7, F10, F11, B1 and B2 per `:83-87`.
+`docker compose up` a prerequisite. Mutation-test F1–F7, F10, F11, F13, F14, B1 and B2 per `:83-87`.
 
 ---
 
