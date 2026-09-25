@@ -78,10 +78,16 @@ public interface ISagaOutboxStore
 
     /// <summary>
     /// Atomically claims (marks Dispatched) and returns up to <paramref name="batchSize"/> rows still
-    /// Pending and created at or before <paramref name="olderThan"/>, for the recovery poller to
-    /// republish. The grace period itself is the caller's concern (<c>now - DispatchGracePeriod</c>) —
-    /// this store only ever compares against the absolute cutoff it's given, matching
-    /// <see cref="ISagaTimeoutStore.ClaimDueAsync"/>'s own <c>asOf</c> shape.
+    /// Pending and created at or before <paramref name="olderThan"/>, earliest-created first, for the
+    /// recovery poller to republish. The grace period itself is the caller's concern
+    /// (<c>now - DispatchGracePeriod</c>) — this store only ever compares against the absolute cutoff
+    /// it's given, matching <see cref="ISagaTimeoutStore.ClaimDueAsync"/>'s own <c>asOf</c> shape.
     /// </summary>
+    /// <remarks>
+    /// Earliest-created first for the same reason <see cref="ISagaTimeoutStore.ClaimDueAsync"/> is
+    /// earliest-due first: <paramref name="batchSize"/> truncates, and ordering decides which rows wait
+    /// for a later poll — an arbitrary order could strand the oldest crash-recovered publish behind
+    /// newer ones indefinitely.
+    /// </remarks>
     Task<IReadOnlyList<SagaOutboxMessage>> ClaimPendingAsync(DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken = default);
 }

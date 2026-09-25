@@ -28,6 +28,15 @@ public interface ISagaTimeoutStore
     /// <summary>Cancels any pending timeout for this saga instance/state pair (called when the saga transitions away before it fires).</summary>
     Task CancelAsync(string sagaType, Guid correlationId, string forState, CancellationToken cancellationToken = default);
 
-    /// <summary>Atomically claims (marks Fired) and returns up to <paramref name="batchSize"/> due timeouts, for the dispatcher to act on.</summary>
+    /// <summary>
+    /// Atomically claims (marks Fired) and returns up to <paramref name="batchSize"/> due timeouts,
+    /// earliest-due first, for the dispatcher to act on.
+    /// </summary>
+    /// <remarks>
+    /// The ordering is part of the contract because <paramref name="batchSize"/> truncates: when more
+    /// rows are due than one claim returns, ordering decides which of them wait for a later poll.
+    /// Earliest-due first makes that wait bounded — a backlog drains oldest-first — where an arbitrary
+    /// order could leave the most overdue timeout unclaimed indefinitely under sustained load.
+    /// </remarks>
     Task<IReadOnlyList<SagaTimeout>> ClaimDueAsync(DateTimeOffset asOf, int batchSize, CancellationToken cancellationToken = default);
 }
