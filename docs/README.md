@@ -40,14 +40,36 @@ new here; the rest of this index is organized by topic, roughly in the order you
 
 ## Design records
 
-- [`design/`](design/) — design documents for features as they were planned, all shipped but one: the
-  release-automation half of `production-readiness.md` §3 was never built, and that file's own status
-  lines say so. Read these for the *reasoning* behind a decision; read the reference docs above for the
-  shipped shape.
+- [`design/`](design/) — design documents for features as they were planned. Read these for the
+  *reasoning* behind a decision; read the reference docs above for the shipped shape. Each carries its
+  own **Status** line at the top, and four of them describe work that does not exist yet: the
+  release-automation half of `production-readiness.md` §3 was never built, `persistence-contracts.md` is
+  accepted but unbuilt, and both persistence-provider plans are still proposals.
   - [`design/http-based-sagas.md`](design/http-based-sagas.md)
   - [`design/mixed-sagas.md`](design/mixed-sagas.md)
   - [`design/sub-saga-composition.md`](design/sub-saga-composition.md)
   - [`design/production-readiness.md`](design/production-readiness.md)
+  - [`design/persistence-contracts.md`](design/persistence-contracts.md) — **planned, decisions
+    accepted.** The contract clauses, cross-provider conformance suite, and divergence fixes both
+    provider plans below depend on. Stands alone; needs neither of them.
+  - [`design/mongodb-persistence.md`](design/mongodb-persistence.md) — **planned, nothing built.**
+  - [`design/redis-persistence.md`](design/redis-persistence.md) — **planned, nothing built.** Shares
+    three seams with the MongoDB plan; neither depends on the other landing first.
+
+- [`adr/`](adr/) — architecture decision records: one decision per file, numbered, stating the context,
+  the options weighed, and the consequences accepted. Newer and narrower than `design/`, which holds
+  long-form plans; an ADR links to its plan rather than repeating it.
+  - [`adr/0001-mongodb-persistence-provider.md`](adr/0001-mongodb-persistence-provider.md) — **Proposed**,
+    not accepted.
+  - [`adr/0002-redis-persistence-provider.md`](adr/0002-redis-persistence-provider.md) — **Proposed**,
+    not accepted.
+  - [`adr/0003-persistence-contract-clauses.md`](adr/0003-persistence-contract-clauses.md) —
+    **Accepted**, not yet built.
+  - [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md) — **Accepted**,
+    retroactive: records shipped behaviour, including a live documentation hazard for non-Postgres
+    providers.
+  - [`adr/0005-saga-state-storage-model.md`](adr/0005-saga-state-storage-model.md) — **Accepted**,
+    retroactive: one shared table, one opaque state blob, and the promotion rule.
 
 ## History
 
