@@ -36,16 +36,36 @@ namespace VSaga.Abstractions.Persistence;
 /// engine committed the transition, and a test driving a fake <c>TimeProvider</c> could never hold
 /// the value still.
 /// </para>
+/// <para>
+/// The state blob is <c>System.Text.Json</c> with default options — a stated contract, not an
+/// accident of implementation. The exact text matters, not just round-trip fidelity:
+/// <see cref="ISagaAdminStore"/>'s reset patches the blob by exact (PascalCase) property name, and
+/// the dashboard's Data tab keys on those same names when it renders
+/// <see cref="ISagaSummaryReader.GetDataJsonAsync"/>'s result. Providers
+/// deliberately do not share serialisation code — a shared naming-policy mistake would corrupt every
+/// provider at once, and no fixture could catch it because every fixture would round-trip through
+/// the same code — so the format is pinned per provider by a golden-blob test instead: a known
+/// state yields known JSON text.
+/// </para>
 /// </remarks>
 public interface ISagaSnapshotStore<TState> where TState : SagaState
 {
     /// <summary>Loads the saga's current state, or null if no snapshot exists for this (sagaType, correlationId) instance.</summary>
     /// <remarks>
+    /// <para>
     /// The returned object is deserialised from the stored state blob, not reassembled from projected
     /// fields — the blob is the authoritative copy of the state, and the queryable columns
     /// <see cref="ISagaSummaryReader"/> reads are a projection derived from it. A store that patched
     /// fields like <c>Version</c> back in from its projection would paper over exactly the
     /// blob/projection drift the write-side contracts exist to prevent.
+    /// </para>
+    /// <para>
+    /// Null means exactly "no such instance". A row that exists but whose blob is null or cannot be
+    /// deserialised is an <b>error</b> — the store throws rather than returning null, because null is
+    /// indistinguishable from "no such saga": an orchestrator told "no such saga" would start a fresh
+    /// instance over the live row's data, while an exception leaves the message to redeliver against
+    /// a store that can be repaired.
+    /// </para>
     /// </remarks>
     Task<TState?> FindAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default);
 

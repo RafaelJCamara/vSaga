@@ -31,7 +31,11 @@ public sealed class SagaListFilter
 
     public SagaKind? Kind { get; init; }
 
-    /// <summary>Case-insensitive substring match against SagaType and CorrelationId.</summary>
+    /// <summary>
+    /// Case-insensitive substring match against <see cref="SagaSummary.SagaType"/> and
+    /// <see cref="SagaSummary.CorrelationId"/>'s string form, each tested independently — a row
+    /// matches if either does.
+    /// </summary>
     public string? Search { get; init; }
 
     /// <summary>

@@ -10,6 +10,29 @@ public sealed record SagaTypeInfo(string SagaType, SagaKind Kind);
 /// </summary>
 public interface ISagaSummaryReader
 {
+    /// <summary>
+    /// One page of instances matching <paramref name="filter"/>, sorted by its
+    /// <see cref="SagaListFilter.SortBy"/>/<see cref="SagaListFilter.SortDescending"/> (default:
+    /// most-recently-updated first).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every sort arm — the default included — applies a <b>stable total order</b>: a deterministic
+    /// tiebreak follows the requested column so that, over unchanged data, fetching the same page
+    /// twice returns identical rows and walking consecutive pages visits every matching row exactly
+    /// once — no skips, no repeats. Without a tiebreak, rows tying on the sort column can swap sides
+    /// of a page boundary between two fetches — and the dashboard's change poller pages through
+    /// exactly such results, so a row swapping across its boundary is a live update silently dropped.
+    /// </para>
+    /// <para>
+    /// The total order is <b>per-provider</b> deterministic, not byte-identical across providers:
+    /// <c>SagaType</c> sorts under database collation on EF Core versus
+    /// <c>StringComparer.Ordinal</c> in-memory, and a relational provider orders <c>Guid</c> keys
+    /// however its column type does — SQL Server's <c>uniqueidentifier</c>, a documented target,
+    /// compares byte groups in a different order than <c>Comparer&lt;Guid&gt;.Default</c>. Nothing
+    /// consumes a cross-provider-identical order, so the contract deliberately does not require one.
+    /// </para>
+    /// </remarks>
     Task<PagedResult<SagaSummary>> ListAsync(SagaListFilter filter, CancellationToken cancellationToken = default);
 
     Task<SagaSummary?> GetAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default);
