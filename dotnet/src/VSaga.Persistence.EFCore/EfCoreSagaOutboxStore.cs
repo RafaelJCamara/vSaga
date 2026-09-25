@@ -8,8 +8,9 @@ public sealed class EfCoreSagaOutboxStore(VSagaDbContext db) : ISagaOutboxStore
 {
     /// <remarks>
     /// Adds to the change tracker without saving, per <see cref="ISagaOutboxStore.EnqueueAsync"/>'s
-    /// contract: the caller's own <c>PersistAsync</c> is what commits this row, atomically with the
-    /// snapshot it belongs to, through this same shared <see cref="VSagaDbContext"/>.
+    /// contract: the next commit in this same shared <see cref="VSagaDbContext"/> — nominally the
+    /// caller's own <c>PersistAsync</c>, atomically with the snapshot this row belongs to — is what
+    /// makes it durable.
     /// </remarks>
     public Task EnqueueAsync(string sagaType, Guid correlationId, string messageId, string messageTypeName,
         ReadOnlyMemory<byte> body, string? destination, IReadOnlyDictionary<string, string> headers,
