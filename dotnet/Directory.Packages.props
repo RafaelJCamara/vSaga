@@ -57,6 +57,13 @@
     <PackageVersion Include="WolverineFx.RabbitMQ" Version="[6.30.0,7.0.0)" />
     <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="[6.30.0,7.0.0)" />
     <PackageVersion Include="xunit" Version="2.9.3" />
+    <!-- The pieces of xunit 2.9.3, at the versions it already resolves to, for
+         VSaga.Persistence.Conformance: a library of abstract test classes needs the attributes and
+         assertions but not xunit.core's build files, which exist for runnable test projects (they set
+         IsTestProject=true and emit a runtimeconfig.json into whatever references them). -->
+    <PackageVersion Include="xunit.analyzers" Version="1.18.0" />
+    <PackageVersion Include="xunit.assert" Version="2.9.3" />
+    <PackageVersion Include="xunit.extensibility.core" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

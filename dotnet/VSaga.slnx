@@ -30,7 +30,9 @@
     <Project Path="tests/VSaga.Core.Tests/VSaga.Core.Tests.csproj" />
     <Project Path="tests/VSaga.Dashboard.Api.Tests/VSaga.Dashboard.Api.Tests.csproj" />
     <Project Path="tests/VSaga.Http.Tests/VSaga.Http.Tests.csproj" />
+    <Project Path="tests/VSaga.Persistence.Conformance/VSaga.Persistence.Conformance.csproj" />
     <Project Path="tests/VSaga.Persistence.EFCore.Tests/VSaga.Persistence.EFCore.Tests.csproj" />
+    <Project Path="tests/VSaga.Persistence.InMemory.Tests/VSaga.Persistence.InMemory.Tests.csproj" />
     <Project Path="tests/VSaga.Testing.Tests/VSaga.Testing.Tests.csproj" />
     <Project Path="tests/VSaga.Transport.Brighter.Tests/VSaga.Transport.Brighter.Tests.csproj" />
     <Project Path="tests/VSaga.Transport.Http.Tests/VSaga.Transport.Http.Tests.csproj" />

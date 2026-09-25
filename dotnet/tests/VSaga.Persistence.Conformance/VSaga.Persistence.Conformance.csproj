@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Both set explicitly because Directory.Build.props only infers them from a ".Tests" name suffix,
+       which this project deliberately lacks: it is not a test project but a library of abstract test
+       classes, packed and published like every other VSaga.* package so that a third-party persistence
+       provider can derive from it and verify itself against the same suite the shipped providers run.
+       Each provider's own test project (VSaga.Persistence.EFCore.Tests, VSaga.Persistence.InMemory.Tests)
+       supplies the concrete classes and an IProviderFixture; `dotnet test` runs them there, never here. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <!-- Package-specific description for nuget.org search results, overriding Directory.Build.props's
+       shared fallback (MSBuild evaluates that file first, so this later value wins). -->
+  <PropertyGroup>
+    <Description>Persistence conformance suite for vSaga: abstract xUnit test classes a persistence provider derives from to verify its stores honour the contracts in VSaga.Abstractions.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\VSaga.Abstractions\VSaga.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- Not the xunit metapackage: its xunit.core build files turn whatever references them into a test
+       project (IsTestProject=true, a generated runtimeconfig.json), which this library must not become.
+       The attributes and assertions are all the abstract classes need; a consumer's own test project
+       brings xunit and a runner. The analyzers stay private to this build. -->
+  <ItemGroup>
+    <PackageReference Include="xunit.analyzers" PrivateAssets="all" />
+    <PackageReference Include="xunit.assert" />
+    <PackageReference Include="xunit.extensibility.core" />
+  </ItemGroup>
+
+</Project>

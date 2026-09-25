@@ -5,9 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\VSaga.Persistence.EFCore\VSaga.Persistence.EFCore.csproj" />
-    <!-- Needed so the Postgres-only migrations assembly is loadable at runtime for MigrateAsync(). -->
-    <ProjectReference Include="..\..\src\VSaga.Persistence.EFCore.Postgres\VSaga.Persistence.EFCore.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\VSaga.Persistence.InMemory\VSaga.Persistence.InMemory.csproj" />
     <ProjectReference Include="..\VSaga.Persistence.Conformance\VSaga.Persistence.Conformance.csproj" />
   </ItemGroup>
 
@@ -16,10 +14,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
-    <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

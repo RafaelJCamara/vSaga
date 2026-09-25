@@ -44,7 +44,7 @@
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     <!-- Each package's own README.md, when its project directory has one; see the ItemGroup below. -->
     <PackageReadmeFile Condition="Exists('$(MSBuildProjectDirectory)\README.md')">README.md</PackageReadmeFile>
-    <!-- Shared icon for all 16 packages, so nuget.org shows a real thumbnail instead of the generic
+    <!-- Shared icon for every package, so nuget.org shows a real thumbnail instead of the generic
          placeholder. Referenced relative to this file's own directory (not MSBuildProjectDirectory) so
          it resolves the same regardless of which src/tests subdirectory a given project lives in. -->
     <PackageIcon>icon.png</PackageIcon>
