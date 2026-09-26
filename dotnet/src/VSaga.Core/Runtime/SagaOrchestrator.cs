@@ -49,15 +49,20 @@ public sealed class SagaOrchestrator<TState>(
         // RecordDeliveryExhaustedAsync's own note: this is NOT used for the redelivery envelope itself,
         // only for the dead-letter bookkeeping once attempts are exhausted.
         var resolvedCorrelationId = received.CorrelationId;
+        // The engine's own ChildSagaFinished row HandleStepFailureAsync staged into the shared unit of
+        // work and has not yet committed or discarded, captured the same way for the same reason: if
+        // the failure persist throws, RecordDeliveryExhaustedAsync's append is the next commit in that
+        // unit of work, and it must know what it is about to flush -- see B2 there.
+        StagedChildSagaFinished? uncommittedChildFinished = null;
 
         try
         {
-            await HandleCoreAsync(received, id => resolvedCorrelationId = id, cancellationToken);
+            await HandleCoreAsync(received, id => resolvedCorrelationId = id, staged => uncommittedChildFinished = staged, cancellationToken);
             await received.Ack.AckAsync(cancellationToken);
         }
         catch (Exception ex)
         {
-            await HandleInfrastructureFailureAsync(received, resolvedCorrelationId, ex, cancellationToken);
+            await HandleInfrastructureFailureAsync(received, resolvedCorrelationId, uncommittedChildFinished, ex, cancellationToken);
         }
     }
 
@@ -70,7 +75,7 @@ public sealed class SagaOrchestrator<TState>(
     /// reaches RabbitMqTransport's own dispatch-level catch, which nacks without requeue, so a
     /// redelivery that can't even be attempted still fails safe into the dead-letter queue.
     /// </summary>
-    private async Task HandleInfrastructureFailureAsync(ReceivedMessage received, Guid resolvedCorrelationId, Exception ex, CancellationToken cancellationToken)
+    private async Task HandleInfrastructureFailureAsync(ReceivedMessage received, Guid resolvedCorrelationId, StagedChildSagaFinished? uncommittedChildFinished, Exception ex, CancellationToken cancellationToken)
     {
         var attempt = GetDeliveryAttempt(received.Headers);
 
@@ -97,7 +102,7 @@ public sealed class SagaOrchestrator<TState>(
         logger.LogError(ex, "Infrastructure error processing {MessageType} for saga {SagaType} after {MaxAttempts} delivery attempts; dead-lettering",
             received.MessageTypeName, SagaType, options.MaxDeliveryAttempts);
 
-        await RecordDeliveryExhaustedAsync(received, resolvedCorrelationId, ex, cancellationToken);
+        await RecordDeliveryExhaustedAsync(received, resolvedCorrelationId, uncommittedChildFinished, ex, cancellationToken);
         await received.Ack.NackAsync(requeue: false, cancellationToken);
     }
 
@@ -117,19 +122,41 @@ public sealed class SagaOrchestrator<TState>(
     /// terminal state recorded. Falls back to received.CorrelationId when resolution never got that far
     /// (e.g. a deserialize failure), which is the correct id in that case.
     /// </param>
+    /// <param name="uncommittedChildFinished">
+    /// The engine's ChildSagaFinished row HandleStepFailureAsync staged before the failure persist
+    /// that then threw, still uncommitted in the shared unit of work; null when nothing is staged.
+    /// </param>
     /// <param name="ex">The infrastructure exception that exhausted redelivery, recorded as the DeliveryExhausted entry's error message.</param>
     /// <param name="cancellationToken">Cancellation token for the log/persist/notify calls below.</param>
-    private async Task RecordDeliveryExhaustedAsync(ReceivedMessage received, Guid resolvedCorrelationId, Exception ex, CancellationToken cancellationToken)
+    private async Task RecordDeliveryExhaustedAsync(ReceivedMessage received, Guid resolvedCorrelationId, StagedChildSagaFinished? uncommittedChildFinished, Exception ex, CancellationToken cancellationToken)
     {
         try
         {
+            // The guard is evaluated before the append below, because that append is the next commit
+            // in the shared unit of work and flushes whatever HandleStepFailureAsync staged (B2,
+            // docs/design/persistence-contracts.md §4). Guard-true is fine: this path marks the saga
+            // Failed too, so the row it commits matches the outcome actually recorded. Guard-false is
+            // not -- no snapshot at all, or a status already terminal -- and the row would announce a
+            // Failed finish nobody recorded, so it is discarded first, before anything can commit it,
+            // the same discard-before-log ordering DiscardDeferredPublishesAsync keeps.
+            var state = await snapshotStore.FindAsync(SagaType, resolvedCorrelationId, cancellationToken);
+            var markFailed = state is not null && state.Status is not (SagaStatus.Completed or SagaStatus.Failed or SagaStatus.TimedOut);
+
+            if (!markFailed && uncommittedChildFinished is { } staged)
+            {
+                await outboxStore.DiscardPendingAsync([staged.Envelope.MessageId], cancellationToken);
+
+                logger.LogWarning(
+                    "Discarding the engine's ChildSagaFinished for saga {SagaType} correlation {CorrelationId}: its failure persist never committed and the saga's recorded status is {Status}, so announcing a Failed finish would not match what was recorded",
+                    SagaType, resolvedCorrelationId, state?.Status.ToString() ?? "none");
+            }
+
             await LogAsync(SagaLogEntry.Create(resolvedCorrelationId, SagaType, SagaEntryType.DeliveryExhausted,
                 messageType: received.MessageTypeName, messageId: received.MessageId, errorMessage: ex.Message), cancellationToken);
 
-            var state = await snapshotStore.FindAsync(SagaType, resolvedCorrelationId, cancellationToken);
-            if (state is not null && state.Status is not (SagaStatus.Completed or SagaStatus.Failed or SagaStatus.TimedOut))
+            if (markFailed)
             {
-                var expectedVersion = state.Version;
+                var expectedVersion = state!.Version;
                 state.Status = SagaStatus.Failed;
                 await PersistAsync(state, isNew: false, expectedVersion, cancellationToken);
 
@@ -138,9 +165,7 @@ public sealed class SagaOrchestrator<TState>(
                 // records the duration; the other three are RecordTimeoutOutcomeAsync,
                 // HandleStepFailureAsync, and PersistAndFinalizeStepSuccessAsync. Recorded only after the
                 // persist above actually commits, same reasoning as those three.
-                VSagaDiagnostics.SagasFailed.Add(1, new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));
-                VSagaDiagnostics.SagaDuration.Record((timeProvider.GetUtcNow() - state.CreatedAtUtc).TotalMilliseconds,
-                    new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));
+                RecordSagaFailed(state);
 
                 await notifier.SagaUpdatedAsync(ToSummary(state), cancellationToken);
             }
@@ -214,8 +239,10 @@ public sealed class SagaOrchestrator<TState>(
         await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.ManualRetryRequested,
             fromState: existing.CurrentState, messageType: lastFailure.MessageType, messageId: lastFailure.MessageId), cancellationToken);
 
+        // No dead-letter path behind a manual retry: a persist that throws here propagates to the
+        // caller, and with it the unit of work, so nothing later commits what this step staged.
         await RunStepAsync(existing, message, lastFailure.MessageType, lastFailure.MessageId ?? Guid.NewGuid().ToString("N"),
-            new Dictionary<string, string>(StringComparer.Ordinal), isNew: false, needsInsert: false, cancellationToken);
+            new Dictionary<string, string>(StringComparer.Ordinal), isNew: false, needsInsert: false, onChildFinishedStaged: static _ => { }, cancellationToken);
     }
 
     /// <summary>Invoked by the timeout dispatcher for a due, previously-scheduled state timeout.</summary>
@@ -358,7 +385,7 @@ public sealed class SagaOrchestrator<TState>(
         }
     }
 
-    private async Task HandleCoreAsync(ReceivedMessage received, Action<Guid> onResolved, CancellationToken cancellationToken)
+    private async Task HandleCoreAsync(ReceivedMessage received, Action<Guid> onResolved, Action<StagedChildSagaFinished?> onChildFinishedStaged, CancellationToken cancellationToken)
     {
         if (!_messageTypesByName.TryGetValue(received.MessageTypeName, out var clrType))
         {
@@ -401,7 +428,7 @@ public sealed class SagaOrchestrator<TState>(
             return;
         }
 
-        await RunStepAsync(existing, message, received.MessageTypeName, received.MessageId, received.Headers, isNew, needsInsert, cancellationToken);
+        await RunStepAsync(existing, message, received.MessageTypeName, received.MessageId, received.Headers, isNew, needsInsert, onChildFinishedStaged, cancellationToken);
     }
 
     /// <summary>
@@ -569,7 +596,7 @@ public sealed class SagaOrchestrator<TState>(
     }
 
     private async Task RunStepAsync(TState state, object message, string messageTypeName, string messageId,
-        IReadOnlyDictionary<string, string> headers, bool isNew, bool needsInsert, CancellationToken cancellationToken)
+        IReadOnlyDictionary<string, string> headers, bool isNew, bool needsInsert, Action<StagedChildSagaFinished?> onChildFinishedStaged, CancellationToken cancellationToken)
     {
         var correlationId = state.CorrelationId;
         var expectedVersion = state.Version;
@@ -602,7 +629,7 @@ public sealed class SagaOrchestrator<TState>(
         {
             stopwatch.Stop();
             VSagaDiagnostics.StepDuration.Record(stopwatch.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));
-            await HandleStepFailureAsync(state, ex, correlationId, fromState, message, messageTypeName, messageId, needsInsert, expectedVersion, activity, context, cancellationToken);
+            await HandleStepFailureAsync(state, ex, correlationId, fromState, message, messageTypeName, messageId, needsInsert, expectedVersion, activity, context, onChildFinishedStaged, cancellationToken);
             return;
         }
 
@@ -621,7 +648,8 @@ public sealed class SagaOrchestrator<TState>(
     /// <c>isNew</c> parameter.
     /// </summary>
     private async Task HandleStepFailureAsync(TState state, Exception ex, Guid correlationId, string fromState, object message,
-        string messageTypeName, string messageId, bool needsInsert, int expectedVersion, Activity? activity, SagaContext<TState> context, CancellationToken cancellationToken)
+        string messageTypeName, string messageId, bool needsInsert, int expectedVersion, Activity? activity, SagaContext<TState> context,
+        Action<StagedChildSagaFinished?> onChildFinishedStaged, CancellationToken cancellationToken)
     {
         state.Status = SagaStatus.Failed;
 
@@ -639,14 +667,17 @@ public sealed class SagaOrchestrator<TState>(
 
         // Staged before the persist, like every other outbox row, so the row recording "this saga
         // finished Failed" commits with the snapshot that says so. If this persist throws, the row stays
-        // uncommitted and the message is never announced -- and on the redelivery-exhausted path, where
-        // RecordDeliveryExhaustedAsync's own append does flush it, that path marks the saga Failed too,
-        // so the row it commits still matches the outcome that was actually recorded.
+        // uncommitted until the redelivery-exhausted path's own append flushes it -- which is why the
+        // handle is reported to HandleAsync while staged: that path marks the saga Failed too when it
+        // can, so the row matches what was recorded, and discards the row when it cannot (B2). Reported
+        // as null again once the persist below commits the row or its race loss discards it.
         var stagedChildFinished = await StageChildSagaFinishedAsync(state, SagaStatus.Failed, messageId, cancellationToken);
+        onChildFinishedStaged(stagedChildFinished);
 
         try
         {
             await PersistAsync(state, needsInsert, expectedVersion, cancellationToken);
+            onChildFinishedStaged(null);
         }
         catch (SagaConcurrencyException)
         {
@@ -660,12 +691,11 @@ public sealed class SagaOrchestrator<TState>(
             // catch drives the usual infrastructure-failure redelivery -- §5.4/§8.15 confirmed this
             // exception reliably reaches it.
             await DiscardStagedChildSagaFinishedAsync(state, stagedChildFinished, fromState, cancellationToken);
+            onChildFinishedStaged(null);
             throw;
         }
 
-        VSagaDiagnostics.SagasFailed.Add(1, new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));
-        VSagaDiagnostics.SagaDuration.Record((timeProvider.GetUtcNow() - state.CreatedAtUtc).TotalMilliseconds,
-            new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));
+        RecordSagaFailed(state);
 
         // Anything queued via ctx.PublishAfterCommitAsync before the throw belongs to a transition that
         // was never reached -- the persist just above records Failed, not the outcome those publishes
@@ -888,6 +918,14 @@ public sealed class SagaOrchestrator<TState>(
                 fromState: forState, messageType: messageType,
                 errorMessage: "Deferred publish discarded: its timeout lost the persist race before committing."), cancellationToken);
         }
+    }
+
+    /// <summary>The two counters every path reaching Failed records, once its persist has actually committed (production-readiness.md sections 6 and 8.18).</summary>
+    private void RecordSagaFailed(TState state)
+    {
+        VSagaDiagnostics.SagasFailed.Add(1, new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));
+        VSagaDiagnostics.SagaDuration.Record((timeProvider.GetUtcNow() - state.CreatedAtUtc).TotalMilliseconds,
+            new KeyValuePair<string, object?>(VSagaDiagnostics.TagSagaType, SagaType));
     }
 
     private Task PersistAsync(TState state, bool isNew, int expectedVersion, CancellationToken cancellationToken)
