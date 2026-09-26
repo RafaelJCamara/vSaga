@@ -24,8 +24,17 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
             query = query.Where(x => x.UpdatedAtUtc > updatedSince);
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
-            var search = filter.Search;
-            query = query.Where(x => EF.Functions.Like(x.SagaType, $"%{search}%") || x.CorrelationId.ToString().Contains(search));
+            // Case-insensitive on every provider (SagaListFilter.Search): both the column and the term
+            // are lowered, which EF Core translates to LOWER() everywhere, rather than leaning on a
+            // provider's own collation or on an extension such as Npgsql's ILIKE. LIKE would not do --
+            // SQLite's is case-insensitive for ASCII and Postgres's is not -- and Contains also escapes
+            // the term's own % and _ where a hand-built LIKE pattern treated them as wildcards. A Guid
+            // is stored upper-case as TEXT by SQLite and rendered lower-case by Postgres's uuid, so the
+            // correlation-id disjunct needs the same treatment as the saga type.
+            var search = filter.Search.ToLowerInvariant();
+#pragma warning disable CA1304, CA1311, CA1862, MA0011 // this is an expression tree, not a string call: EF Core translates only the parameterless ToLower() and the plain Contains(string) to SQL, and the culture overloads the analyzers ask for would not translate at all
+            query = query.Where(x => x.SagaType.ToLower().Contains(search) || x.CorrelationId.ToString().ToLower().Contains(search));
+#pragma warning restore CA1304, CA1311, CA1862, MA0011
         }
 
         var page = Math.Max(filter.Page, 1);
