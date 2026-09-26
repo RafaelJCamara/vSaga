@@ -117,31 +117,48 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
         return rows.Select(r => new SagaTypeInfo(r.SagaType, r.Kind)).ToList();
     }
 
-    // expectedVersion and updatedAtUtc are accepted but not yet honoured: the conformance suite's
-    // deliberately-red cases land first, then fix F4 (docs/design/persistence-contracts.md §3) wires
-    // in the version guard, the SagaConcurrencyException mapping, and the caller's timestamp as one
-    // red-to-green change.
     public async Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default)
     {
         var entity = await db.SagaInstances.FirstOrDefaultAsync(x => x.SagaType == sagaType && x.CorrelationId == correlationId, cancellationToken)
                      ?? throw new SagaNotFoundException(sagaType, correlationId);
 
-        // DataJson embeds its own CurrentState/Status (it's the full serialized TState) — patch by
-        // property name rather than deserializing into a concrete TState (unknown here), same fix as
-        // EfCoreSagaSnapshotStore's Version bug: the entity columns and DataJson must never disagree,
-        // since FindAsync<TState> reads CurrentState/Status back out of DataJson, not the columns.
-        var newVersion = entity.Version + 1;
+        // Version-guarded, never retried (ISagaAdminStore): the operator passed the version they saw,
+        // and a saga that moved past it is being processed -- clobbering that step's transition is the
+        // bug this guard exists to refuse.
+        if (entity.Version != expectedVersion)
+            throw new SagaConcurrencyException(sagaType, correlationId, expectedVersion);
+
+        // DataJson embeds its own copy of these fields (it's the full serialized TState) -- patch by
+        // property name rather than deserializing into a concrete TState (unknown here). All four
+        // engine-owned fields move in lockstep with the columns: FindAsync<TState> reads them back out
+        // of DataJson, not the columns, so a projection-only reset would be invisible to the engine,
+        // and a blob still carrying the old Version would make the saga's first persist after the reset
+        // a concurrency failure against a write nobody raced. The timestamp is the caller's, from its
+        // own TimeProvider, not a store-side UtcNow.
+        var newVersion = expectedVersion + 1;
         var node = JsonNode.Parse(entity.DataJson)!.AsObject();
         node["CurrentState"] = currentState;
         node["Status"] = (int)status;
         node["Version"] = newVersion;
+        node["UpdatedAtUtc"] = updatedAtUtc;
 
         entity.DataJson = node.ToJsonString();
         entity.CurrentState = currentState;
         entity.Status = status;
         entity.Version = newVersion;
-        entity.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        entity.UpdatedAtUtc = updatedAtUtc;
 
-        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // The guard above read the identity map's copy of the row, which a rival unit of work may
+            // have moved past since this one loaded it; Version is the concurrency token, so the race
+            // surfaces here at the write and is reported as the same SagaConcurrencyException the
+            // dashboard maps to a 409, not as a provider exception.
+            throw new SagaConcurrencyException(sagaType, correlationId, expectedVersion);
+        }
     }
 }
