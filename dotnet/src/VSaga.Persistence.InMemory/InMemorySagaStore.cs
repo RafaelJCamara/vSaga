@@ -238,37 +238,47 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
     public Task<string?> GetDataJsonAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default) =>
         Task.FromResult(_snapshots.TryGetValue((sagaType, correlationId), out var s) ? s.Json : null);
 
-    // expectedVersion and updatedAtUtc are accepted but not yet honoured: the conformance suite's
-    // deliberately-red cases land first, then fix F3 (docs/design/persistence-contracts.md §3)
-    // replaces the retry loop with the version guard and patches Version/UpdatedAtUtc into the blob
-    // as one red-to-green change.
     public Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default)
     {
         var key = (sagaType, correlationId);
 
-        while (true)
+        if (!_snapshots.TryGetValue(key, out var current))
+            throw new SagaNotFoundException(sagaType, correlationId);
+
+        // Version-guarded, never retried (ISagaAdminStore): the operator passed the version they saw,
+        // and a saga that moved past it is being processed -- clobbering that step's transition is the
+        // bug this guard exists to refuse.
+        if (current.Version != expectedVersion)
+            throw new SagaConcurrencyException(sagaType, correlationId, expectedVersion);
+
+        // Patch the embedded JSON by property name rather than deserializing into a concrete TState
+        // (unknown here) -- keeps this store genuinely saga-type-agnostic. All four engine-owned fields
+        // move in lockstep with the projection: Find reads CurrentState/Status/Version/UpdatedAtUtc
+        // back out of the blob, so a projection-only reset would be invisible to the engine, and a
+        // blob still carrying the old Version would make the saga's first persist after the reset a
+        // concurrency failure against a write nobody raced.
+        var newVersion = expectedVersion + 1;
+        var node = JsonNode.Parse(current.Json)!.AsObject();
+        node["CurrentState"] = currentState;
+        node["Status"] = (int)status;
+        node["Version"] = newVersion;
+        node["UpdatedAtUtc"] = updatedAtUtc;
+
+        var updated = current with
         {
-            if (!_snapshots.TryGetValue(key, out var current))
-                throw new SagaNotFoundException(sagaType, correlationId);
+            Json = node.ToJsonString(),
+            CurrentState = currentState,
+            Status = status,
+            Version = newVersion,
+            UpdatedAtUtc = updatedAtUtc,
+        };
 
-            // Patch the embedded JSON's CurrentState/Status by property name rather than deserializing
-            // into a concrete TState (unknown here) — keeps this store genuinely saga-type-agnostic.
-            var node = JsonNode.Parse(current.Json)!.AsObject();
-            node["CurrentState"] = currentState;
-            node["Status"] = (int)status;
+        // A rival that wrote between the guard above and this compare-and-swap is the same race seen
+        // at the write, and gets the same answer.
+        if (!_snapshots.TryUpdate(key, updated, current))
+            throw new SagaConcurrencyException(sagaType, correlationId, expectedVersion);
 
-            var updated = current with
-            {
-                Json = node.ToJsonString(),
-                CurrentState = currentState,
-                Status = status,
-                Version = current.Version + 1,
-                UpdatedAtUtc = DateTimeOffset.UtcNow,
-            };
-
-            if (_snapshots.TryUpdate(key, updated, current))
-                return Task.CompletedTask;
-        }
+        return Task.CompletedTask;
     }
 
     public Task<long> AppendAsync(SagaLogEntry entry, CancellationToken cancellationToken = default)
