@@ -13,7 +13,7 @@ jobs:
     env:
       # Ryuk (Testcontainers' cleanup sidecar) pulls its own image from Docker Hub before every
       # container it starts, and a transient registry hiccup there fails every Testcontainers-backed
-      # test in the run at once (Postgres, Brighter, MassTransit, RabbitMQ tests all together) even
+      # test in the run at once (Postgres, Redis, MongoDB, Brighter, MassTransit, RabbitMQ tests all together) even
       # though nothing about them is actually broken. Ryuk's job is reaping containers left behind by
       # a crashed run; on a GitHub-hosted runner the whole VM is destroyed after the job anyway, so
       # it's redundant here and disabling it removes this whole flake class.

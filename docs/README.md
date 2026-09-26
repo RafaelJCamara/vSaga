@@ -15,7 +15,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
   outbox, each transport adapter, chaos, dashboard auth, OpenTelemetry wiring (the TypeScript SDK's
   options live in each package's own README instead, cross-linked from there).
 - [`persistence.md`](persistence.md) — EF Core/Postgres (migrations, the Postgres-volume caveat),
-  Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
+  MongoDB (the replica-set prerequisite, pinned write concern, the collections and indexes, supported
+  servers), Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
   persistence.
 - [`observability.md`](observability.md) — the persisted event log, OpenTelemetry traces/metrics,
   and the one-line OTLP exporter wiring.
@@ -43,9 +44,9 @@ new here; the rest of this index is organized by topic, roughly in the order you
 
 - [`design/`](design/) — design documents for features as they were planned. Read these for the
   *reasoning* behind a decision; read the reference docs above for the shipped shape. Each carries its
-  own **Status** line at the top, and four of them describe work that does not exist yet: the
-  release-automation half of `production-readiness.md` §3 was never built, `persistence-contracts.md` is
-  accepted but unbuilt, and both persistence-provider plans are still proposals.
+  own **Status** line at the top; one of them describes work that does not exist: the
+  release-automation half of `production-readiness.md` §3 was never built. The three persistence plans
+  are all implemented.
   - [`design/http-based-sagas.md`](design/http-based-sagas.md)
   - [`design/mixed-sagas.md`](design/mixed-sagas.md)
   - [`design/sub-saga-composition.md`](design/sub-saga-composition.md)
@@ -53,8 +54,10 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`design/persistence-contracts.md`](design/persistence-contracts.md) — **implemented,
     2026-09-26.** The contract clauses, cross-provider conformance suite, and divergence fixes both
     provider plans below depend on; all 21 commits landed. Stands alone; needs neither of them.
-  - [`design/mongodb-persistence.md`](design/mongodb-persistence.md) — **accepted, nothing built.** Its
-    Stage 0 prerequisite is done; the next decisions are the plan's Q2–Q4.
+  - [`design/mongodb-persistence.md`](design/mongodb-persistence.md) — **implemented, 2026-09-26.**
+    `VSaga.Persistence.MongoDB` is built on the native driver and live-verified against a replica set,
+    including a killed saga host mid-step; the plan records how each blocking question was decided and
+    where the build deviated from it.
   - [`design/redis-persistence.md`](design/redis-persistence.md) — **implemented, 2026-09-26.**
     `VSaga.Persistence.Redis` is built and live-verified; the plan records where the build deviated from
     it. It also authored the two seams it shared with the MongoDB plan (the `Persistence:Provider`
@@ -64,7 +67,7 @@ new here; the rest of this index is organized by topic, roughly in the order you
   the options weighed, and the consequences accepted. Newer and narrower than `design/`, which holds
   long-form plans; an ADR links to its plan rather than repeating it.
   - [`adr/0001-mongodb-persistence-provider.md`](adr/0001-mongodb-persistence-provider.md) — **Accepted**
-    2026-09-26, not built.
+    and **implemented** 2026-09-26.
   - [`adr/0002-redis-persistence-provider.md`](adr/0002-redis-persistence-provider.md) — **Accepted**
     and **implemented** 2026-09-26.
   - [`adr/0003-persistence-contract-clauses.md`](adr/0003-persistence-contract-clauses.md) —

@@ -1,14 +1,17 @@
 # Design: MongoDB persistence
 
-**Status: accepted (ADR 0001, 2026-09-26), nothing built.** Stage 0 has landed; Q2–Q4 in §9 are the next decisions. No `VSaga.Persistence.MongoDB` project exists; no line of this has
-been written. This file is the plan and the reasoning behind it, written to be picked up cold. The
-decision it argues for is recorded separately in
-[`../adr/0001-mongodb-persistence-provider.md`](../adr/0001-mongodb-persistence-provider.md) — read the
-ADR for *what* was decided and why; read this file for *how* it gets built and what is still open.
+**Status: implemented, 2026-09-26.** `VSaga.Persistence.MongoDB` is built on the native driver, green
+on the full conformance suite against a MongoDB 8 replica set plus its own MongoDB-specific cases,
+selectable through `Persistence:Provider` in both hosts, and live-verified under
+`docker-compose.mongo.yml` including a `SIGKILL` of the saga host between a persist and its inline
+drain. §8.2 records what landed against each stage and where the build deviated from this plan; §9
+records how each blocking question was decided. The shipped shape is documented in
+[`../persistence.md`](../persistence.md#mongodb); this file stays as the reasoning behind it, and the
+decision it argued for is recorded in
+[`../adr/0001-mongodb-persistence-provider.md`](../adr/0001-mongodb-persistence-provider.md).
 
-**Stage 0 is blocking and it is not Mongo work.** The first three commits change two already-shipped
-providers and a published abstractions package before any Mongo code exists. That is the single most
-important thing to agree or reject before anything starts — see §9 (Q1).
+**Stage 0 was blocking and it was not Mongo work.** It landed first, as
+[`persistence-contracts.md`](persistence-contracts.md), and this plan consumed it unchanged — see §3.
 
 Every claim about the current codebase carries a `file:line` so it can be re-checked rather than
 trusted. Line numbers are accurate at commit `b2b99fd`; re-grep rather than trusting them once the tree
@@ -564,12 +567,66 @@ Docker-always note), and two package READMEs. **Do not** update
 `docs/design/production-readiness.md`'s project counts: its preamble (`:5-8`) declares it a historical
 record kept rather than rewritten.
 
+### 8.2 What landed, 2026-09-26
+
+Every stage from 1 to 10 landed; the record of the live run is
+[`../history/mongodb-persistence-provider.md`](../history/mongodb-persistence-provider.md). Stage gates
+as met: the real `dotnet restore` of the solution hit R-5 exactly as predicted — `MongoDB.Driver` 3.6
+declares `SharpCompress` 0.30.1 and `Snappier` 1.0.0, both under NuGet advisories — and both are pinned
+centrally to patched versions, which transitive pinning promotes to direct dependencies of the package
+(visible in the nuspec, as the gate asked); Stage 1b's spike is the fixture itself, since
+`MongoDbBuilder.WithReplicaSet` stands up a single-member set whose connection string carries
+`directConnection=true`; sixteen parallel inserts on one business key yield one winner; a staged row
+survives an insert that collides and is committed by the next persist; the conformance suite's 8 × 50
+concurrent appends yield 400 distinct ascending `seq` for an instance whose counter did not exist; the
+racing-claim cases run at 8 workers over 120 rows; a 2000-row drain over rows sharing one instant returns
+each exactly once with no sort stage in the plan; a standalone `mongod` reports Unhealthy naming the
+prerequisite while DI resolves and the host never crashes; and the whole suite is green — 109 tests in
+`VSaga.Persistence.MongoDB.Tests`.
+
+**One finding the explain gate caught.** The plan's `$type: "string"` partial filter on
+`ux_sagaType_businessKey` is right, but a query `{sagaType, businessKey: "x"}` does **not** use it: the
+planner does not infer a string from an equality, and the first explain showed `FindByBusinessKeyAsync`
+scanning every instance of the saga type through `ix_sagaType_updated`. The lookup now carries the same
+`$type: "string"` predicate, and the explain case pins the index by name.
+
+**Deviations from this plan, each deliberate:**
+
+1. **The health check is registered by the host, not by `AddVSagaMongoDb`** (Q13). The Redis provider
+   left the registration in `Dashboard.Api` under the neutral `"persistence"` name because moving it
+   into a persistence package needs `Microsoft.Extensions.Diagnostics.HealthChecks` rather than
+   `.Abstractions`; this provider follows that precedent, so all three provider packages have the same
+   dependency footprint. `PostgresHealthCheck` stays where it is.
+2. **The stranded-work mitigation reports only Pending outbox rows older than a threshold.** The plan's
+   second count — Fired timeouts older than an hour — was dropped: `Fired` is a terminal status the
+   engine never cleans up, so that count only ever grows and says nothing about stranding.
+3. **A `sagaCounters` collection exists** that the plan did not name: `SagaTimeout.Id` and
+   `SagaOutboxMessage.Id` are `long`, so a timeout takes its id from a counter before its insert, and a
+   flush allocates one range for its staged rows before the transaction. Ids skipped by an abort are
+   harmless.
+4. **The transaction callback aborts from inside on a version miss** rather than throwing: the driver
+   returns the callback's result when the session is no longer in a transaction, which keeps the
+   version-miss path free of a custom exception type. The plan's consequence stands — the callback may
+   run more than once, so the bump, the serialisation and the id allocation all happen outside it.
+5. **The Status sort's identity tiebreak follows the `UpdatedAt` direction**, not EF Core's always-
+   ascending one, so each Status walk is served by exactly one of the two status indexes (both of which
+   shipped; the plan called the second deferrable).
+6. **`Search` uses no `i` regex option**: the saga type is stored lower-cased beside the original
+   (`sagaTypeLower`) and the correlation id's text is lower-case already, so the escaped, lower-cased term
+   is a plain substring regex over both.
+7. **No in-process orchestrator-sequence test was added against MongoDB** (Stage 7's second half). The
+   engine ran end to end against the provider in the live run instead, under the sample's seven saga
+   types, sub-sagas, timeouts and the killed host; `SagaTestHarness` stays in-memory as the plan requires.
+8. **The minimum server version is 6.0**, enforced by the probe; 8.0 is what the tests and the live run
+   used.
+
 ---
 
 ## 9. Open questions
 
-Five are now resolved (Q1, Q5, Q6, Q7, Q11 — see ADR 0003). **Three blocking questions remain**, all
-specific to MongoDB itself: Q2, Q3, Q4.
+Five were resolved by ADR 0003 (Q1, Q5, Q6, Q7, Q11). **The three blocking questions were decided on
+2026-09-26, at Stage 1, as this section recommended;** each carries its resolution below, as do the
+non-blocking ones the build had to answer.
 
 ### Q1 — Is Stage 0 a prerequisite, or can Mongo start first? — **RESOLVED**
 
@@ -598,6 +655,12 @@ the outbox row's `CorrelationId` is the **envelope's**, not the publishing saga'
 documented at parity only once the conformance suite is green on all three providers *and* Stage 9's
 killed-host-mid-step verification passes.
 
+**Decided: (1).** No escape hatch exists; a persist with staged rows on a standalone `mongod` fails
+with the driver's own `Standalone servers do not support transactions`, and the probe reports the
+prerequisite before any message arrives. Both conditions of the sub-question were met the same day —
+the suite is green on all four providers and the killed host's rows were republished — so
+`persistence.md` calls MongoDB a production-tier peer without qualification.
+
 ### Q3 — Does the provider override the operator's connection string, or only validate it? *(blocking)*
 
 R-3 and R-4 are two silent-corruption paths that no correctness test can catch.
@@ -607,6 +670,12 @@ R-3 and R-4 are two silent-corruption paths that no correctness test can catch.
 
 **Recommendation: (2)**, with a per-collection write-concern table in `docs/persistence.md` and PSA
 documented as unsupported. Cheap, testable without Docker, closes both paths at once.
+
+**Decided: (2).** `MongoConnection` pins primary/local/majority on the client settings and on the
+database handle every collection inherits, and lists each setting the URI states explicitly that differs
+(`readPreference`, `w`, `readConcernLevel`) as a contradiction; the probe reports every contradiction as
+Unhealthy, naming the guarantee. Three URIs pin the verdicts in tests without a container. PSA is
+documented as unsupported.
 
 ### Q4 — What is the bootstrap/health/startup failure model? *(blocking)*
 
@@ -620,6 +689,11 @@ land, never crash. (3) Retrying bootstrapper, `Degraded` (HTTP 200) while bootst
 **Recommendation: (2).** It is the only option that keeps both properties. (3) is tempting because
 `Degraded` maps to 200 in `MapHealthChecks` (`Program.cs:115`), but that starts `order-processing` against
 a database with no unique index.
+
+**Decided: (2).** `MongoPersistenceBootstrapper` retries on `ProbeInterval` for as long as the host
+runs, creating the indexes on every tick and writing the schema marker only once they exist; the probe
+reports Unhealthy while any named index or the marker is missing, so `docker-compose.mongo.yml`'s
+`service_healthy` gate holds until the business-key index is in place.
 
 ### Q5 — Which `VSaga.Abstractions` changes are in scope, in which release? — **RESOLVED**
 
@@ -649,6 +723,10 @@ TTL-indexable field available. Since retention is dropped from v1 (§5.5), the T
 **Recommendation:** the pair for v1 on operational-readability grounds, with a named follow-up to drop
 the `Date` half. Both are written from one mapping function, so they cannot disagree.
 
+**Decided: the pair**, written from `MongoTimestamps`, with only the ticks read back; the provider
+declares a one-tick `TimestampResolution`. (The Redis provider chose one representation because a
+sorted-set score is a double; an `Int64` field has no such constraint.)
+
 ### Q9 — One connection-string key or two?
 
 `ConnectionStrings:VSaga` holds an Npgsql DSN in `appsettings.json`, `docker-compose.yml:37`/`:58`, and a
@@ -658,6 +736,10 @@ wrong DSN to the wrong driver fails at connect time rather than config time.
 **Recommendation:** separate `ConnectionStrings:VSaga` and `ConnectionStrings:VSagaMongo`, validated in
 the switch. Documented gotcha: a single-node replica set advertising itself as `mongo:27017` is not
 resolvable from the host, so host-side tooling on `localhost:27018` needs `directConnection=true`.
+
+**Decided: a separate `MongoDb` section** (`MongoDb:ConnectionString`, `MongoDb:DatabaseName`), the
+shape the Redis provider set for its own `Redis` section, rather than a second `ConnectionStrings` key.
+The `directConnection=true` gotcha is documented in `persistence.md` and the overlay's header.
 
 ### Q10 — Server and platform support matrix
 
@@ -670,6 +752,11 @@ Cosmos DB's Mongo API in RU mode lacks the transaction scope this design assumes
 at bootstrap by actually creating the index rather than inferring it. Drop the `Sharded` arm from v1. Note
 that Atlas M0 caps connections at 100 while the driver defaults to a 100-connection pool per client per
 host, so two vSaga services with defaults saturate it — another argument for the `configureClient` hook.
+
+**Decided as recommended.** The supported-servers table is in `persistence.md`: self-hosted ≥ 6.0
+replica sets supported (8.0 live-verified), Atlas untested with the M0 pool note, standalone and
+`mongos` refused by the probe, PSA, DocumentDB and Cosmos DB's MongoDB API unsupported with the reason.
+Partial-index support is verified by creating the indexes at bootstrap.
 
 ### Q11 — Where does the ADR live? — **RESOLVED**
 
@@ -685,6 +772,9 @@ latter because envelope header keys are an open set containing dots and dashes
 (`x-vsaga-delivery-attempt`, `SagaOrchestrator.cs:34`), the same reasoning `Entities.cs:115` already
 records.
 
+**Decided: string.** The conformance suite's golden-blob case passes byte for byte; native BSON stays a
+named follow-up.
+
 ### Q13 — Health-check naming and ownership
 
 The name is an operational contract: it is in `/health`'s JSON (`Program.cs:121-137`), asserted verbatim
@@ -694,6 +784,12 @@ at `HealthEndpointTests.cs:39`, documented at `docs/dashboard.md:25`, and behind
 drift is structurally impossible — accepting the one-line test update, the doc update, and the fact that
 moving `PostgresHealthCheck` into `VSaga.Persistence.EFCore` adds a
 `Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions` dependency to a shipped package.
+
+**Decided against the recommendation, following the Redis precedent** (§8.2 deviation 1): the neutral
+name landed with the Redis provider, the host registers each provider's check under it in the same
+switch that picks the provider, and each persistence package depends only on
+`HealthChecks.Abstractions`. The drift the recommendation guarded against — a check named after a store
+that is not running — is prevented by the switch rather than by the extension.
 
 ---
 

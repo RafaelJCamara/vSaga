@@ -1,6 +1,6 @@
 # ADR 0001: MongoDB as a persistence provider
 
-**Status:** **Accepted** — 2026-09-26, by the maintainer. Not built. Accepting the ADR settles the *what*: a `VSaga.Persistence.MongoDB` provider on the native driver, at the tier and with the prerequisites argued below. The plan's blocking questions Q2–Q4 (replica set, connection-string override, bootstrap/health model) are decided in the plan, not here, and remain open until Stage 1 starts; its Stage 0 prerequisite landed in full on 2026-09-26 (ADR 0003).
+**Status:** **Accepted** — 2026-09-26, by the maintainer — and **implemented** the same day. `VSaga.Persistence.MongoDB` is built on the native driver as decided below, green on the full conformance suite against a MongoDB 8 replica set, and live-verified under `docker-compose.mongo.yml` including a killed saga host whose committed outbox rows the poller republished. The plan's blocking questions Q2–Q4 were decided at Stage 1 as the plan recommended (hard replica-set prerequisite; override and report connection-string contradictions; a retrying bootstrapper with the health check Unhealthy until the indexes exist) — see [`../design/mongodb-persistence.md`](../design/mongodb-persistence.md) §8.2 and §9 for the resolutions and the deviations. The shipped shape is documented in [`../persistence.md`](../persistence.md#mongodb).
 **Date:** 2026-09-25
 **Supersedes:** nothing. **Superseded by:** nothing.
 **Implementation plan:** [`../design/mongodb-persistence.md`](../design/mongodb-persistence.md)
@@ -239,8 +239,9 @@ live verification passes.
   after a database that is not running" structurally impossible. (`PostgresHealthCheck.cs:19-21` fails
   **open** today.) *The Redis provider landed the provider-neutral `"persistence"` name and a check that
   never fails open, but registers it from the host rather than from `AddVSagaRedis` — see
-  [`../design/redis-persistence.md`](../design/redis-persistence.md) §8.1 for why; this plan's
-  Stage 6 still decides whether to move both checks inside the extensions.*
+  [`../design/redis-persistence.md`](../design/redis-persistence.md) §8.1 for why. The MongoDB build
+  followed that precedent (design doc §8.2, deviation 1): the switch that picks the provider registers
+  its check, and no check is moved into a persistence package.*
 - `docs/dashboard.md:6-8`'s provider-agnostic premise stays true.
 
 ### Negative
@@ -309,17 +310,19 @@ live verification passes.
 
 ---
 
-## Open questions blocking acceptance
+## Open questions blocking acceptance — all resolved
 
-Q1 is resolved (ADR 0003). **Three remain**, all specific to MongoDB itself — stated in full with
-options and recommendations in the design doc's §9:
+Q1 was resolved by ADR 0003; the three MongoDB-specific ones were decided at Stage 1, 2026-09-26, each
+as recommended — stated in full with options, recommendations and resolutions in the design doc's §9:
 
-| | Question | Recommendation |
+| | Question | Decision |
 | --- | --- | --- |
 | ~~Q1~~ | ~~Is Stage 0 a prerequisite?~~ | **RESOLVED** 2026-09-25 — accepted in full and extracted to ADR 0003 |
-| **Q2** | Is the replica-set prerequisite hard, with no escape hatch? | Yes |
-| **Q3** | Does the provider override the operator's connection string, or only validate it? | Override, and fail bootstrap on an explicit contradiction |
-| **Q4** | Fail-fast startup, or retrying bootstrapper with `Unhealthy` until indexes land? | Retrying bootstrapper |
+| ~~Q2~~ | ~~Is the replica-set prerequisite hard, with no escape hatch?~~ | **RESOLVED** 2026-09-26 — yes; the probe refuses a standalone `mongod` and a `mongos` |
+| ~~Q3~~ | ~~Does the provider override the operator's connection string, or only validate it?~~ | **RESOLVED** 2026-09-26 — override, and report each explicit contradiction as Unhealthy naming the guarantee |
+| ~~Q4~~ | ~~Fail-fast startup, or retrying bootstrapper with `Unhealthy` until indexes land?~~ | **RESOLVED** 2026-09-26 — retrying bootstrapper |
 
-Of the nine non-blocking questions (Q5–Q13), four are also resolved by ADR 0003 or alongside it
-(Q5 abstractions surface, Q6 search case-sensitivity, Q7 staged-row lifecycle, Q11 ADR location).
+Of the nine non-blocking questions (Q5–Q13), four were resolved by ADR 0003 or alongside it (Q5, Q6,
+Q7, Q11); the build decided the rest (Q8 the timestamp pair, Q9 a separate `MongoDb` section, Q10 the
+support matrix with `Sharded` refused, Q12 the JSON string, Q13 host-registered health check — the one
+decision against the plan's recommendation, following the Redis precedent).

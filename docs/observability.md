@@ -58,6 +58,13 @@ Source and span names, for writing queries: the `ActivitySource` is named `VSaga
 Tag names (`VSagaDiagnostics`): `saga.type`, `saga.kind`, `saga.correlation_id`, `saga.from_state`,
 `saga.to_state`, `delivery.attempt`.
 
+**Persistence-provider spans are the provider's client's, not vSaga's.** Npgsql and StackExchange.Redis
+each ship instrumentation you enable on your own OpenTelemetry pipeline. The MongoDB .NET driver exposes
+no `ActivitySource` of its own: instrument it through `AddVSagaMongoDb`'s `configureClient` callback,
+whose `MongoClientSettings.ClusterConfigurator` is where a command-event subscriber (such as the
+community `MongoDB.Driver.Core.Extensions.DiagnosticSources` package) attaches. The persist's
+transaction and the event log's appends then appear as child spans of the `saga.step` span.
+
 ## Metrics
 
 Meter name `VSaga.Saga` (`VSagaDiagnostics.Meter`):

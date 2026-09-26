@@ -58,7 +58,8 @@ dotnet add package Microsoft.Extensions.Hosting
 
 (Swap `VSaga.Persistence.InMemory`/`VSaga.Transport.InMemory` for `VSaga.Persistence.EFCore` +
 `VSaga.Persistence.EFCore.Postgres` + `VSaga.Transport.RabbitMQ` when you're ready for something that
-survives a restart — or for `VSaga.Persistence.Redis` if you would rather run Redis than Postgres and
+survives a restart — for `VSaga.Persistence.MongoDB` if you are already standardised on MongoDB and run
+a replica set, or for `VSaga.Persistence.Redis` if you would rather run Redis than Postgres and
 accept its documented loss window — see [`persistence.md`](persistence.md) and
 [`transports/index.md`](transports/index.md).
 **Before you make that swap**, read the callout at the end of ["Run it"](#run-it) below: this page's own

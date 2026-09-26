@@ -6,8 +6,8 @@
   older SDK scaffolds/targets the wrong framework and every `dotnet` command below fails from the
   start).
 - **Node.js ≥ 22** (`typescript/package.json`'s `engines` field; also what CI's `setup-node` installs).
-- **Docker**, for two things: six `dotnet/tests/*` suites use Testcontainers (RabbitMQ, MassTransit,
-  Wolverine, Brighter, Postgres, Redis — see the Test section below), and `typescript`'s own `npm run test`
+- **Docker**, for two things: seven `dotnet/tests/*` suites use Testcontainers (RabbitMQ, MassTransit,
+  Wolverine, Brighter, Postgres, Redis, MongoDB — see the Test section below), and `typescript`'s own `npm run test`
   starts a RabbitMQ Testcontainers instance for `transport-rabbitmq`'s suite. Without Docker, both sets
   of tests fail outright rather than skip.
 
@@ -56,8 +56,9 @@ git show ":typescript/$FILE" | npx prettier --check --stdin-filepath "$FILE"
 dotnet test dotnet/VSaga.slnx
 ```
 
-700+ tests across every `dotnet/tests/*` project. Six suites are Testcontainers-backed (RabbitMQ,
-MassTransit, Wolverine, Brighter, Postgres, Redis) and need Docker; everything else runs without it. If
+800+ tests across every `dotnet/tests/*` project. Seven suites are Testcontainers-backed (RabbitMQ,
+MassTransit, Wolverine, Brighter, Postgres, Redis, MongoDB — the last needs a replica set, which its
+fixture starts) and need Docker; everything else runs without it. If
 Docker isn't available, say so rather than skipping silently — this repo's own history treats "these
 suites were only compiled, never run" as an explicit, carried-forward caveat, not a pass.
 
@@ -73,8 +74,9 @@ transport adapter, a change to correlation/causation, anything outbox- or timeou
 docker compose up -d --build
 # and, for fault-injection-relevant changes:
 docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
-# and, for anything touching the Redis persistence provider, its own overlay (docs/persistence.md, "Redis"):
+# and, for anything touching the Redis or MongoDB persistence provider, its own overlay (docs/persistence.md):
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
+docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
 ```
 
 Filter queries by `createdAtUtc`/`updatedAtUtc` after the container's own start timestamp — the named

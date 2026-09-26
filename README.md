@@ -8,7 +8,7 @@ so a Node participant and a .NET saga exchange messages with neither side aware 
 language.
 
 The .NET engine gives you a fluent saga DSL for both orchestrated and choreographed sagas, a persisted
-event log, EF Core (Postgres), Redis and in-memory persistence, six interchangeable `IMessageTransport`
+event log, EF Core (Postgres), MongoDB, Redis and in-memory persistence, six interchangeable `IMessageTransport`
 adapters, a transport-agnostic `.CallHttp` step for calling plain REST APIs, an in-memory testing
 harness, OpenTelemetry instrumentation, and a chaos-engineering fault-injection package. The TypeScript
 SDK — seven `@vsaga/*` packages — gives Node participants the same dispatch/dedupe/reply-with-causation
@@ -21,7 +21,7 @@ per-saga visual service map, and manual retry.
 
 ```bash
 dotnet add package VSaga.Core
-dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + .EFCore.Postgres, or VSaga.Persistence.Redis
+dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + .EFCore.Postgres, VSaga.Persistence.MongoDB, or VSaga.Persistence.Redis
 dotnet add package VSaga.Transport.InMemory     # or VSaga.Transport.RabbitMQ / .Wolverine / .MassTransit / .Brighter / .Http
 ```
 
@@ -108,10 +108,12 @@ curl -H "X-Api-Key: dev-local-only-change-me" http://localhost:5080/api/sagas
 > In Windows PowerShell (not PowerShell 7+), `curl` is aliased to `Invoke-WebRequest`, which rejects
 > `-H`. Call `curl.exe` explicitly (Windows 10+ ships a real curl) or use PowerShell 7+/Git Bash instead.
 
-To run the same stack on Redis persistence instead of Postgres, layer its overlay (dashboard on
-`localhost:5680`; see [`docs/persistence.md`](docs/persistence.md#redis) for what that trades away):
+To run the same stack on MongoDB or Redis persistence instead of Postgres, layer that provider's overlay
+(dashboard on `localhost:5580` and `localhost:5680` respectively; see
+[`docs/persistence.md`](docs/persistence.md) for what each one requires or trades away):
 
 ```bash
+docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
 ```
 
@@ -172,7 +174,7 @@ typescript/
                            docs/typescript-participants.md)
 docs/                     Reference documentation, design records, and project history — see below
 docker-compose*.yml       The reference stack plus one overlay per transport adapter, one for chaos,
-                           one for Redis persistence, and one that swaps in the Node participant
+                           one each for MongoDB and Redis persistence, and one that swaps in the Node participant
 ```
 
 ## Documentation
@@ -190,7 +192,7 @@ Full index: [`docs/README.md`](docs/README.md). Straight to the reference docs:
 - [`docs/configuration.md`](docs/configuration.md) — every **.NET** options class, including the
   transactional outbox and transport options (the TypeScript SDK's options live in each package's own
   README instead).
-- [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, Redis, in-memory, migrations.
+- [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, MongoDB, Redis, in-memory, migrations.
 - [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log, OTLP
   wiring.
 - [`docs/dashboard.md`](docs/dashboard.md) — API endpoints, authentication, the SPA, the Saga Map.
