@@ -385,8 +385,13 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
         DateTimeOffset createdAtUtc, CancellationToken cancellationToken = default)
     {
         var id = Interlocked.Increment(ref _outboxMessageId);
+        // The row records the headers as they are now, in a dictionary of its own keyed ordinally
+        // (ISagaOutboxStore.EnqueueAsync). Holding the caller's dictionary would let a later mutation
+        // of it -- or its own comparer -- reach the claimed message, where the EF provider's row,
+        // serialised at the enqueue, could not be reached either way.
+        var recorded = new Dictionary<string, string>(headers, StringComparer.Ordinal);
         _outboxMessages[id] = new SagaOutboxMessage(id, correlationId, sagaType, messageId, messageTypeName,
-            body, destination, headers, SagaOutboxStatus.Pending, createdAtUtc);
+            body, destination, recorded, SagaOutboxStatus.Pending, createdAtUtc);
         return Task.CompletedTask;
     }
 
