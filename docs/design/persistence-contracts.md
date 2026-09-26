@@ -1,6 +1,6 @@
 # Design: persistence contracts and the conformance suite
 
-**Status: planned, nothing built. Decisions accepted.** Recorded in
+**Status: in progress — commits 1–6 landed; progress in §6.2, open questions in §9. Decisions accepted.** Recorded in
 [`../adr/0003-persistence-contract-clauses.md`](../adr/0003-persistence-contract-clauses.md); what
 remains is execution. Nothing here depends on a MongoDB or Redis provider ever being built.
 
@@ -317,6 +317,44 @@ page walk; SQLite happens to return ties in a stable order, so its green there p
 F11's red depends on concurrent appends actually interleaving, so its mutation kill is statistical: run
 the case repeatedly (20 runs) under the reverted fix and require a failure, rather than trusting one run.
 
+### 6.2 Progress
+
+As of 2026-09-26.
+
+| # | Commit | State |
+| --- | --- | --- |
+| 1 | `a7f99fd` — clauses 1–3, 5, 6, 8 and the seven-contract preamble | Landed |
+| 2 | `54a5e21` — clause 4 | Landed |
+| 3 | `aafb424` — clause 7, the `ResetStateAsync` signature change, F12 | Landed |
+| 4 | `12a73f5` — clauses 9, 11, 12 | Landed |
+| 5 | `ffe7568` — `VSaga.Persistence.Conformance` and its three fixtures | Landed, green: 565 tests across 13 projects (383 before) |
+| — | `ea2b897` — amendment: F13, F14, the restated red run, B3 recorded, the headers clause | Landed, doc-only |
+| — | `9e1263a` — the business-key collision rule and the list order's independence from other rows, stated ahead of their red cases | Landed, doc-only |
+| 6 | `95ba746` — the deliberately-red cases | Landed, **red by design**: 590 of 628 pass; the 38 below fail |
+| — | `0a5b376` — §9, open questions and queued corrections; then this progress section | Landed, doc-only |
+| 7 | F1 | **Next — blocked on §9.1 Q1** (how mutation tests are run) |
+| 8–15, 15a, 15b | F2 … F7, F10, F11, F13, F14 | Pending |
+| 16–21 | F8, clause 10 + F9, B1, B2, docs, the `NpgsqlProviderName` fold | Pending |
+
+**The red set at `95ba746`**, by the fix that turns it green. Each fix commit must turn exactly its own
+row green and leave every other row as it is:
+
+| Fix | Failing cases | Red on |
+| --- | --- | --- |
+| F1 | `List_OrdersRowsThatTieOnTheSortColumnTotally`, all 5 sort arms | in-memory, Postgres (10) |
+| F2 | `Search_IgnoresCaseInTheSagaType`; `Search_IgnoresCaseInTheCorrelationId` | Postgres; SQLite and Postgres (3) |
+| F3 | `Reset_StampsTheCallersUpdatedAtUtc`, `Reset_KeepsTheBlobInLockstepWithTheProjection`, `Reset_AgainstAVersionTheSagaHasMovedPast_ThrowsAndChangesNothing`, `Reset_ThatLosesARaceAtTheWrite_ThrowsSagaConcurrency`, `Reset_ThenAPersistFromTheReadBackState_Succeeds` | in-memory (5) |
+| F4 | The first four of F3's cases | SQLite, Postgres (8) |
+| F5 | `Update_KeepsTheCallersUpdatedAtUtc` | in-memory (1) |
+| F6 | `ClaimDue_ReturnsTheEarliestDueRowsFirst`, `ClaimPending_ReturnsTheEarliestCreatedRowsFirst` | in-memory (2) |
+| F7 | `Update_ToABusinessKeyAnotherInstanceHolds_ThrowsSagaAlreadyExistsAndRestoresTheVersion` | SQLite, Postgres (2) |
+| F10 | `Update_WhenARivalWritesMidUpdate_ThrowsAndLeavesTheLiveObjectAtTheExpectedVersion` | in-memory (1) |
+| F11 | `GetTimeline_AfterConcurrentAppends_StillAscendsBySequenceNumber` | in-memory (1) |
+| F13 | `ClaimPending_ReturnsHeadersIndependentOfTheEnqueuedDictionary` | in-memory (1) |
+| F14 | `Find_ForARowWhoseBlobIsJsonNull_Throws`, `FindByBusinessKey_ForARowWhoseBlobIsJsonNull_Throws` | SQLite, Postgres (4) |
+
+That is 16 in-memory, 8 SQLite and 14 Postgres. Nothing outside this table fails at `95ba746`.
+
 ---
 
 ## 7. What this does not do
@@ -409,7 +447,7 @@ Commit 20 is the documentation pass. Each item below is verified as wrong today;
   Server's `uniqueidentifier`, which `ISagaSummaryReader`'s own remarks already cite.
 - **This plan, §6's commit-2 row:** says "six EF commit sites"; clause 4's own list, and the landed
   `ISagaOutboxStore` remarks, name seven.
-- **This plan, the status line:** still reads "planned, nothing built".
+- ~~**This plan, the status line:** still reads "planned, nothing built".~~ Fixed alongside §6.2.
 - **`docs/persistence.md:10`:** says to remove its divergence note "once that plan's conformance suite is
   green" — a condition commit 5 met while the divergences were all still live. Reword it to "once fixes
   F1–F7, F10, F11, F13 and F14 have landed and the suite, including their cases, is green".
