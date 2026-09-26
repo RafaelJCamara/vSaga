@@ -112,6 +112,25 @@ public sealed class SagaEndpointsTests : IAsyncDisposable
         Assert.Single(page3!.Items); // 5 items, page size 2 -> last page has 1
     }
 
+    /// <summary>
+    /// Fix F8: a page size above <see cref="SagaEndpoints.MaxPageSize"/> is clamped to it, and the
+    /// response reports the size actually applied — so a caller paging with an oversized request can
+    /// see why its pages are shorter than asked, rather than silently missing rows. The maximum itself
+    /// is served unchanged, and a size just above it is what gets clamped.
+    /// </summary>
+    [Fact]
+    public async Task ListSagas_ClampsPageSizeToTheServerMaximum()
+    {
+        var atMaximum = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>($"/api/sagas?pageSize={SagaEndpoints.MaxPageSize}", JsonOptions);
+        Assert.Equal(SagaEndpoints.MaxPageSize, atMaximum!.PageSize);
+
+        var aboveMaximum = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>($"/api/sagas?pageSize={SagaEndpoints.MaxPageSize + 1}", JsonOptions);
+        Assert.Equal(SagaEndpoints.MaxPageSize, aboveMaximum!.PageSize);
+
+        var farAbove = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>("/api/sagas?pageSize=1000000", JsonOptions);
+        Assert.Equal(SagaEndpoints.MaxPageSize, farAbove!.PageSize);
+    }
+
     [Fact]
     public async Task ListSagas_SortsByUpdatedAt_AscendingAndDescending()
     {

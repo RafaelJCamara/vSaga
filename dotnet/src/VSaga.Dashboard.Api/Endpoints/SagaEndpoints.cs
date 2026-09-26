@@ -15,6 +15,16 @@ public sealed record TopologyRegistration(string ServiceName, string MessageType
 
 public static class SagaEndpoints
 {
+    /// <summary>
+    /// The largest page the list endpoint serves; a larger <c>pageSize</c> is clamped to it, and the
+    /// response's <see cref="PagedResult{T}.PageSize"/> reports the size actually applied. The policy
+    /// lives here rather than in the persistence providers, which clamp only to a minimum of 1: a
+    /// caller's page size is an HTTP concern, and the providers must not each pick their own maximum
+    /// (docs/design/persistence-contracts.md, fix F8). Five times the dashboard's largest page option,
+    /// so no legitimate caller notices, and a bound on what one request can materialise.
+    /// </summary>
+    public const int MaxPageSize = 500;
+
     public static void MapSagaEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/sagas").WithTags("Sagas").RequireAuthorization();
@@ -28,7 +38,7 @@ public static class SagaEndpoints
                 Kind = kind,
                 Search = search,
                 Page = page <= 0 ? 1 : page,
-                PageSize = pageSize <= 0 ? 25 : pageSize,
+                PageSize = pageSize <= 0 ? 25 : Math.Min(pageSize, MaxPageSize),
                 SortBy = sortBy,
                 SortDescending = sortDescending,
             };
