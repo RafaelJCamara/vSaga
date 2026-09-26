@@ -1,7 +1,12 @@
 # Design: Redis persistence
 
-**Status: accepted (ADR 0002, 2026-09-26), nothing built.** Stage 0 has landed; the fault-injection tier (Q3) and Q1, Q2, Q4, Q5 in §9 are the next decisions. No `VSaga.Persistence.Redis` project exists. This file is the plan
-and the reasoning behind it; the decision it argues for is recorded in
+**Status: implemented, 2026-09-26.** `VSaga.Persistence.Redis` is built, green on the full conformance
+suite against Redis 7.4 plus its own Redis-specific cases, selectable through `Persistence:Provider` in
+both hosts, and live-verified under `docker-compose.redis.yml` including a `kill -9` and unaided AOF
+restart. §8.1 records what landed against each stage and the four places the build deviated from this
+plan; §9 records how each blocking question was decided. The shipped shape is documented in
+[`../persistence.md`](../persistence.md#redis); this file stays as the reasoning behind it, and the
+decision it argued for is recorded in
 [`../adr/0002-redis-persistence-provider.md`](../adr/0002-redis-persistence-provider.md).
 
 **Read §1 before anything else.** Redis is not a peer of the EF Core/Postgres provider and this plan
@@ -602,12 +607,59 @@ Shared seams are **consumed, not re-planned** — see §10.
 | 9 | compose overlay + live verification | `kill -9` the Redis container mid-step, **restart it**, and record whether it boots (§6.3); plus a timeout firing and compensating |
 | 10 | CI, packaging, docs | zero stale hits for "two persistence providers", "five suites"; package count stated as a **delta**, not an absolute |
 
+### 8.1 What landed, 2026-09-26
+
+Every stage from 1 to 10 landed; the record of the live run is
+[`../history/redis-persistence-provider.md`](../history/redis-persistence-provider.md). Stage gates as
+met: `dotnet restore` of the solution with `StackExchange.Redis [3.0.11,4.0.0)` under
+`TreatWarningsAsErrors` (R-10); the torn-sentinel case injects the abort between steps 5 and 6 through
+an internal script hook and asserts the sentinel and the Unhealthy verdict; 8 workers × 50 concurrent
+appends yield 400 distinct ascending sequence numbers (the conformance suite's own case); the racing
+claim cases run at 8 workers over 120 rows; a 2000-row drain over rows sharing one instant returns each
+exactly once and the following watermark excludes them all; a `maxmemory-policy allkeys-lru` server, an
+`appendonly no` server and a `CONFIG`-renamed server each report Unhealthy naming the guarantee;
+measured bytes-per-saga are published in `persistence.md`; the `kill -9` was run and the node **booted
+unaided** from its AOF in 0.028 s, so §6.3's "manual intervention" sentence did not have to be written.
+
+**Stage 0b, the fault-injection tier, landed narrower than planned.** `SCRIPT FLUSH` mid-run, the torn
+write, memory pressure (through the provider's gate, with the server's `maxmemory` set live) and the
+three misconfigured servers are ordinary xUnit cases in `VSaga.Persistence.Redis.Tests`, so CI runs them
+on every push. `SIGKILL`-and-restart and failover are **not** automated: they were run by hand against
+the compose overlay as Stage 9's gate, and Q12's separate `Durability` project was not created.
+A future run of the kill test is a documented manual step in `persistence.md`, not a trait-excluded
+suite.
+
+**Four deviations from this plan, each deliberate:**
+
+1. **Timestamps are Unix microseconds, stored once, not milliseconds plus exact ticks** (§5.1, R-3).
+   Every projected timestamp is one `int64` of Unix microseconds, used as both the sorted-set score and
+   the hash field. Microseconds fit a double exactly until 2255, and one representation means the order
+   an index yields and the value a predicate compares cannot disagree — so `UpdatedSince`'s strict `>`
+   is an exclusive score range with no boundary re-check, and the poller's tie-group watermark logic
+   sees the same values it sorts by. The cost is the truncation Postgres's `timestamp` already applies;
+   the provider declares the same one-microsecond `TimestampResolution`. The plan's ms-plus-ticks shape
+   would have ordered rows within a millisecond by member while filtering them by exact ticks, which is
+   the inconsistency the poller's early-stop retreat cannot survive.
+2. **Two scripts build a key.** The claim scripts and the cancel script append a row id read from a
+   sorted set to a prefix passed in `ARGV` — the only way a claim is one round trip. String concatenation
+   cannot raise, and Cluster is refused, so the rule's two purposes (no Lua runtime error, no
+   `CROSSSLOT`) both still hold. The timeout id itself is `INCR`ed in C# before the schedule script so
+   the row key is computed there like every other key.
+3. **The persist script commits staged outbox rows alone in a third mode** (`2`), used only by the
+   conformance fixture's `CommitAsync` hook, which needs to make a staged row durable without a snapshot
+   write. The engine never reaches it; §4.2's "the persist is the sole committer" stands.
+4. **The health check is registered by the host, not by `AddVSagaRedis`.** `RedisPersistenceHealthCheck`
+   is registered in DI by the provider and added by `Dashboard.Api` under `"persistence"`, alongside
+   `PostgresHealthCheck` under the same name for the EF branch. The Mongo plan's Stage 6 asked for the
+   registration to live inside each provider's extension; that needs a `Microsoft.Extensions.Diagnostics.HealthChecks`
+   (not `.Abstractions`) dependency in a persistence package and was left for that plan to decide.
+
 ---
 
 ## 9. Open questions
 
-Q3 is partly resolved and Q9 mostly resolved by ADR 0003. **Five blocking questions remain:** Q1, Q2,
-Q3 (its fault-injection half), Q4, Q5.
+Q3 was partly resolved and Q9 mostly resolved by ADR 0003. **The five blocking questions were decided
+on 2026-09-26, at Stage 1, as this section recommended;** each carries its resolution below.
 
 ### Q1 — What tier does this provider claim? *(blocking)*
 
@@ -616,6 +668,9 @@ production configuration. (3) Tier B only — refuse to start below `appendfsync
 
 **Recommendation: (2)**, with §1.3's sentence pre-written. (3) is defensible but forecloses the dev/CI
 use case that is half the point.
+
+**Decided: (2).** §1.3's sentence opens `persistence.md`; the health check reports which tier the
+server is running at (`durability tier A/B`), derived from `appendfsync` and `min-replicas-to-write`.
 
 ### Q2 — Which servers are supported, and is Cluster in scope? *(blocking)*
 
@@ -634,6 +689,13 @@ unaffected — **say so explicitly** so no consumer has to guess. This repo alre
 first-class (`Directory.Packages.props:15-17` bounds MassTransit below 9.0.0 for exactly this reason), so
 silence would be inconsistent.
 
+**Decided as recommended.** Single primary with replicas; Redis ≥ 7.0 and Valkey ≥ 7.2 supported; Cluster
+refused by the probe (`cluster_enabled`), and a connection to a replica refused likewise. The
+supported-servers table is in `persistence.md`, the managed platforms marked *untested* with the
+`CONFIG GET` caveat rather than claimed. Capability is verified by running a script at bootstrap. The
+package depends only on MIT `StackExchange.Redis` (`[3.0.11,4.0.0)`, with the licence note in
+`Directory.Packages.props`), and both the package README and `persistence.md` say so.
+
 ### Q3 — Is Stage 0 a prerequisite, who owns it, and does it gain a fault-injection tier? — **PARTLY RESOLVED**
 
 **Answered 2026-09-25:** the shared groundwork is accepted, extracted to
@@ -645,6 +707,12 @@ silence would be inconsistent.
 `persistence-contracts.md` §7 explicitly leaves the tier here, as Stage 0b. **For Redis it is not a gate
 on the argument, it is the argument**, and it must be sequenced before any store code.
 
+**Resolved, narrower than asked** — see §8.1. The behavioural half of the tier (`SCRIPT FLUSH`, the torn
+write, memory pressure, the misconfigured servers) is ordinary CI-run xUnit; `SIGKILL`-and-restart and
+failover were run by hand as Stage 9's gate and stay a documented manual step. R-1 (the lost append) and
+R-8 (a node that refuses to boot) therefore remain properties this repo has *observed once*, not ones its
+CI guards.
+
 ### Q4 — Validate or override the operator's Redis configuration, and what when it cannot be seen? *(blocking)*
 
 Mongo's Q3 in a different skin. `maxmemory-policy`, `appendonly`, Cluster mode, and never routing reads
@@ -653,6 +721,11 @@ on several managed tiers, so the guarantee may be *unverifiable*.
 
 **Recommendation:** override what the client controls (command flags, read routing to primary), probe
 what it does not, and report `Unhealthy` — never crash — on contradiction **or on inability to probe**.
+
+**Decided as recommended.** The client is left on its default primary-only routing and given
+`AllowAdmin` (the probe needs `INFO` and `CONFIG GET`); `RedisServerProbe` probes the rest and never
+throws; `RedisPersistenceHealthCheck` re-runs it on every call; a disabled `CONFIG GET` is reported as
+*unverifiable* and Unhealthy. Three misconfigured containers pin the verdicts in CI.
 
 ### Q5 — Is `Search`'s bounded-scan behaviour acceptable, and does the bound belong in the contract? *(blocking)*
 
@@ -667,6 +740,12 @@ a trigram index.
 
 **Recommendation: (1)** for v1, (2) as the right long-term shape, (3) gated on a measured p99. Whichever
 is chosen, `SagaEndpoints.cs:31`'s missing server-side `pageSize` clamp becomes a hard prerequisite.
+
+**Decided: (1).** `RedisSearchScanLimitExceededException`, bound `VSagaRedisOptions.MaxSearchScanMembers`
+(default 100 000), documented in `persistence.md` as the one observable behaviour no other provider has;
+the dashboard's list endpoint maps it to 400 with the provider's message. The `pageSize` clamp had
+already landed as persistence-contracts F8. Option (2)'s `Truncated` flag stays open as the long-term
+shape; option (3) stays gated on a measured p99 that no workload has yet produced.
 
 ### Q6 — Should `VSaga.Core` mint *deterministic* MessageIds for deferred publishes?
 
@@ -692,6 +771,11 @@ with `WAITAOF` investigated in a **required spike before Stage 2** and adopted o
 per-saga-step latency is published. If adopted, specify what happens on a short ack — the only honest
 answers are "throw and redeliver a step whose write already applied" or "log and continue, silently
 weaker than advertised". Pick one and write it down.
+
+**Decided: server-side only.** Tier B is `appendfsync always` plus `min-replicas-to-write`, detected by
+the probe and reported as the tier; no `WAITAOF` call exists in the provider, so the multiplexer is never
+blocked and the short-ack dilemma never arises. The spike was not run; `WAITAOF` remains unadopted rather
+than rejected.
 
 ### Q8 — Capacity model, ceiling behaviour, and retention
 
@@ -729,6 +813,10 @@ a unit test. CI today is a flat `dotnet test` over `VSaga.slnx` with no matrix.
 **Recommendation:** a separate `dotnet/tests/VSaga.Persistence.Durability` project, excluded from the
 default run by trait, with its own CI job or a documented manual gate tied to Stage 9. Non-blocking, but
 decide it before Stage 0b is scheduled.
+
+**Decided: the documented manual gate, no separate project.** Everything a container can express without
+being killed runs in `VSaga.Persistence.Redis.Tests` on every CI push; the kill-and-restart procedure and
+its one measured result live in `persistence.md`.
 
 ---
 

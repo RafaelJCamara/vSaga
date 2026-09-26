@@ -8,7 +8,7 @@ so a Node participant and a .NET saga exchange messages with neither side aware 
 language.
 
 The .NET engine gives you a fluent saga DSL for both orchestrated and choreographed sagas, a persisted
-event log, EF Core (Postgres) and in-memory persistence, six interchangeable `IMessageTransport`
+event log, EF Core (Postgres), Redis and in-memory persistence, six interchangeable `IMessageTransport`
 adapters, a transport-agnostic `.CallHttp` step for calling plain REST APIs, an in-memory testing
 harness, OpenTelemetry instrumentation, and a chaos-engineering fault-injection package. The TypeScript
 SDK — seven `@vsaga/*` packages — gives Node participants the same dispatch/dedupe/reply-with-causation
@@ -21,7 +21,7 @@ per-saga visual service map, and manual retry.
 
 ```bash
 dotnet add package VSaga.Core
-dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + .EFCore.Postgres
+dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + .EFCore.Postgres, or VSaga.Persistence.Redis
 dotnet add package VSaga.Transport.InMemory     # or VSaga.Transport.RabbitMQ / .Wolverine / .MassTransit / .Brighter / .Http
 ```
 
@@ -165,7 +165,7 @@ typescript/
                            docs/typescript-participants.md)
 docs/                     Reference documentation, design records, and project history — see below
 docker-compose*.yml       The reference stack plus one overlay per transport adapter, one for chaos,
-                           and one that swaps in the Node participant
+                           one for Redis persistence, and one that swaps in the Node participant
 ```
 
 ## Documentation
@@ -183,7 +183,7 @@ Full index: [`docs/README.md`](docs/README.md). Straight to the reference docs:
 - [`docs/configuration.md`](docs/configuration.md) — every **.NET** options class, including the
   transactional outbox and transport options (the TypeScript SDK's options live in each package's own
   README instead).
-- [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, in-memory, migrations.
+- [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, Redis, in-memory, migrations.
 - [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log, OTLP
   wiring.
 - [`docs/dashboard.md`](docs/dashboard.md) — API endpoints, authentication, the SPA, the Saga Map.
