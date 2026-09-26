@@ -76,3 +76,35 @@ public sealed class RedisHealthEndpointTests : IClassFixture<WebApplicationFacto
         Assert.Contains("Redis", body, StringComparison.Ordinal);
     }
 }
+
+/// <summary>
+/// The third arm of the Persistence:Provider switch: the MongoDB composition root resolves (no DbContext,
+/// no migration at startup, the provider's own health check under the same "persistence" name) and its
+/// probe reports an unreachable server as Unhealthy. The short server-selection timeout in the connection
+/// string keeps the deliberately-unreachable port from stalling the test.
+/// </summary>
+public sealed class MongoHealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly WebApplicationFactory<Program> _factory;
+
+    public MongoHealthEndpointTests(WebApplicationFactory<Program> factory) =>
+        _factory = factory.WithWebHostBuilder(builder => builder
+            // UseSetting, for the same reason as the Redis arm: Program.cs reads the switch while composing.
+            .UseSetting("Persistence:Provider", "MongoDb")
+            .UseSetting("MongoDb:ConnectionString", "mongodb://localhost:1/?replicaSet=rs0&serverSelectionTimeoutMS=500&connectTimeoutMS=500")
+            .UseSetting("MongoDb:DatabaseName", "dashboard-tests")
+            .UseSetting("RabbitMq:ConnectionString", "amqp://guest:guest@localhost:1/"));
+
+    [Fact]
+    public async Task Health_WithAnUnreachableMongoDb_Returns503AndReportsThePersistenceCheckUnhealthy()
+    {
+        using var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/health");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("\"persistence\"", body, StringComparison.Ordinal);
+        Assert.Contains("MongoDB", body, StringComparison.Ordinal);
+    }
+}

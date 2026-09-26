@@ -204,11 +204,12 @@ here.
 
 Not a library key: like `Transport:Provider`, both shipped hosts (`VSaga.Dashboard.Api` and the
 OrderProcessing sample) read it themselves and switch on it. `Postgres` (the default, EF Core with
-`UseNpgsql`) or `Redis`. Both hosts must agree — the dashboard reads the store the saga host writes —
-and `docker-compose.redis.yml` is the one overlay that sets it. It is a greenfield choice, not a
-migration: flipping it on a running system points every store at an empty key space, so in-flight sagas
-vanish, pending timeouts never fire and pending outbox rows are never drained. The dashboard's
-`/health` reports the chosen store under the provider-neutral name `persistence`.
+`UseNpgsql`), `Redis` or `MongoDb`. Both hosts must agree — the dashboard reads the store the saga host
+writes — and `docker-compose.redis.yml` and `docker-compose.mongo.yml` are the two overlays that set it.
+It is a greenfield choice, not a migration: flipping it on a running system points every store at an
+empty key space or database, so in-flight sagas vanish, pending timeouts never fire and pending outbox
+rows are never drained. The dashboard's `/health` reports the chosen store under the provider-neutral
+name `persistence`.
 
 ### `VSagaRedisOptions` (`VSaga.Persistence.Redis`)
 
@@ -227,6 +228,25 @@ callback runs, so either can be overridden there.
 | `WriteMemoryThreshold` | `0.90` | The `used_memory`/`maxmemory` ratio above which persists are refused before any write (`RedisMemoryPressureException`, an infrastructure failure the engine redelivers). A Lua script has no rollback, so refusing loudly beats tearing a write set on `OOM`. Ignored when the server has no `maxmemory`. Read on the probe interval, not per write. |
 | `MaxSearchScanMembers` | `100000` | The most index members a dashboard `Search` may scan before `ListAsync` throws `RedisSearchScanLimitExceededException` (HTTP 400) rather than silently truncating a page — see [`persistence.md`](persistence.md#redis). |
 | `ProbeInterval` | `10s` | How often the bootstrapper re-probes `appendonly`, `maxmemory-policy`, cluster mode, memory pressure and the torn-write sentinel. Re-probed, not checked once, because a live `CONFIG SET` silently changes the guarantees. |
+
+### `VSagaMongoOptions` (`VSaga.Persistence.MongoDB`)
+
+`AddVSagaMongoDb(Action<VSagaMongoOptions> configure, Action<MongoClientSettings>? configureClient = null)`.
+Bound from the `MongoDb` section by both hosts. The second parameter follows the same precedent: it
+hands you the driver's own `MongoClientSettings`, built from `ConnectionString`, for everything the
+client already models — TLS material, pool sizing, timeouts, and the `ClusterConfigurator` hook that
+provider-level tracing needs (the driver exposes no `ActivitySource` of its own). The provider pins
+`ReadPreference.Primary`, `ReadConcern.Local` and `WriteConcern.WMajority` before your callback runs, so
+each can be overridden there — knowingly, since [`persistence.md`](persistence.md#mongodb) says what
+each one protects.
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `ConnectionString` | `mongodb://localhost:27017/?replicaSet=rs0` | A MongoDB URI — a `MongoDb` section key, never `ConnectionStrings:VSaga`. A `readPreference`, `w` or `readConcernLevel` it states explicitly that differs from the pinned values is reported by the health check as Unhealthy, naming the guarantee it would have broken. From the host against a single-node Docker replica set, add `directConnection=true`. |
+| `DatabaseName` | `null` | The database every collection lives in: the URI's own database path when set, else `vsaga`. One database per service — two services sharing one would share an outbox and a timeout schedule. |
+| `MaxPayloadJsonBytes` | `12 MiB` | A `SagaLogEntry.PayloadJson` above this is replaced by a small JSON marker (`{"$vsagaPayloadOmitted":true,…}`) and logged as a warning. The engine records the full inbound body before the step runs and MongoDB caps a document at 16 MB; without the guard an oversized message would make its saga permanently unstartable. |
+| `ProbeInterval` | `10s` | How often the bootstrapper re-runs index creation (idempotent) and the topology probe. |
+| `StrandedOutboxThreshold` | `5m` | A Pending outbox row older than this counts as stranded in the health check's `strandedOutboxRows` data — reported, not failed on. |
 
 ### `ConnectionStrings:VSaga`
 

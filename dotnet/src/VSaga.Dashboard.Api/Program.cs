@@ -8,6 +8,7 @@ using VSaga.Dashboard.Api.HealthChecks;
 using VSaga.Dashboard.Api.Hubs;
 using VSaga.Observability;
 using VSaga.Persistence.EFCore;
+using VSaga.Persistence.MongoDB;
 using VSaga.Persistence.Redis;
 using VSaga.Transport.Http;
 using VSaga.Transport.RabbitMQ;
@@ -38,9 +39,10 @@ builder.Services.AddCors(options => options.AddPolicy(CorsPolicy, policy =>
 // transport republish (see SagaEndpoints), not an in-process orchestrator call.
 //
 // Persistence:Provider, the same convention as Transport:Provider below — Postgres (EF Core) by default,
-// matching every prior compose run, Redis when docker-compose.redis.yml says so. A greenfield choice, not
-// a migration: flipping it on a running system points every store at an empty key space. The health
-// check registered further down follows the same switch, under the provider-neutral name "persistence".
+// matching every prior compose run, Redis or MongoDb when that provider's compose overlay says so. A
+// greenfield choice, not a migration: flipping it on a running system points every store at an empty
+// key space or database. The health check registered further down follows the same switch, under the
+// provider-neutral name "persistence".
 var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "Postgres";
 switch (persistenceProvider)
 {
@@ -58,6 +60,11 @@ switch (persistenceProvider)
         // Redis binds its own options section; its connection string is StackExchange.Redis's own format
         // (host:port,...), not an ADO.NET one, so it does not share ConnectionStrings:VSaga with Postgres.
         builder.Services.AddVSagaRedis(o => builder.Configuration.GetSection("Redis").Bind(o));
+        break;
+    case "MongoDb":
+        // Its own section too: a mongodb:// URI cannot share ConnectionStrings:VSaga's ADO.NET format, and
+        // handing the wrong string to the wrong driver would fail at connect time rather than at config time.
+        builder.Services.AddVSagaMongoDb(o => builder.Configuration.GetSection("MongoDb").Bind(o));
         break;
     default:
         throw new InvalidOperationException($"Unknown Persistence:Provider '{persistenceProvider}'.");
@@ -94,13 +101,21 @@ builder.Services.AddSingleton<ISagaChangeNotifier, SignalRSagaChangeNotifier>();
 builder.Services.AddHostedService<SagaChangePollingService>();
 
 // "persistence" rather than the provider's name, so a compose health check, a dashboard or an alert
-// reads the same key whichever store is behind it. The Redis check is the provider's own: it re-probes the
-// server's configuration on every call and goes Unhealthy on any guarantee it cannot verify.
+// reads the same key whichever store is behind it. The Redis and MongoDB checks are the providers' own:
+// each re-probes the server on every call and goes Unhealthy on any guarantee it cannot verify.
 var healthChecks = builder.Services.AddHealthChecks().AddCheck<RabbitMqHealthCheck>("rabbitmq");
-if (string.Equals(persistenceProvider, "Redis", StringComparison.Ordinal))
-    healthChecks.AddCheck<RedisPersistenceHealthCheck>("persistence");
-else
-    healthChecks.AddCheck<PostgresHealthCheck>("persistence");
+switch (persistenceProvider)
+{
+    case "Redis":
+        healthChecks.AddCheck<RedisPersistenceHealthCheck>("persistence");
+        break;
+    case "MongoDb":
+        healthChecks.AddCheck<MongoPersistenceHealthCheck>("persistence");
+        break;
+    default:
+        healthChecks.AddCheck<PostgresHealthCheck>("persistence");
+        break;
+}
 
 builder.Services.AddAuthentication(ApiKeyAuthenticationDefaults.SchemeName)
     .AddScheme<ApiKeyAuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationDefaults.SchemeName, configureOptions: null);
@@ -111,8 +126,8 @@ var app = builder.Build();
 // Apply versioned EF Core migrations at startup. Non-fatal if Postgres isn't reachable yet — e.g.
 // under WebApplicationFactory in tests, or if this container wins the startup race against the DB —
 // the app still starts; DB-backed endpoints simply fail until the schema is migrated by this or
-// another process. Skipped entirely when no DbContext is registered (Persistence:Provider=Redis, whose
-// key space needs no migration; its bootstrapper writes a schema marker instead).
+// another process. Skipped entirely when no DbContext is registered (Persistence:Provider=Redis or
+// MongoDb, which need no migration; each provider's bootstrapper writes its own schema marker instead).
 using (var scope = app.Services.CreateScope())
 {
     try

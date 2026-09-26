@@ -3,6 +3,7 @@ using VSaga.Core;
 using VSaga.Http;
 using VSaga.Observability;
 using VSaga.Persistence.EFCore;
+using VSaga.Persistence.MongoDB;
 using VSaga.Persistence.Redis;
 using VSaga.Samples.OrderProcessing;
 using VSaga.Samples.OrderProcessing.Participants;
@@ -17,8 +18,8 @@ using Microsoft.Extensions.DependencyInjection;
 var builder = WebApplication.CreateBuilder(args);
 
 // Persistence:Provider, the same convention as Transport:Provider below and the same switch
-// Dashboard.Api's Program.cs has — Postgres (EF Core) by default, Redis when docker-compose.redis.yml
-// says so. Both hosts must agree: the dashboard reads the store this process writes.
+// Dashboard.Api's Program.cs has — Postgres (EF Core) by default, Redis or MongoDb when that provider's
+// compose overlay says so. Both hosts must agree: the dashboard reads the store this process writes.
 var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "Postgres";
 switch (persistenceProvider)
 {
@@ -29,6 +30,9 @@ switch (persistenceProvider)
         break;
     case "Redis":
         builder.Services.AddVSagaRedis(o => builder.Configuration.GetSection("Redis").Bind(o));
+        break;
+    case "MongoDb":
+        builder.Services.AddVSagaMongoDb(o => builder.Configuration.GetSection("MongoDb").Bind(o));
         break;
     default:
         throw new InvalidOperationException($"Unknown Persistence:Provider '{persistenceProvider}'.");
