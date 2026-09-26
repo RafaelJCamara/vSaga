@@ -38,6 +38,17 @@
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.9.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
     <PackageVersion Include="MinVer" Version="7.0.0" />
+    <!-- Apache-2.0, the official driver. Bounded below 4.0.0 like the bus SDKs above so a consumer restore
+         never silently floats onto an untested next-major release. The native driver, not the MongoDB
+         EF Core provider: VSaga.Persistence.EFCore is relational-only (FromSqlInterpolated, HasFilter). -->
+    <PackageVersion Include="MongoDB.Driver" Version="[3.6.0,4.0.0)" />
+    <!-- Transitive pins, not direct references: MongoDB.Driver 3.6 declares SharpCompress 0.30.1 and
+         Snappier 1.0.0, both under NuGet advisories (GHSA-6c8g-7p36-r338, GHSA-pggp-6c3x-2xmx) that
+         TreatWarningsAsErrors turns into a solution-wide restore failure, the failure class
+         Directory.Build.props already records once, over Microsoft.Build.Tasks.Git. With
+         CentralPackageTransitivePinningEnabled these entries lift the transitives to patched versions. -->
+    <PackageVersion Include="SharpCompress" Version="0.50.4" />
+    <PackageVersion Include="Snappier" Version="1.3.1" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
     <!-- Bounded the same way as the other two bus SDKs in this file: a consumer's own restore should
@@ -54,6 +65,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageVersion>
+    <PackageVersion Include="Testcontainers.MongoDb" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.14.0" />
