@@ -1,6 +1,6 @@
 # Design: MongoDB persistence
 
-**Status: planned, nothing built.** No `VSaga.Persistence.MongoDB` project exists; no line of this has
+**Status: accepted (ADR 0001, 2026-09-26), nothing built.** Stage 0 has landed; Q2–Q4 in §9 are the next decisions. No `VSaga.Persistence.MongoDB` project exists; no line of this has
 been written. This file is the plan and the reasoning behind it, written to be picked up cold. The
 decision it argues for is recorded separately in
 [`../adr/0001-mongodb-persistence-provider.md`](../adr/0001-mongodb-persistence-provider.md) — read the

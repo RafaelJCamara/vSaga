@@ -1,6 +1,6 @@
 # ADR 0001: MongoDB as a persistence provider
 
-**Status:** Proposed — not accepted, not built.
+**Status:** **Accepted** — 2026-09-26, by the maintainer. Not built. Accepting the ADR settles the *what*: a `VSaga.Persistence.MongoDB` provider on the native driver, at the tier and with the prerequisites argued below. The plan's blocking questions Q2–Q4 (replica set, connection-string override, bootstrap/health model) are decided in the plan, not here, and remain open until Stage 1 starts; its Stage 0 prerequisite landed in full on 2026-09-26 (ADR 0003).
 **Date:** 2026-09-25
 **Supersedes:** nothing. **Superseded by:** nothing.
 **Implementation plan:** [`../design/mongodb-persistence.md`](../design/mongodb-persistence.md)
