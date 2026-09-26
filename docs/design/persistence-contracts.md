@@ -377,3 +377,47 @@ Separately, and worth more than the package would have been: fold the byte-ident
 `NpgsqlProviderName` constant and its duplicated guard/fallback prose **inside**
 `VSaga.Persistence.EFCore` into one internal constant (commit 21). That removes more duplicated text
 than the whole proposed package, at no packaging cost.
+
+---
+
+## 9. Open questions
+
+Recorded 2026-09-26, with commits 1–6 landed and pushed (`95ba746`). This section tracks what the
+sequence still needs decided or corrected; strike each item through with its resolution, rather than
+deleting it, once settled.
+
+### 9.1 Decisions still needed
+
+| # | Question | Blocks | Options |
+| --- | --- | --- | --- |
+| Q1 | **How are the mutation tests run?** §6.1 requires breaking each fix to confirm exactly its own cases fail. When commit 5 tried a temporary edit to `InMemorySagaStore.cs` for the same purpose, Claude Code's auto-mode classifier refused it as test-related code removal; every later mutation step is the same kind of edit, so expect the same refusal. | Commit 7 onward — every fix commit (7–15b) and B1/B2 (18–19) | (a) add a permission rule allowing the temporary source edit and its revert; (b) the maintainer runs each mutation step by hand from instructions in the commit report; (c) turn auto mode off for those steps only |
+| Q2 | **When is B3 fixed?** §4 records it — a persist that loses its race at `SaveChangesAsync` leaves EF's unit of work unable to commit again, losing the discard path's `DeliveryExhausted` entries — but schedules nothing. | Nothing in this sequence; a conformance case for it would be red on EF with no fix | (a) add it as a fix after 15b, with a case that loses a race at the commit and then commits again in the same unit of work; (b) leave it for a follow-up sequence |
+| Q3 | **Does D10 get a clause?** EF's `InsertAsync` still maps *every* `DbUpdateException` to `SagaAlreadyExistsException` (§1.1), so an infrastructure failure reads as a lost business-key race. No clause states what a store must do, so no case can test it. | Nothing in this sequence | (a) write a clause (only a genuine identity or business-key collision is `SagaAlreadyExistsException`) and a fix; (b) keep it documented as open |
+| Q4 | **Are the provider-specific tests the suite duplicates pruned?** `EfCoreStoreTests`, `InMemoryOutboxStoreTests` and `InMemorySnapshotStoreBusinessKeyTests` overlap the conformance suite. Commit 5 deliberately deleted none of them. | Nothing | (a) prune the exact duplicates in a follow-up; (b) keep them as provider-level smoke tests |
+| Q5 | **Should the suite support xunit.v3?** `VSaga.Persistence.Conformance` depends on xUnit v2's `xunit.assert` and `xunit.extensibility.core`, and its README states that xunit.v3 cannot consume it. Third-party providers on v3 cannot verify themselves. | Nothing in this sequence | (a) stay on v2 until the repo moves; (b) ship a second, v3-targeted package later |
+
+Settled and no longer open: the red run from commit 6 to 15b, and CI red on `main` for it (§6.1,
+decided 2026-09-25); the outbox headers difference (F13 unifies it); clause 11's missing fix (F14).
+
+### 9.2 Corrections queued for commit 20
+
+Commit 20 is the documentation pass. Each item below is verified as wrong today; none is applied yet.
+
+- **This plan, clause 9 (§2):** the example "`Guid` ordering differs between Postgres `uuid`, SQLite BLOB
+  and `Comparer<Guid>.Default`" is false. EF's SQLite provider stores a Guid as TEXT, and a 20,000-Guid
+  experiment shows all three orders coincide. The divergent target that is real and documented is SQL
+  Server's `uniqueidentifier`, which `ISagaSummaryReader`'s own remarks already cite.
+- **This plan, §6's commit-2 row:** says "six EF commit sites"; clause 4's own list, and the landed
+  `ISagaOutboxStore` remarks, name seven.
+- **This plan, the status line:** still reads "planned, nothing built".
+- **`docs/persistence.md:10`:** says to remove its divergence note "once that plan's conformance suite is
+  green" — a condition commit 5 met while the divergences were all still live. Reword it to "once fixes
+  F1–F7, F10, F11, F13 and F14 have landed and the suite, including their cases, is green".
+- **Package counts:** `VSaga.Persistence.Conformance` is the seventeenth packable project, so
+  `docs/adr/0001-mongodb-persistence-provider.md:263` ("grows from 16 packages to 17"),
+  `docs/design/mongodb-persistence.md:519` (a Stage 10 gate of **17** packages) and
+  `docs/design/redis-persistence.md:765` ("today: 16", and its "Mongo's gate asserts 17; Redis makes it
+  18") are each one short. Restate them as deltas rather than absolute counts.
+- **`SagaState.BusinessKey`'s doc** says the key is "set once at creation", while `ISagaSnapshotStore`'s
+  `UpdateAsync` remarks (`9e1263a`) now require a store to move the reservation when an update changes
+  it. The engine does set it once; say that stores must still handle a change.
