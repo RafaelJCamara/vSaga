@@ -189,7 +189,7 @@ it's a single-process, dev/test-only provider with nothing to configure.
 
 ## Persistence
 
-The persistence providers break the `Action<TOptions>` convention above: there is no `VSagaEfCoreOptions`
+The EF Core provider breaks the `Action<TOptions>` convention above: there is no `VSagaEfCoreOptions`
 class, because EF Core already has one.
 `AddVSagaEfCore(this IServiceCollection services, Action<DbContextOptionsBuilder> configureDbContext)`
 (`VSaga.Persistence.EFCore`) hands you EF Core's own `DbContextOptionsBuilder` instead, so the provider
@@ -199,6 +199,34 @@ only `Microsoft.EntityFrameworkCore`, no specific provider. `AddVSagaInMemoryPer
 what each registers, and for the `MigrationsAssembly("VSaga.Persistence.EFCore.Postgres")` requirement
 — `UseNpgsql` alone silently applies no migrations — which is documented there rather than duplicated
 here.
+
+### `Persistence:Provider` — picking the store
+
+Not a library key: like `Transport:Provider`, both shipped hosts (`VSaga.Dashboard.Api` and the
+OrderProcessing sample) read it themselves and switch on it. `Postgres` (the default, EF Core with
+`UseNpgsql`) or `Redis`. Both hosts must agree — the dashboard reads the store the saga host writes —
+and `docker-compose.redis.yml` is the one overlay that sets it. It is a greenfield choice, not a
+migration: flipping it on a running system points every store at an empty key space, so in-flight sagas
+vanish, pending timeouts never fire and pending outbox rows are never drained. The dashboard's
+`/health` reports the chosen store under the provider-neutral name `persistence`.
+
+### `VSagaRedisOptions` (`VSaga.Persistence.Redis`)
+
+`AddVSagaRedis(Action<VSagaRedisOptions> configure, Action<ConfigurationOptions>? configureConnection = null)`.
+Bound from the `Redis` section by both hosts. The second parameter follows the EF precedent above: it
+hands you StackExchange.Redis's own `ConfigurationOptions`, parsed from `ConnectionString`, for
+everything the client already models — TLS, `AbortOnConnectFail`, `ConnectRetry`, multiplexer sizing.
+The provider sets `AbortOnConnectFail = false` (the host starts without Redis, as it does without
+Postgres) and `AllowAdmin = true` (its configuration probe needs `INFO` and `CONFIG GET`) before your
+callback runs, so either can be overridden there.
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `ConnectionString` | `localhost:6379` | StackExchange.Redis's own format (`host:port,password=...`), not an ADO.NET one — so it is a `Redis` section key, never `ConnectionStrings:VSaga`. |
+| `Namespace` | `default` | Every key is prefixed `{vsaga:<Namespace>}:`. Braces are a Redis hash tag. A prefix is a naming convention, **not a security boundary**: a neighbour's `FLUSHALL` reaches every namespace, so a dedicated instance is the documented prerequisite. Must not contain braces. |
+| `WriteMemoryThreshold` | `0.90` | The `used_memory`/`maxmemory` ratio above which persists are refused before any write (`RedisMemoryPressureException`, an infrastructure failure the engine redelivers). A Lua script has no rollback, so refusing loudly beats tearing a write set on `OOM`. Ignored when the server has no `maxmemory`. Read on the probe interval, not per write. |
+| `MaxSearchScanMembers` | `100000` | The most index members a dashboard `Search` may scan before `ListAsync` throws `RedisSearchScanLimitExceededException` (HTTP 400) rather than silently truncating a page — see [`persistence.md`](persistence.md#redis). |
+| `ProbeInterval` | `10s` | How often the bootstrapper re-probes `appendonly`, `maxmemory-policy`, cluster mode, memory pressure and the torn-write sentinel. Re-probed, not checked once, because a live `CONFIG SET` silently changes the guarantees. |
 
 ### `ConnectionStrings:VSaga`
 

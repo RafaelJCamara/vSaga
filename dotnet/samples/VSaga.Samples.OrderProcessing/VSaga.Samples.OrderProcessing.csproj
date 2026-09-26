@@ -10,6 +10,7 @@
     <ProjectReference Include="..\..\src\VSaga.Core\VSaga.Core.csproj" />
     <ProjectReference Include="..\..\src\VSaga.Observability\VSaga.Observability.csproj" />
     <ProjectReference Include="..\..\src\VSaga.Persistence.EFCore\VSaga.Persistence.EFCore.csproj" />
+    <ProjectReference Include="..\..\src\VSaga.Persistence.Redis\VSaga.Persistence.Redis.csproj" />
     <ProjectReference Include="..\..\src\VSaga.Transport.RabbitMQ\VSaga.Transport.RabbitMQ.csproj" />
     <ProjectReference Include="..\..\src\VSaga.Transport.Wolverine\VSaga.Transport.Wolverine.csproj" />
     <ProjectReference Include="..\..\src\VSaga.Transport.MassTransit\VSaga.Transport.MassTransit.csproj" />

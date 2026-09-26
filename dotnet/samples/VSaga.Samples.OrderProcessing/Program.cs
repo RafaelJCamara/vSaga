@@ -3,6 +3,7 @@ using VSaga.Core;
 using VSaga.Http;
 using VSaga.Observability;
 using VSaga.Persistence.EFCore;
+using VSaga.Persistence.Redis;
 using VSaga.Samples.OrderProcessing;
 using VSaga.Samples.OrderProcessing.Participants;
 using VSaga.Transport.RabbitMQ;
@@ -15,9 +16,23 @@ using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var connectionString = builder.Configuration.GetConnectionString("VSaga")
-    ?? "Host=localhost;Port=5432;Database=vsaga;Username=postgres;Password=postgres";
-builder.Services.AddVSagaEfCore(db => db.UseNpgsql(connectionString));
+// Persistence:Provider, the same convention as Transport:Provider below and the same switch
+// Dashboard.Api's Program.cs has — Postgres (EF Core) by default, Redis when docker-compose.redis.yml
+// says so. Both hosts must agree: the dashboard reads the store this process writes.
+var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "Postgres";
+switch (persistenceProvider)
+{
+    case "Postgres":
+        var connectionString = builder.Configuration.GetConnectionString("VSaga")
+            ?? "Host=localhost;Port=5432;Database=vsaga;Username=postgres;Password=postgres";
+        builder.Services.AddVSagaEfCore(db => db.UseNpgsql(connectionString));
+        break;
+    case "Redis":
+        builder.Services.AddVSagaRedis(o => builder.Configuration.GetSection("Redis").Bind(o));
+        break;
+    default:
+        throw new InvalidOperationException($"Unknown Persistence:Provider '{persistenceProvider}'.");
+}
 
 // Opt-in only (default off, see appsettings.json/docker-compose.chaos.yml): registration order
 // relative to AddVSagaRabbitMq below doesn't matter — MiddlewarePipelineTransport only resolves

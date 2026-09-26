@@ -2,6 +2,7 @@ using System.Text;
 using VSaga.Abstractions.Persistence;
 using VSaga.Abstractions.Sagas;
 using VSaga.Abstractions.Transport;
+using VSaga.Persistence.Redis;
 
 namespace VSaga.Dashboard.Api.Endpoints;
 
@@ -29,23 +30,7 @@ public static class SagaEndpoints
     {
         var group = app.MapGroup("/api/sagas").WithTags("Sagas").RequireAuthorization();
 
-        group.MapGet("", async (ISagaSummaryReader reader, SagaStatus? status, string? sagaType, SagaKind? kind, string? search, int page = 1, int pageSize = 25, SagaSortColumn? sortBy = null, bool sortDescending = false, CancellationToken ct = default) =>
-        {
-            var filter = new SagaListFilter
-            {
-                Status = status,
-                SagaType = sagaType,
-                Kind = kind,
-                Search = search,
-                Page = page <= 0 ? 1 : page,
-                PageSize = pageSize <= 0 ? 25 : Math.Min(pageSize, MaxPageSize),
-                SortBy = sortBy,
-                SortDescending = sortDescending,
-            };
-
-            return Results.Ok(await reader.ListAsync(filter, ct));
-        })
-        .WithName("ListSagas");
+        group.MapGet("", ListSagasAsync).WithName("ListSagas");
 
         // Every per-instance route is {sagaType}/{correlationId}: a correlation id alone no longer
         // identifies a saga instance, since two saga types may track the same one. Callers holding
@@ -149,6 +134,33 @@ public static class SagaEndpoints
             .WithTags("Topology")
             .WithName("RecordTopologyRegistrations")
             .RequireAuthorization();
+    }
+
+    private static async Task<IResult> ListSagasAsync(ISagaSummaryReader reader, SagaStatus? status, string? sagaType, SagaKind? kind, string? search, int page = 1, int pageSize = 25, SagaSortColumn? sortBy = null, bool sortDescending = false, CancellationToken ct = default)
+    {
+        var filter = new SagaListFilter
+        {
+            Status = status,
+            SagaType = sagaType,
+            Kind = kind,
+            Search = search,
+            Page = page <= 0 ? 1 : page,
+            PageSize = pageSize <= 0 ? 25 : Math.Min(pageSize, MaxPageSize),
+            SortBy = sortBy,
+            SortDescending = sortDescending,
+        };
+
+        try
+        {
+            return Results.Ok(await reader.ListAsync(filter, ct));
+        }
+        catch (RedisSearchScanLimitExceededException ex)
+        {
+            // Redis has no substring index, so its provider bounds a search's scan and refuses above the
+            // bound rather than truncating a page (docs/persistence.md, "Search"). The request is the
+            // thing to change -- narrow it with a filter -- so it is a 400, not a 500.
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 
     private static async Task<IResult> GetSagaMapAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, IServiceTopologyStore topologyStore, CancellationToken ct)
