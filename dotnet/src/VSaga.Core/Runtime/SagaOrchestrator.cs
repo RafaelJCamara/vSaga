@@ -875,14 +875,6 @@ public sealed class SagaOrchestrator<TState>(
     }
 
     /// <summary>
-    /// docs/design/mixed-sagas.md §5: the timeout's own final persist lost the optimistic-concurrency race, so
-    /// the state transition that queued these was never actually committed -- publishing them now would
-    /// announce a transition nobody recorded. Reuses DrainDeferredPublishesAsync's own "leave the saga
-    /// for its own timeout to rescue it" policy (one DeliveryExhausted entry per dropped publish, logged
-    /// and swallowed, never thrown) rather than inventing a second one -- the only difference from a
-    /// drain is that these are never sent at all.
-    /// </summary>
-    /// <summary>
     /// The <see cref="DiscardDeferredPublishesAsync"/> counterpart for the engine's own staged
     /// ChildSagaFinished row: the persist that would have made this saga terminal lost its race, so the
     /// saga is not in fact finished and announcing otherwise would be a lie the parent acts on.
@@ -899,6 +891,14 @@ public sealed class SagaOrchestrator<TState>(
             SagaType, state.CorrelationId, forState);
     }
 
+    /// <summary>
+    /// docs/design/mixed-sagas.md §5: the timeout's own final persist lost the optimistic-concurrency race, so
+    /// the state transition that queued these was never actually committed -- publishing them now would
+    /// announce a transition nobody recorded. Reuses DrainDeferredPublishesAsync's own "leave the saga
+    /// for its own timeout to rescue it" policy (one DeliveryExhausted entry per dropped publish, logged
+    /// and swallowed, never thrown) rather than inventing a second one -- the only difference from a
+    /// drain is that these are never sent at all.
+    /// </summary>
     private async Task DiscardDeferredPublishesAsync(Guid correlationId, ISagaContextDeferredPublisher publisher, string forState, CancellationToken cancellationToken)
     {
         // Before the LogAsync calls below, not after: those append to the event log through the same

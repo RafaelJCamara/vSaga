@@ -65,8 +65,6 @@ public sealed class EfCoreSagaOutboxStore(VSagaDbContext db) : ISagaOutboxStore
         return Task.CompletedTask;
     }
 
-    private const string NpgsqlProviderName = "Npgsql.EntityFrameworkCore.PostgreSQL";
-
     /// <remarks>
     /// On Postgres, claims via an atomic <c>UPDATE ... RETURNING</c> guarded by
     /// <c>FOR UPDATE SKIP LOCKED</c>, safe for multiple concurrent
@@ -75,7 +73,7 @@ public sealed class EfCoreSagaOutboxStore(VSagaDbContext db) : ISagaOutboxStore
     /// falls back to a plain load-then-update, which is only correct for a single dispatcher instance.
     /// </remarks>
     public Task<IReadOnlyList<SagaOutboxMessage>> ClaimPendingAsync(DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken = default) =>
-        string.Equals(db.Database.ProviderName, NpgsqlProviderName, StringComparison.Ordinal)
+        string.Equals(db.Database.ProviderName, EfCoreProviderNames.Npgsql, StringComparison.Ordinal)
             ? ClaimPendingViaSkipLockedAsync(olderThan, batchSize, cancellationToken)
             : ClaimPendingViaLoadAndUpdateAsync(olderThan, batchSize, cancellationToken);
 

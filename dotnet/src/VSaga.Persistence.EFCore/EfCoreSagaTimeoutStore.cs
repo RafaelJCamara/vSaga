@@ -34,8 +34,6 @@ public sealed class EfCoreSagaTimeoutStore(VSagaDbContext db) : ISagaTimeoutStor
             await db.SaveChangesAsync(cancellationToken);
     }
 
-    private const string NpgsqlProviderName = "Npgsql.EntityFrameworkCore.PostgreSQL";
-
     /// <remarks>
     /// On Postgres, claims via an atomic <c>UPDATE ... RETURNING</c> guarded by
     /// <c>FOR UPDATE SKIP LOCKED</c>, safe for multiple concurrent
@@ -50,7 +48,7 @@ public sealed class EfCoreSagaTimeoutStore(VSagaDbContext db) : ISagaTimeoutStor
         // Materialised once here: both paths hand it to the database as a parameter.
         var wanted = sagaTypes?.ToArray();
 
-        return string.Equals(db.Database.ProviderName, NpgsqlProviderName, StringComparison.Ordinal)
+        return string.Equals(db.Database.ProviderName, EfCoreProviderNames.Npgsql, StringComparison.Ordinal)
             ? ClaimDueViaSkipLockedAsync(asOf, batchSize, wanted, cancellationToken)
             : ClaimDueViaLoadAndUpdateAsync(asOf, batchSize, wanted, cancellationToken);
     }

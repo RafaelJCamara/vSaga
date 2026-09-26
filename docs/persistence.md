@@ -84,8 +84,8 @@ the saga types sharing a database never fires — and so loses — the other ser
 act on every row.
 
 > **This applies to Postgres and nothing else.** The choice is an exact string comparison against
-> `"Npgsql.EntityFrameworkCore.PostgreSQL"` (`EfCoreSagaTimeoutStore.cs:37`, `:46-49`;
-> `EfCoreSagaOutboxStore.cs:67`, `:76-79`). **Every** other provider — including `UseSqlServer`,
+> `"Npgsql.EntityFrameworkCore.PostgreSQL"` (`EfCoreProviderNames.Npgsql`, tested by
+> `EfCoreSagaTimeoutStore.ClaimDueAsync` and `EfCoreSagaOutboxStore.ClaimPendingAsync`). **Every** other provider — including `UseSqlServer`,
 > suggested above — silently takes a plain load-then-update fallback that is correct for exactly one
 > dispatcher instance. Two replicas on a non-Postgres provider will fire the same timeout twice and
 > publish the same outbox row twice, with no error anywhere. See
