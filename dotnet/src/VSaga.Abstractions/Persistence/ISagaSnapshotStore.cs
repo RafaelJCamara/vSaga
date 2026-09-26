@@ -69,7 +69,11 @@ public interface ISagaSnapshotStore<TState> where TState : SagaState
     /// </remarks>
     Task<TState?> FindAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default);
 
-    /// <summary>Throws <see cref="SagaAlreadyExistsException"/> if a snapshot already exists for this state's own (SagaType, CorrelationId) pair.</summary>
+    /// <summary>
+    /// Throws <see cref="SagaAlreadyExistsException"/> if a snapshot already exists for this state's own
+    /// (SagaType, CorrelationId) pair, or if another instance of the same saga type already holds this
+    /// state's non-null <c>BusinessKey</c>.
+    /// </summary>
     Task InsertAsync(TState state, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -89,13 +93,20 @@ public interface ISagaSnapshotStore<TState> where TState : SagaState
     /// the saga stalls silently. The restore half is the same invariant after a failure: a caller that
     /// retries or abandons after a throw must still be holding <paramref name="expectedVersion"/>, not
     /// a version that exists nowhere.
+    /// <para>
+    /// The business-key reservation follows the blob: an update that changes <c>state.BusinessKey</c>
+    /// moves the reservation to the new key. If another instance of the same saga type already holds that
+    /// key, the update throws <see cref="SagaAlreadyExistsException"/> — the same collision
+    /// <see cref="InsertAsync"/> reports — writes nothing, leaves both reservations where they were, and
+    /// restores <c>state.Version</c> like every other throw path.
+    /// </para>
     /// </remarks>
     Task UpdateAsync(TState state, int expectedVersion, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Looks up the instance that reserved this business key, or null if none has. At most one instance
-    /// can exist for a given (sagaType, businessKey) pair -- enforced at InsertAsync time by a unique
-    /// constraint, not by this method.
+    /// can exist for a given (sagaType, businessKey) pair -- enforced by every write that sets a business
+    /// key (<see cref="InsertAsync"/> and <see cref="UpdateAsync"/>), not by this method.
     /// </summary>
     /// <remarks>
     /// Deserialises from the stored state blob, exactly as <see cref="FindAsync"/> does — the business

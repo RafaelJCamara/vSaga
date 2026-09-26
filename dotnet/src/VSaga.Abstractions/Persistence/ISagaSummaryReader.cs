@@ -23,6 +23,9 @@ public interface ISagaSummaryReader
     /// once — no skips, no repeats. Without a tiebreak, rows tying on the sort column can swap sides
     /// of a page boundary between two fetches — and the dashboard's change poller pages through
     /// exactly such results, so a row swapping across its boundary is a live update silently dropped.
+    /// The final tiebreak is on each row's own identity, so the relative order of two matching rows
+    /// depends only on their own values: writes to rows outside the result never reorder the rows inside
+    /// it, which is what lets the poller keep paging while other sagas advance.
     /// </para>
     /// <para>
     /// The total order is <b>per-provider</b> deterministic, not byte-identical across providers:

@@ -111,7 +111,8 @@ XML documentation on `VSaga.Abstractions`. **Clauses 7 and 10 are not doc-only**
 8. **`ClaimDueAsync`/`ClaimPendingAsync` return earliest-due / earliest-created first.**
 9. **`Search` is case-insensitive** and matches `SagaType` and `CorrelationId` **independently**;
    **`ListAsync` applies a stable total order that is per-provider deterministic** — repeatable page
-   fetches and skip-free, repeat-free page walks. It does **not** require a byte-identical sequence
+   fetches and skip-free, repeat-free page walks. The final tiebreak is on the row's own identity, so
+   writes to rows outside a result never reorder the rows inside it. It does **not** require a byte-identical sequence
    across providers: `SagaType` sorts under database collation on EF versus `StringComparer.Ordinal`
    in-memory, and `Guid` ordering differs between Postgres `uuid`, SQLite BLOB and
    `Comparer<Guid>.Default`. Nothing consumes a cross-provider-identical order.
@@ -145,14 +146,14 @@ and `:89-91` covers commit conventions — neither states a red-green rule.)
 | F4 | EF `ResetStateAsync`: patch `UpdatedAtUtc` into the blob, take it from `TimeProvider`, map `DbUpdateConcurrencyException` → `SagaConcurrencyException` | `EfCoreSagaSummaryReader.cs:98-120` |
 | F5 | In-memory `Update`: stop overwriting `state.UpdatedAtUtc` | `InMemorySagaStore.cs:112` |
 | F6 | In-memory claims: order earliest-first | `InMemorySagaStore.cs:312-330`, `:378-396` |
-| F7 | EF `UpdateAsync`: map a business-key collision to `SagaAlreadyExistsException` **and restore `state.Version`** — today `:61` bumps and `:84-88` restores only inside `catch (DbUpdateConcurrencyException)`, so a mapped `DbUpdateException` would escape violating clause 1 | `EfCoreSagaSnapshotStore.cs` |
+| F7 | EF `UpdateAsync`: map a business-key collision to `SagaAlreadyExistsException` **and restore `state.Version`** — today `:61` bumps and `:84-88` restores only inside `catch (DbUpdateConcurrencyException)`, so a mapped `DbUpdateException` would escape violating clause 1. The collision rule itself is stated on `ISagaSnapshotStore.InsertAsync`/`UpdateAsync`, written ahead of its red case | `EfCoreSagaSnapshotStore.cs` |
 | F8 | Clamp `pageSize` to a server-side maximum of 500 | `SagaEndpoints.cs:31` |
 | F9 | `SagaTimeoutDispatcherHostedService` passes `runtimesBySagaType.Keys` to `ClaimDueAsync` | `SagaTimeoutDispatcherHostedService.cs`, both providers |
 | **F10** | In-memory `Update`: restore `state.Version` on the throw path | `InMemorySagaStore.cs:90-91`, `:111` |
 | **F11** | In-memory `GetTimelineAsync`: order by `SequenceNumber` | `InMemorySagaStore.cs:270-274` |
 | **F12** | Dashboard maps `SagaConcurrencyException` → `Results.Conflict`. Without it, clause 7 turns a raced retry into an unhandled 500: `SagaEndpoints.cs:192` is a bare `await` and the API has no exception-to-status mapping | `SagaEndpoints.cs` |
 | **F13** | In-memory `EnqueueAsync`: store its own `StringComparer.Ordinal` copy of the headers rather than the caller's live dictionary (§1.1's headers row) | `InMemorySagaStore.cs` `EnqueueAsync` |
-| **F14** | EF `FindAsync`/`FindByBusinessKeyAsync`: throw when the blob deserialises to null (clause 11, D9) instead of returning null. Tested EF-only — the conformance suite writes only through the contracts, so it cannot plant a bad blob | `EfCoreSagaSnapshotStore.cs` |
+| **F14** | EF `FindAsync`/`FindByBusinessKeyAsync`: throw when the blob deserialises to null (clause 11, D9) instead of returning null. Tested in the conformance suite: a state type whose own converter writes it as JSON null plants the blob through an ordinary `InsertAsync` (an earlier draft of this row wrongly said the suite could not) | `EfCoreSagaSnapshotStore.cs` |
 
 F13 and F14 were added after commit 5's adversarial review surfaced them: §5.1's headers case would have
 been permanently red with no fix, and clause 11 was stated as contract in commit 4 with no fix in this
@@ -309,6 +310,12 @@ before any fix was kept as the point of the sequence.)
 
 Commits 17–19 touch message flow and timing, so `CONTRIBUTING.md:69-81` makes live verification against
 `docker compose up` a prerequisite. Mutation-test F1–F7, F10, F11, F13, F14, B1 and B2 per `:83-87`.
+
+Two of commit 6's reds are shaped by how they can fail. F1's case is red on in-memory through a hash-table
+rehash and on Postgres through its bounded top-N sort, which today skips and repeats tied rows across a
+page walk; SQLite happens to return ties in a stable order, so its green there proves nothing either way.
+F11's red depends on concurrent appends actually interleaving, so its mutation kill is statistical: run
+the case repeatedly (20 runs) under the reverted fix and require a failure, rather than trusting one run.
 
 ---
 
