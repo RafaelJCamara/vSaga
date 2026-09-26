@@ -1,0 +1,61 @@
+# Redis-persistence overlay: layer this on top of docker-compose.yml to run the OrderProcessing sample
+# and the dashboard against VSaga.Persistence.Redis (docs/persistence.md, "Redis") instead of EF Core/
+# Postgres, for that provider's own live-verification pass.
+#
+#   docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
+#
+# The redis service is configured at the provider's Tier A: appendonly yes, appendfsync everysec,
+# maxmemory-policy noeviction, a dedicated instance with a maxmemory ceiling so the provider's memory
+# gate has a number to measure against. Both hosts switch to Persistence__Provider=Redis and point at
+# it; the provider's health check (under dashboard-api's /health as "persistence") verifies those
+# settings on every call, so `docker compose ps` showing dashboard-api healthy means the configuration
+# was probed, not assumed.
+#
+# postgres stays up even though nothing on this track connects to it: order-processing's depends_on in
+# the base file names it, and Compose can override a depends_on entry but not delete a key. Its port is
+# remapped like every other service's so this track runs alongside the plain stack.
+#
+# Ports use the "!override" merge tag rather than plain sequences, same reason as every other overlay:
+# Compose's default list-merge would otherwise leave this track also trying to bind the base file's
+# original host ports. This overlay's block: redis 6479, postgres 5447, rabbitmq 6272/16272,
+# dashboard-api 5680 -- the slots docs/design/redis-persistence.md reserved for it.
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction", "--maxmemory", "256mb"]
+    ports:
+      - "6479:6379"
+    volumes:
+      - vsaga-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    ports: !override ["5447:5432"]
+  rabbitmq:
+    ports: !override ["6272:5672", "16272:15672"]
+
+  dashboard-api:
+    ports: !override ["5680:8080"]
+    environment:
+      Persistence__Provider: "Redis"
+      Redis__ConnectionString: "redis:6379"
+      Redis__Namespace: "vsaga"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  order-processing:
+    environment:
+      Persistence__Provider: "Redis"
+      Redis__ConnectionString: "redis:6379"
+      Redis__Namespace: "vsaga"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  vsaga-redis-data:
