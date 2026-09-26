@@ -302,7 +302,12 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
 
     public Task<IReadOnlyList<SagaLogEntry>> GetTimelineAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<SagaLogEntry> result = _timelines.TryGetValue((sagaType, correlationId), out var list) ? list : [];
+        // Ascending SequenceNumber (clause 5), sorted at the read: AppendAsync hands out sequence numbers
+        // and appends to the immutable list in two separate steps, so under concurrent appends the list's
+        // order is the order the swaps won, not the order the numbers were issued in.
+        IReadOnlyList<SagaLogEntry> result = _timelines.TryGetValue((sagaType, correlationId), out var list)
+            ? list.OrderBy(e => e.SequenceNumber).ToList()
+            : [];
         return Task.FromResult(result);
     }
 
