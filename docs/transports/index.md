@@ -129,6 +129,7 @@ once — see that overlay's own file header for its exact ports:
 | `docker-compose.brighter.yml` | `5445` | `5972` / `15972` | `5380` |
 | `docker-compose.http.yml` | `5446` | `6072` / `16072` | `5480` |
 | `docker-compose.redis.yml` (a persistence overlay, not a transport one — see [`../persistence.md`](../persistence.md#redis); adds `redis` on `6479`) | `5447` | `6272` / `16272` | `5680` |
+| `docker-compose.mongo.yml` (a persistence overlay — see [`../persistence.md`](../persistence.md#mongodb); adds `mongo` on `27018`) | `5448` | `6172` / `16172` | `5580` |
 
 Tear one down the same way you brought it up, naming the same `-p` project:
 `docker compose -p vsaga-wolverine down`.

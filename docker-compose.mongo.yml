@@ -1,0 +1,67 @@
+# MongoDB-persistence overlay: layer this on top of docker-compose.yml to run the OrderProcessing sample
+# and the dashboard against VSaga.Persistence.MongoDB (docs/persistence.md, "MongoDB") instead of EF
+# Core/Postgres, for that provider's own live-verification pass.
+#
+#   docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
+#
+# The mongo service is a single-member replica set, the provider's hard prerequisite: mongod runs with
+# --replSet, and the healthcheck initiates the set idempotently -- rs.status() succeeds once initiated,
+# so the catch arm runs rs.initiate() only on a fresh volume, and the check passes only once the member
+# reports itself PRIMARY. A naive rs.initiate() in a command would break the second `up` on a persisted
+# volume, and because dashboard-api gates order-processing, the whole stack would then fail to start.
+# The member advertises itself as mongo:27017, which the two hosts resolve on the compose network; from
+# the host machine, connect with mongodb://localhost:27018/?directConnection=true.
+#
+# Both hosts switch to Persistence__Provider=MongoDb and point at it; the provider's health check (under
+# dashboard-api's /health as "persistence") verifies the topology and the indexes on every call, so
+# `docker compose ps` showing dashboard-api healthy means the replica set and the business-key index
+# were probed, not assumed.
+#
+# postgres stays up even though nothing on this track connects to it: order-processing's depends_on in
+# the base file names it, and Compose can override a depends_on entry but not delete a key. Its port is
+# remapped like every other service's so this track runs alongside the plain stack.
+#
+# Ports use the "!override" merge tag rather than plain sequences, same reason as every other overlay:
+# Compose's default list-merge would otherwise leave this track also trying to bind the base file's
+# original host ports. This overlay's block: mongo 27018, postgres 5448, rabbitmq 6172/16172,
+# dashboard-api 5580 -- the slots docs/design/mongodb-persistence.md reserved for it.
+services:
+  mongo:
+    image: mongo:8.0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27018:27017"
+    volumes:
+      - vsaga-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { if (rs.status().myState !== 1) quit(1) } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }); quit(1) }\""]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  postgres:
+    ports: !override ["5448:5432"]
+  rabbitmq:
+    ports: !override ["6172:5672", "16172:15672"]
+
+  dashboard-api:
+    ports: !override ["5580:8080"]
+    environment:
+      Persistence__Provider: "MongoDb"
+      MongoDb__ConnectionString: "mongodb://mongo:27017/?replicaSet=rs0"
+      MongoDb__DatabaseName: "vsaga"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  order-processing:
+    environment:
+      Persistence__Provider: "MongoDb"
+      MongoDb__ConnectionString: "mongodb://mongo:27017/?replicaSet=rs0"
+      MongoDb__DatabaseName: "vsaga"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+volumes:
+  vsaga-mongo-data:
