@@ -86,6 +86,18 @@ public sealed class EfCoreSagaSnapshotStore<TState>(VSagaDbContext db) : ISagaSn
             state.Version = expectedVersion;
             throw new SagaConcurrencyException(state.SagaType, state.CorrelationId, expectedVersion);
         }
+        catch (DbUpdateException ex)
+        {
+            // An update moving BusinessKey onto a key another instance of this saga type holds trips the
+            // partial unique index on (SagaType, BusinessKey), exactly as InsertAsync's reservation
+            // does, and is reported the same way (ISagaSnapshotStore's collision rule). Ordered after
+            // the concurrency catch above, whose exception derives from this one. Clause 1's restore
+            // applies on this throw path as much as the other: without it the live object would sit at
+            // the version this call bumped to and failed to record. The same caveat as InsertAsync
+            // applies -- any DbUpdateException lands here, so the original is chained for diagnosis.
+            state.Version = expectedVersion;
+            throw new SagaAlreadyExistsException(state.SagaType, state.CorrelationId, ex);
+        }
     }
 
     private static SagaInstanceEntity ToEntity(TState state) => new()
