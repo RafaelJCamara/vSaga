@@ -1,6 +1,6 @@
 # ADR 0003: Write the persistence contracts down, and fix what that surfaces
 
-**Status:** **Accepted** — 2026-09-25. In progress: commits 1–15b of the plan's sequence have landed, every fix F1–F7, F10, F11, F13 and F14 with them, and the suite is fully green again
+**Status:** **Accepted** — 2026-09-25. **Implemented** 2026-09-26: all 21 commits of the plan's sequence have landed, every fix and both engine bugs with them, and the suite is green
 (progress in the plan's §6.2).
 **Amended:** 2026-09-25, after auditing the plan against the code; and again the same day, after the
 conformance suite's review, to add fixes F13 and F14 and restate which commits are red.

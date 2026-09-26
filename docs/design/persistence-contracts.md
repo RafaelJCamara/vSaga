@@ -1,6 +1,6 @@
 # Design: persistence contracts and the conformance suite
 
-**Status: in progress — commits 1–15b landed and the suite is fully green again; commit 16 is next. Progress in §6.2, open questions in §9. Decisions accepted.** Recorded in
+**Status: complete — all 21 commits landed; the record is in §6.2, and §9.1 keeps the four questions that outlive the sequence (Q2–Q5). Decisions accepted.** Recorded in
 [`../adr/0003-persistence-contract-clauses.md`](../adr/0003-persistence-contract-clauses.md); what
 remains is execution. Nothing here depends on a MongoDB or Redis provider ever being built.
 
@@ -345,8 +345,23 @@ As of 2026-09-26.
 | 15 | `cb1c878` — F11 | Landed: 1 green, 5 left; the statistical kill ran as §6.1 asks, 20 of 20 red with the change stashed, 20 of 20 green restored |
 | 15a | `e889bba` — F13 | Landed: 1 green, 4 left; in-memory fully green |
 | 15b | `d43ae64` — F14 | Landed: 4 green, **0 left**. `dotnet test dotnet/VSaga.slnx` is fully green again, 628 tests across 13 projects |
-| 16 | F8 (`pageSize` clamp) | **Next** |
-| 17–21 | Clause 10 + F9, B1, B2, docs, the `NpgsqlProviderName` fold | Pending |
+| 16 | `bf531c5` — F8 | Landed: `SagaEndpoints.MaxPageSize` = 500, the response reports the size applied; one new dashboard API test, killed by removing the clamp |
+| 17 | `c8eb78c` — clause 10 + F9 | Landed: `ClaimDueAsync` gains `sagaTypes`, both providers filter inside the claim (Postgres via `= ANY(text[])` in the locking subquery), the dispatcher and `SagaTestHarness` pass their own types; one conformance case on all three providers and one Core case waiting on the dispatcher's real claim; three mutations, one per site, each killed |
+| 18 | `09de8ea` — B1 | Landed: the row is keyed on the envelope's (parent's) id; one Core case drives the recovery path end to end, killed by keying on the child again |
+| 19 | `034bde5` — B2 | Landed: the staged handle reaches `RecordDeliveryExhaustedAsync` through a callback threaded like `onResolved`; the guard is evaluated first and guard-false discards before the append; two Core cases (no snapshot; marks Failed), killed by moving or removing the discard |
+| 20 | `4c0b0f7` — docs | Landed: every §9.2 item, marked there |
+| 21 | `7174928` — `EfCoreProviderNames.Npgsql`, the summary block moved | Landed |
+
+**The sequence is complete.** `dotnet test dotnet/VSaga.slnx` is green at `7174928`: 636 tests across 13
+projects (628 at 15b, plus the eight cases 16–19 added). Commits 17–19 were verified live per §6.1 against
+`docker compose up -d --build` on a clean volume (`down -v` first): no `No registered saga runtime`
+warning from either host; within two minutes 39 sagas Completed, 13 Failed and 1 TimedOut, all created
+after the containers' start, across the sample's seven saga types; the sub-sagas (`InvoiceArchivalSaga`,
+`InvoiceDeliverySaga` under `InvoiceFollowUpSaga`, `LoyaltyLookupSaga` under `PostShipmentChoreography`)
+finishing and their parents completing on the child's report; and the only error-level log line EF Core's
+own `__EFMigrationsHistory` probe on the empty database, before it applied the migrations. No process was
+killed, so B1's recovery path and B2's dead-letter path were not exercised live; both are pinned by their
+Core cases, and the live run shows the ordinary child-finish flow they sit beside intact.
 
 **The red set at `95ba746`**, by the fix that turned it green. Each fix commit turned exactly its own
 row green and left every other row as it was — the count column above is that check, run per commit
@@ -466,6 +481,8 @@ Commit 20 was the documentation pass; every item below is applied there, with on
 - **`docs/persistence.md:10`:** says to remove its divergence note "once that plan's conformance suite is
   green" — a condition commit 5 met while the divergences were all still live. Reword it to "once fixes
   F1–F7, F10, F11, F13 and F14 have landed and the suite, including their cases, is green".
+  **Applied in commit 20, with a deviation:** by then that condition was met, so the note was removed
+  outright and replaced with a pointer to the suite and the catalogue.
 - **Package counts:** `VSaga.Persistence.Conformance` is the seventeenth packable project, so
   `docs/adr/0001-mongodb-persistence-provider.md:263` ("grows from 16 packages to 17"),
   `docs/design/mongodb-persistence.md:519` (a Stage 10 gate of **17** packages) and
