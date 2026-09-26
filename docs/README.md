@@ -54,16 +54,17 @@ new here; the rest of this index is organized by topic, roughly in the order you
     provider plans below depend on; all 21 commits landed. Stands alone; needs neither of them.
   - [`design/mongodb-persistence.md`](design/mongodb-persistence.md) — **accepted, nothing built.** Its
     Stage 0 prerequisite is done; the next decisions are the plan's Q2–Q4.
-  - [`design/redis-persistence.md`](design/redis-persistence.md) — **planned, nothing built.** Shares
-    three seams with the MongoDB plan; neither depends on the other landing first.
+  - [`design/redis-persistence.md`](design/redis-persistence.md) — **accepted, nothing built.** Shares
+    three seams with the MongoDB plan; neither depends on the other landing first. Its fault-injection
+    tier and its blocking questions are the next decisions.
 
 - [`adr/`](adr/) — architecture decision records: one decision per file, numbered, stating the context,
   the options weighed, and the consequences accepted. Newer and narrower than `design/`, which holds
   long-form plans; an ADR links to its plan rather than repeating it.
   - [`adr/0001-mongodb-persistence-provider.md`](adr/0001-mongodb-persistence-provider.md) — **Accepted**
     2026-09-26, not built.
-  - [`adr/0002-redis-persistence-provider.md`](adr/0002-redis-persistence-provider.md) — **Proposed**,
-    not accepted.
+  - [`adr/0002-redis-persistence-provider.md`](adr/0002-redis-persistence-provider.md) — **Accepted**
+    2026-09-26, not built.
   - [`adr/0003-persistence-contract-clauses.md`](adr/0003-persistence-contract-clauses.md) —
     **Accepted** and **implemented** 2026-09-26.
   - [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md) — **Accepted**,

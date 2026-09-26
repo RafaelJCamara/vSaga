@@ -1,6 +1,6 @@
 # Design: Redis persistence
 
-**Status: planned, nothing built.** No `VSaga.Persistence.Redis` project exists. This file is the plan
+**Status: accepted (ADR 0002, 2026-09-26), nothing built.** Stage 0 has landed; the fault-injection tier (Q3) and Q1, Q2, Q4, Q5 in §9 are the next decisions. No `VSaga.Persistence.Redis` project exists. This file is the plan
 and the reasoning behind it; the decision it argues for is recorded in
 [`../adr/0002-redis-persistence-provider.md`](../adr/0002-redis-persistence-provider.md).
 

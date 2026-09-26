@@ -1,6 +1,6 @@
 # ADR 0002: Redis as a persistence provider
 
-**Status:** Proposed — not accepted, not built.
+**Status:** **Accepted** — 2026-09-26, by the maintainer. Not built. Accepting the ADR settles the *what*: a `VSaga.Persistence.Redis` provider on `StackExchange.Redis` with core data types and server-side Lua, positioned as the plan's §1 states — a durable single-node provider with a stated loss window, never a Postgres peer except under its opt-in tier. The plan's blocking questions Q1, Q2, Q4 and Q5 (tier claim, server and Cluster scope, configuration validation, the bounded-scan search) and the fault-injection tier of Q3 are decided in the plan, not here, and remain open until Stage 1 starts; the Stage 0 prerequisite landed in full on 2026-09-26 (ADR 0003).
 **Date:** 2026-09-25
 **Relates to:** [`0003-persistence-contract-clauses.md`](0003-persistence-contract-clauses.md) — the
 accepted groundwork this depends on, owned by neither provider plan. Also
