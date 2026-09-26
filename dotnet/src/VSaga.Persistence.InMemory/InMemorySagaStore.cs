@@ -109,7 +109,6 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
                 throw new SagaAlreadyExistsException(state.SagaType, state.CorrelationId);
 
             state.Version = expectedVersion + 1;
-            state.UpdatedAtUtc = DateTimeOffset.UtcNow;
             var updated = ToStored(state);
 
             if (_snapshots.TryUpdate(key, updated, current))
