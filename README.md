@@ -108,6 +108,13 @@ curl -H "X-Api-Key: dev-local-only-change-me" http://localhost:5080/api/sagas
 > In Windows PowerShell (not PowerShell 7+), `curl` is aliased to `Invoke-WebRequest`, which rejects
 > `-H`. Call `curl.exe` explicitly (Windows 10+ ships a real curl) or use PowerShell 7+/Git Bash instead.
 
+To run the same stack on Redis persistence instead of Postgres, layer its overlay (dashboard on
+`localhost:5680`; see [`docs/persistence.md`](docs/persistence.md#redis) for what that trades away):
+
+```bash
+docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
+```
+
 Then serve the dashboard UI — a dev server, deliberately not part of `docker-compose.yml`:
 
 ```bash

@@ -93,7 +93,8 @@ every summary index at once. See §4.6.
 
 ### 1.3 The sentence for `docs/persistence.md`
 
-Pre-written, because `docs/persistence.md:3` currently says "vSaga ships two persistence providers":
+Pre-written, because `docs/persistence.md:3` said "vSaga ships two persistence providers" until this
+provider landed; it now opens with the sentence below, verbatim:
 
 > vSaga ships three persistence providers. EF Core/Postgres is the reference and the only one
 > documented at full production tier by default. Redis is durable but RAM-bound and single-node: at its

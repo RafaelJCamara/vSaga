@@ -15,7 +15,8 @@
 
 ## Context
 
-vSaga ships two persistence providers today ([`docs/persistence.md`](../persistence.md)), both
+vSaga ships two persistence providers today (three since 2026-09-26, when the Redis provider of ADR 0002
+landed; the count below is as of this decision — [`docs/persistence.md`](../persistence.md)), both
 implementing the same seven contracts in `dotnet/src/VSaga.Abstractions/Persistence/`:
 `ISagaSnapshotStore<TState>`, `ISagaEventLogStore`, `ISagaOutboxStore`, `ISagaTimeoutStore`,
 `ISagaAdminStore`, `ISagaSummaryReader`, and `IServiceTopologyStore`. The reference implementation is EF
@@ -236,7 +237,10 @@ live verification passes.
   commits it via an incidental `AppendAsync` flush — a strict improvement.
 - The health check moves inside each provider's own registration extension, making "a health check named
   after a database that is not running" structurally impossible. (`PostgresHealthCheck.cs:19-21` fails
-  **open** today.)
+  **open** today.) *The Redis provider landed the provider-neutral `"persistence"` name and a check that
+  never fails open, but registers it from the host rather than from `AddVSagaRedis` — see
+  [`../design/redis-persistence.md`](../design/redis-persistence.md) §8.1 for why; this plan's
+  Stage 6 still decides whether to move both checks inside the extensions.*
 - `docs/dashboard.md:6-8`'s provider-agnostic premise stays true.
 
 ### Negative

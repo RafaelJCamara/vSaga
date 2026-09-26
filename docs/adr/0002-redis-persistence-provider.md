@@ -13,7 +13,8 @@ on the other landing first.
 
 ## Context
 
-vSaga ships two persistence providers today, both implementing the seven contracts in
+vSaga ships two persistence providers today (as of this decision; this ADR's own provider is the third),
+both implementing the seven contracts in
 `dotnet/src/VSaga.Abstractions/Persistence/`. ADR 0001's "Context" section enumerates the seven
 properties the engine requires of any provider; that list is taken as given here rather than repeated.
 
