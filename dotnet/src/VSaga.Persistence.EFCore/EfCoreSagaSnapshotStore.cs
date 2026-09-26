@@ -13,7 +13,7 @@ public sealed class EfCoreSagaSnapshotStore<TState>(VSagaDbContext db) : ISagaSn
         var entity = await db.SagaInstances.AsNoTracking()
             .FirstOrDefaultAsync(x => x.SagaType == sagaType && x.CorrelationId == correlationId, cancellationToken);
 
-        return entity is null ? null : JsonSerializer.Deserialize<TState>(entity.DataJson);
+        return entity is null ? null : Deserialize(entity);
     }
 
     // FirstOrDefaultAsync (not SingleOrDefaultAsync) is correct here and not a bug: the partial unique
@@ -25,8 +25,16 @@ public sealed class EfCoreSagaSnapshotStore<TState>(VSagaDbContext db) : ISagaSn
         var entity = await db.SagaInstances.AsNoTracking()
             .FirstOrDefaultAsync(x => x.SagaType == sagaType && x.BusinessKey == businessKey, cancellationToken);
 
-        return entity is null ? null : JsonSerializer.Deserialize<TState>(entity.DataJson);
+        return entity is null ? null : Deserialize(entity);
     }
+
+    // A row exists, so a blob that does not deserialise to a state is an error, never "no such saga"
+    // (clause 11, ISagaSnapshotStore.FindAsync): a null here would have the orchestrator start a fresh
+    // instance over the live row. Corrupt JSON already throws from the serializer; a blob that is JSON
+    // null yields null without one, and this is the throw for that.
+    private static TState Deserialize(SagaInstanceEntity entity) =>
+        JsonSerializer.Deserialize<TState>(entity.DataJson)
+        ?? throw new InvalidOperationException($"The stored state of '{entity.SagaType}' saga instance '{entity.CorrelationId}' deserialised to null; the row exists but its blob is not a {typeof(TState).Name}.");
 
     public async Task InsertAsync(TState state, CancellationToken cancellationToken = default)
     {
