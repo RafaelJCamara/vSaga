@@ -166,16 +166,29 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
         return Task.FromResult(new PagedResult<SagaSummary>(items, page, pageSize, ordered.Count));
     }
 
-    /// <summary>Ties (e.g. many sagas sharing a Status) always break by UpdatedAtUtc descending, so
-    /// paging through a sorted list stays stable instead of reshuffling ties between pages.</summary>
-    private static IOrderedEnumerable<SagaSummary> ApplySort(IEnumerable<SagaSummary> query, SagaListFilter filter) =>
-        filter.SortBy switch
+    /// <summary>
+    /// Every arm ends in the same total order: ties on the requested column (e.g. many sagas sharing a
+    /// Status) break by UpdatedAtUtc descending, and what still ties breaks by the row's own identity,
+    /// (SagaType, CorrelationId) ascending. That last step is what <see cref="ISagaSummaryReader.ListAsync"/>
+    /// promises: the relative order of two rows depends only on their own values, so a page walk neither
+    /// skips nor repeats a row and writes to rows outside the result reorder nothing inside it. Without it,
+    /// LINQ's stable sort leaves tied rows in the dictionary's enumeration order — which an insert that
+    /// grows and rehashes the table silently changes. The identity tiebreak keeps its direction regardless
+    /// of SortDescending; the contract only asks for a per-provider deterministic order, and SagaType
+    /// sorts ordinally here.
+    /// </summary>
+    private static IOrderedEnumerable<SagaSummary> ApplySort(IEnumerable<SagaSummary> query, SagaListFilter filter)
+    {
+        var ordered = filter.SortBy switch
         {
             SagaSortColumn.Status when filter.SortDescending => query.OrderByDescending(s => s.Status).ThenByDescending(s => s.UpdatedAtUtc),
             SagaSortColumn.Status => query.OrderBy(s => s.Status).ThenByDescending(s => s.UpdatedAtUtc),
             SagaSortColumn.UpdatedAt when !filter.SortDescending => query.OrderBy(s => s.UpdatedAtUtc),
             _ => query.OrderByDescending(s => s.UpdatedAtUtc),
         };
+
+        return ordered.ThenBy(s => s.SagaType, StringComparer.Ordinal).ThenBy(s => s.CorrelationId);
+    }
 
     public Task<SagaSummary?> GetAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default)
     {

@@ -41,16 +41,29 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
         return new PagedResult<SagaSummary>(items, page, pageSize, totalCount);
     }
 
-    /// <summary>Ties (e.g. many sagas sharing a Status) always break by UpdatedAtUtc descending, so
-    /// paging through a sorted list stays stable instead of reshuffling ties between pages.</summary>
-    private static IOrderedQueryable<SagaInstanceEntity> ApplySort(IQueryable<SagaInstanceEntity> query, SagaListFilter filter) =>
-        filter.SortBy switch
+    /// <summary>
+    /// Every arm ends in the same total order: ties on the requested column (e.g. many sagas sharing a
+    /// Status) break by UpdatedAtUtc descending, and what still ties breaks by the row's own identity,
+    /// (SagaType, CorrelationId) ascending. That last step is what <see cref="ISagaSummaryReader.ListAsync"/>
+    /// promises: the relative order of two rows depends only on their own values, so a page walk neither
+    /// skips nor repeats a row and writes to rows outside the result reorder nothing inside it. Without it
+    /// the database is free to return tied rows in any order per query — Postgres's bounded top-N sort
+    /// does exactly that across consecutive pages. The identity tiebreak keeps its direction regardless
+    /// of SortDescending; the contract only asks for a per-provider deterministic order, and SagaType
+    /// sorts under the database's collation here.
+    /// </summary>
+    private static IOrderedQueryable<SagaInstanceEntity> ApplySort(IQueryable<SagaInstanceEntity> query, SagaListFilter filter)
+    {
+        var ordered = filter.SortBy switch
         {
             SagaSortColumn.Status when filter.SortDescending => query.OrderByDescending(x => x.Status).ThenByDescending(x => x.UpdatedAtUtc),
             SagaSortColumn.Status => query.OrderBy(x => x.Status).ThenByDescending(x => x.UpdatedAtUtc),
             SagaSortColumn.UpdatedAt when !filter.SortDescending => query.OrderBy(x => x.UpdatedAtUtc),
             _ => query.OrderByDescending(x => x.UpdatedAtUtc),
         };
+
+        return ordered.ThenBy(x => x.SagaType).ThenBy(x => x.CorrelationId);
+    }
 
     public Task<SagaSummary?> GetAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default)
     {
