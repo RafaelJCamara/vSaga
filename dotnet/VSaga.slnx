@@ -34,6 +34,7 @@
     <Project Path="tests/VSaga.Persistence.Conformance/VSaga.Persistence.Conformance.csproj" />
     <Project Path="tests/VSaga.Persistence.EFCore.Tests/VSaga.Persistence.EFCore.Tests.csproj" />
     <Project Path="tests/VSaga.Persistence.InMemory.Tests/VSaga.Persistence.InMemory.Tests.csproj" />
+    <Project Path="tests/VSaga.Persistence.Redis.Tests/VSaga.Persistence.Redis.Tests.csproj" />
     <Project Path="tests/VSaga.Testing.Tests/VSaga.Testing.Tests.csproj" />
     <Project Path="tests/VSaga.Transport.Brighter.Tests/VSaga.Transport.Brighter.Tests.csproj" />
     <Project Path="tests/VSaga.Transport.Http.Tests/VSaga.Transport.Http.Tests.csproj" />
