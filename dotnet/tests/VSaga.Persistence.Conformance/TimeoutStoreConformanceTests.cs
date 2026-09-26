@@ -68,6 +68,24 @@ public abstract class TimeoutStoreConformanceTests(IProviderFixture fixture) : S
     }
 
     /// <summary>
+    /// Clause 8 (fix F6): earliest-due first. Rows are scheduled latest-due first and named so their
+    /// ordinal order also runs against due order, so neither insertion, row-id nor name order can pass for
+    /// it; and the batch is smaller than the backlog, so which rows it takes matters as much as how it
+    /// orders them — the most overdue must never wait behind newer ones.
+    /// </summary>
+    [Fact]
+    public async Task ClaimDue_ReturnsTheEarliestDueRowsFirst()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        for (var i = 4; i >= 0; i--)
+            await ScheduleAsync(stores, "OrderSaga", Guid.NewGuid(), $"State{4 - i}", T0.AddSeconds(i));
+
+        var claimed = await ClaimDueAsync(stores, T0.AddMinutes(1), batchSize: 3);
+
+        Assert.Equal(["State4", "State3", "State2"], claimed.Select(t => t.ForState), StringComparer.Ordinal);
+    }
+
+    /// <summary>
     /// Scoped per instance and state: state names are only unique within a saga type, so a cancel must
     /// not reach across into another saga type's same-named state.
     /// </summary>

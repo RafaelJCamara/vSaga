@@ -8,6 +8,9 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
 {
     private static readonly Guid GoldenCorrelationId = Guid.Parse("0f8fad5b-d9cb-469f-a165-70867728950e");
 
+    /// <summary>How long a rival write racing a store's own update is given to land inside the store's window.</summary>
+    private static readonly TimeSpan RivalWindow = TimeSpan.FromSeconds(30);
+
     /// <summary>
     /// Clause 12: what <see cref="GoldenState"/> must serialise to, byte for byte — <c>System.Text.Json</c>
     /// with default options. A naming policy, a string-enum converter, dropped nulls, indentation or a
@@ -64,6 +67,50 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
         Assert.Equal(T0.AddTicks(1_234_567), found.UpdatedAtUtc);
         Assert.Equal("ORD-1", found.OrderId);
         Assert.Equal(99.95m, found.Amount);
+    }
+
+    /// <summary>
+    /// Clause 11 (fix F14): a row whose blob is JSON null is an error, not "no such saga" — a store
+    /// reporting null would have the orchestrator start a fresh instance over the live row. The blob is
+    /// planted through the ordinary <c>InsertAsync</c> by <see cref="NullBlobSagaState"/>. Clause 11 names no
+    /// exception type, so only a throw is asserted.
+    /// </summary>
+    [Fact]
+    public async Task Find_ForARowWhoseBlobIsJsonNull_Throws()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var correlationId = await InsertNullBlobAsync(stores, businessKey: null);
+
+        await using var uow = await stores.BeginAsync();
+        await Assert.ThrowsAnyAsync<Exception>(() => uow.Snapshots<NullBlobSagaState>().FindAsync("OrderSaga", correlationId));
+    }
+
+    /// <summary>Clause 11 (fix F14) for the business-key lookup, which reads the same blob.</summary>
+    [Fact]
+    public async Task FindByBusinessKey_ForARowWhoseBlobIsJsonNull_Throws()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        await InsertNullBlobAsync(stores, businessKey: "ORD-NULL-BLOB");
+
+        await using var uow = await stores.BeginAsync();
+        await Assert.ThrowsAnyAsync<Exception>(() => uow.Snapshots<NullBlobSagaState>().FindByBusinessKeyAsync("OrderSaga", "ORD-NULL-BLOB"));
+    }
+
+    private static async Task<Guid> InsertNullBlobAsync(IProviderStores stores, string? businessKey)
+    {
+        var state = new NullBlobSagaState
+        {
+            CorrelationId = Guid.NewGuid(),
+            SagaType = "OrderSaga",
+            CurrentState = "Started",
+            BusinessKey = businessKey,
+            CreatedAtUtc = T0,
+            UpdatedAtUtc = T0,
+        };
+
+        await using var uow = await stores.BeginAsync();
+        await uow.Snapshots<NullBlobSagaState>().InsertAsync(state);
+        return state.CorrelationId;
     }
 
     [Fact]
@@ -218,6 +265,111 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
         var stored = await FindAsync(stores, "OrderSaga", state.CorrelationId);
         Assert.Equal("Won", stored!.CurrentState);
         Assert.Equal(2, stored.Version);
+    }
+
+    /// <summary>
+    /// Clause 1's restore half (fix F10) where the race lands inside the store's own write: a rival unit of
+    /// work commits while the store is serialising the bumped state, after the bump and before the write.
+    /// The store must still detect the race at the write and hand the live object back at the version it
+    /// expected — not the one it bumped to and failed to record. (A store that locks across serialising
+    /// keeps the rival out instead; its update then simply succeeds, and the case checks that.)
+    /// </summary>
+    [Fact]
+    public async Task Update_WhenARivalWritesMidUpdate_ThrowsAndLeavesTheLiveObjectAtTheExpectedVersion()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var state = new RaceProbeSagaState { CorrelationId = Guid.NewGuid(), SagaType = "OrderSaga", CurrentState = "Started", CreatedAtUtc = T0, UpdatedAtUtc = T0 };
+        await using (var uow = await stores.BeginAsync())
+            await uow.Snapshots<RaceProbeSagaState>().InsertAsync(state);
+
+        await using var loserUow = await stores.BeginAsync();
+        var live = (await loserUow.Snapshots<RaceProbeSagaState>().FindAsync("OrderSaga", state.CorrelationId))!;
+        // Blocking is unavoidable: the hook runs inside a synchronous property getter. The rival runs on
+        // the thread pool, so its continuations never need the thread blocked here. The wait is bounded
+        // because a store may hold a lock across serialising, which clause 1 allows: the rival then cannot
+        // land inside the window at all, and the case must neither hang on that nor fail it.
+        live.OnNextSerialize = () => Task.WhenAny(Task.Run(() => RivalUpdateAsync(stores, state.CorrelationId)), Task.Delay(RivalWindow))
+            .GetAwaiter().GetResult();
+        live.CurrentState = "Lost";
+
+        var thrown = await Record.ExceptionAsync(() => loserUow.Snapshots<RaceProbeSagaState>().UpdateAsync(live, expectedVersion: 0));
+
+        if (thrown is null)
+        {
+            // The store kept the rival out until its own write was done, so there was no race to lose.
+            Assert.Equal(1, live.Version);
+            return;
+        }
+
+        Assert.IsType<SagaConcurrencyException>(thrown);
+        Assert.Equal(0, live.Version);
+        await using var reader = await stores.BeginAsync();
+        var stored = await reader.Snapshots<RaceProbeSagaState>().FindAsync("OrderSaga", state.CorrelationId);
+        Assert.Equal("Won", stored!.CurrentState);
+        Assert.Equal(1, stored.Version);
+    }
+
+    private static async Task RivalUpdateAsync(IProviderStores stores, Guid correlationId)
+    {
+        await using var rival = await stores.BeginAsync();
+        var other = (await rival.Snapshots<RaceProbeSagaState>().FindAsync("OrderSaga", correlationId))!;
+        other.CurrentState = "Won";
+        await rival.Snapshots<RaceProbeSagaState>().UpdateAsync(other, other.Version);
+    }
+
+    /// <summary>
+    /// Clause 3 on update (fix F5): the store writes the caller's <c>UpdatedAtUtc</c> and leaves the live
+    /// object's alone — the orchestrator stamps it from its own clock immediately before every persist.
+    /// </summary>
+    [Fact]
+    public async Task Update_KeepsTheCallersUpdatedAtUtc()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var state = NewState("OrderSaga");
+        await InsertAsync(stores, state);
+        var stamp = T0.AddMinutes(3).AddTicks(1_234_567);
+
+        await using (var uow = await stores.BeginAsync())
+        {
+            var live = (await uow.Snapshots<ConformanceSagaState>().FindAsync("OrderSaga", state.CorrelationId))!;
+            live.UpdatedAtUtc = stamp;
+            await uow.Snapshots<ConformanceSagaState>().UpdateAsync(live, expectedVersion: 0);
+
+            Assert.Equal(stamp, live.UpdatedAtUtc);
+        }
+
+        Assert.Equal(stamp, (await FindAsync(stores, "OrderSaga", state.CorrelationId))!.UpdatedAtUtc);
+        AssertSameInstant(stamp, (await GetSummaryAsync(stores, "OrderSaga", state.CorrelationId))!.UpdatedAtUtc);
+    }
+
+    /// <summary>
+    /// Fix F7: an update moving the business key onto one another instance of the saga type holds collides
+    /// on the reservation exactly as an insert would — <see cref="SagaAlreadyExistsException"/>, not a
+    /// provider exception — and, per clause 1, leaves the live object at the version it expected. Neither
+    /// reservation moves.
+    /// </summary>
+    [Fact]
+    public async Task Update_ToABusinessKeyAnotherInstanceHolds_ThrowsSagaAlreadyExistsAndRestoresTheVersion()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var holder = NewState("OrderSaga", businessKey: "TAKEN-KEY");
+        var mover = NewState("OrderSaga", businessKey: "MOVER-KEY");
+        await InsertAsync(stores, holder, mover);
+
+        await using (var uow = await stores.BeginAsync())
+        {
+            var live = (await uow.Snapshots<ConformanceSagaState>().FindAsync("OrderSaga", mover.CorrelationId))!;
+            live.BusinessKey = "TAKEN-KEY";
+
+            await Assert.ThrowsAsync<SagaAlreadyExistsException>(() => uow.Snapshots<ConformanceSagaState>().UpdateAsync(live, expectedVersion: 0));
+            Assert.Equal(0, live.Version);
+        }
+
+        await using var reader = await stores.BeginAsync();
+        var store = reader.Snapshots<ConformanceSagaState>();
+        Assert.Equal(holder.CorrelationId, (await store.FindByBusinessKeyAsync("OrderSaga", "TAKEN-KEY"))!.CorrelationId);
+        Assert.Equal(mover.CorrelationId, (await store.FindByBusinessKeyAsync("OrderSaga", "MOVER-KEY"))!.CorrelationId);
+        Assert.Equal("MOVER-KEY", (await store.FindAsync("OrderSaga", mover.CorrelationId))!.BusinessKey);
     }
 
     /// <summary>

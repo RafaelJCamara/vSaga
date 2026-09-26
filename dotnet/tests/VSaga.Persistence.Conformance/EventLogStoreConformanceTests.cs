@@ -51,6 +51,38 @@ public abstract class EventLogStoreConformanceTests(IProviderFixture fixture) : 
         Assert.Equal(["A", "B", "C", "D"], timeline.Select(e => e.ToState), StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// Clause 5 under concurrency (fix F11): appends to one instance from several units of work at once —
+    /// its messages handled in parallel — still come back in ascending sequence order, however they
+    /// interleaved. A store may well make entries visible in a different order than it hands out their
+    /// sequence numbers; the timeline is ordered by sequence number all the same. The red this case shows
+    /// without the fix depends on the appends actually interleaving, so it is statistical rather than
+    /// certain on any single run.
+    /// </summary>
+    [Fact]
+    public async Task GetTimeline_AfterConcurrentAppends_StillAscendsBySequenceNumber()
+    {
+        const int workers = 8;
+        const int appendsEach = 50;
+        await using var stores = await Fixture.CreateStoresAsync();
+        var correlationId = Guid.NewGuid();
+
+        var appended = await RunTogetherAsync<long>(workers, async () =>
+        {
+            var mine = new List<long>();
+            await using var uow = await stores.BeginAsync();
+            for (var i = 0; i < appendsEach; i++)
+                mine.Add(await uow.EventLog.AppendAsync(Entry(correlationId)));
+            return mine;
+        });
+
+        await using var reader = await stores.BeginAsync();
+        var sequence = (await reader.EventLog.GetTimelineAsync("OrderSaga", correlationId)).Select(e => e.SequenceNumber).ToList();
+
+        Assert.Equal(workers * appendsEach, sequence.Count);
+        Assert.Equal(appended.Order(), sequence);
+    }
+
     [Fact]
     public async Task GetTimeline_RoundTripsEveryField()
     {

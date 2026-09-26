@@ -31,7 +31,9 @@ public sealed class PostgresProviderFixture : IProviderFixture, IAsyncLifetime
     {
         await _container.StartAsync();
 
-        await using var db = new VSagaDbContext(Options(TemplateDatabase));
+        // Pooling off for the template only: a pooled connection left idling on it by MigrateAsync would make
+        // CREATE DATABASE ... TEMPLATE refuse to copy it.
+        await using var db = new VSagaDbContext(Options(TemplateDatabase, pooling: false));
         await db.Database.MigrateAsync();
     }
 
@@ -42,24 +44,27 @@ public sealed class PostgresProviderFixture : IProviderFixture, IAsyncLifetime
         var database = $"vsaga_conformance_{Interlocked.Increment(ref _databaseCount)}";
         await ExecuteAsync($"CREATE DATABASE \"{database}\" TEMPLATE \"{TemplateDatabase}\"", cancellationToken);
 
-        return new EfCoreProviderStores(Options(database),
-            () => new ValueTask(ExecuteAsync($"DROP DATABASE \"{database}\" WITH (FORCE)", CancellationToken.None)));
+        // A case's own database is pooled — several of them open a connection per write, hundreds of times —
+        // and its pool is emptied before the drop, which WITH (FORCE) would otherwise have to break into.
+        return new EfCoreProviderStores(Options(database, pooling: true), async () =>
+        {
+            await using (var pooled = new NpgsqlConnection(ConnectionString(database, pooling: true)))
+                NpgsqlConnection.ClearPool(pooled);
+            await ExecuteAsync($"DROP DATABASE \"{database}\" WITH (FORCE)", CancellationToken.None);
+        });
     }
 
-    private DbContextOptions<VSagaDbContext> Options(string database) =>
+    private DbContextOptions<VSagaDbContext> Options(string database, bool pooling) =>
         new DbContextOptionsBuilder<VSagaDbContext>()
-            .UseNpgsql(ConnectionString(database), npgsql => npgsql.MigrationsAssembly("VSaga.Persistence.EFCore.Postgres"))
+            .UseNpgsql(ConnectionString(database, pooling), npgsql => npgsql.MigrationsAssembly("VSaga.Persistence.EFCore.Postgres"))
             .Options;
 
-    // Pooling off: a pooled connection left idling on the template by MigrateAsync would make
-    // CREATE DATABASE ... TEMPLATE refuse to copy it. (The per-case drop uses WITH (FORCE), so it does not
-    // depend on this.)
-    private string ConnectionString(string database) =>
-        new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = database, Pooling = false }.ConnectionString;
+    private string ConnectionString(string database, bool pooling) =>
+        new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = database, Pooling = pooling }.ConnectionString;
 
     private async Task ExecuteAsync(string sql, CancellationToken cancellationToken)
     {
-        await using var connection = new NpgsqlConnection(ConnectionString("postgres"));
+        await using var connection = new NpgsqlConnection(ConnectionString("postgres", pooling: false));
         await connection.OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
         await command.ExecuteNonQueryAsync(cancellationToken);

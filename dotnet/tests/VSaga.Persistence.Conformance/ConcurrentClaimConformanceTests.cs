@@ -10,11 +10,11 @@ namespace VSaga.Persistence.Conformance;
 /// </summary>
 /// <remarks>
 /// Each claim marks its rows terminal, so a row two replicas both claim is a timeout fired twice or a
-/// message published twice. The race is arranged rather than hoped for: every worker runs on a thread of
-/// its own and waits at a barrier until all of them are there, then keeps claiming small batches until
-/// one comes back empty. A provider whose claims complete synchronously therefore still has several
-/// claims executing at the same moment, instead of the first worker quietly draining every row before
-/// the others start.
+/// message published twice. The race is arranged rather than hoped for: the workers start together
+/// (<see cref="StoreConformanceTests.RunTogetherAsync{T}"/>) and keep claiming small batches until one comes
+/// back empty. A provider whose claims complete synchronously therefore still has several claims
+/// executing at the same moment, instead of the first worker quietly draining every row before the
+/// others start.
 /// </remarks>
 public abstract class ConcurrentClaimConformanceTests(IProviderFixture fixture) : StoreConformanceTests(Require(fixture))
 {
@@ -63,18 +63,15 @@ public abstract class ConcurrentClaimConformanceTests(IProviderFixture fixture) 
     }
 
     /// <summary>
-    /// Starts every worker on a dedicated thread, releases them together from a barrier, and has each claim
-    /// in its own unit of work until a claim comes back empty. A worker stops after <see cref="Rows"/>
-    /// rounds regardless: needing more non-empty batches than there are rows means rows were handed out
-    /// twice, and the assertions should say so rather than the run hang on a claim that never marks rows.
+    /// Has every worker claim in its own unit of work until a claim comes back empty, all of them at once.
+    /// A worker stops after <see cref="Rows"/> rounds regardless: needing more non-empty batches than there
+    /// are rows means rows were handed out twice, and the assertions should say so rather than the run
+    /// hang on a claim that never marks rows.
     /// </summary>
-    private static async Task<List<T>> RaceAsync<T>(IProviderStores stores, Func<IStoreUnitOfWork, Task<List<T>>> claimBatch)
-    {
-        using var barrier = new Barrier(Workers);
-        var workers = Enumerable.Range(0, Workers).Select(_ => Task.Factory.StartNew(async () =>
+    private static Task<IReadOnlyList<T>> RaceAsync<T>(IProviderStores stores, Func<IStoreUnitOfWork, Task<List<T>>> claimBatch) =>
+        RunTogetherAsync<T>(Workers, async () =>
         {
             var mine = new List<T>();
-            barrier.SignalAndWait();
             for (var round = 0; round < Rows; round++)
             {
                 await using var uow = await stores.BeginAsync();
@@ -85,8 +82,5 @@ public abstract class ConcurrentClaimConformanceTests(IProviderFixture fixture) 
             }
 
             return mine;
-        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap()).ToList();
-
-        return (await Task.WhenAll(workers)).SelectMany(claimed => claimed).ToList();
-    }
+        });
 }

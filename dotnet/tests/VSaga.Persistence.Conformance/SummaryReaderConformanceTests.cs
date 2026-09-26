@@ -198,6 +198,104 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         Assert.Equal(0, page.TotalCount);
     }
 
+    /// <summary>
+    /// Clause 9 (fix F1): every sort arm applies a stable total order whose relative order of two rows
+    /// depends only on those rows' own values (<see cref="ISagaSummaryReader.ListAsync"/>'s remarks). The
+    /// whole group ties on both Status and UpdatedAtUtc, and it comes in pairs sharing a correlation id
+    /// across two saga types, so only a tiebreak on the full (SagaType, CorrelationId) identity orders it.
+    /// A page walk visits each row exactly once, the same page fetched twice is identical, and writing
+    /// rows outside the result reorders nothing inside it — what a dashboard poller paging while other
+    /// sagas advance depends on. Only per-provider determinism is asserted, never a particular sequence.
+    /// </summary>
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(SagaSortColumn.UpdatedAt, false)]
+    [InlineData(SagaSortColumn.UpdatedAt, true)]
+    [InlineData(SagaSortColumn.Status, false)]
+    [InlineData(SagaSortColumn.Status, true)]
+    public async Task List_OrdersRowsThatTieOnTheSortColumnTotally(SagaSortColumn? sortBy, bool sortDescending)
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var tied = Enumerable.Range(0, 20)
+            .Select(_ => Guid.NewGuid())
+            .SelectMany(correlationId => new[] { Tied("TiedSagaA", correlationId), Tied("TiedSagaB", correlationId) })
+            .ToArray();
+        await InsertAsync(stores, tied);
+        var firstPage = new SagaListFilter { Kind = SagaKind.Choreographed, SortBy = sortBy, SortDescending = sortDescending, PageSize = 7 };
+
+        var walked = await WalkAsync(stores, firstPage);
+        Assert.Equal(tied.Select(s => (s.SagaType, s.CorrelationId)).Order(), walked.Order());
+        Assert.Equal(walked.Take(7), Keys(await ListAsync(stores, firstPage)));
+
+        // Enough rows outside the result — several times the group — that a store keeping its rows in a hash
+        // table is certain to grow and rehash it.
+        await InsertAsync(stores, Enumerable.Range(0, 200).Select(_ => NewState("UnrelatedSaga")).ToArray());
+
+        Assert.Equal(walked, await WalkAsync(stores, firstPage));
+    }
+
+    private static ConformanceSagaState Tied(string sagaType, Guid correlationId)
+    {
+        var state = NewState(sagaType, correlationId);
+        state.Kind = SagaKind.Choreographed;
+        return state;
+    }
+
+    private static IEnumerable<(string SagaType, Guid CorrelationId)> Keys(PagedResult<SagaSummary> page) =>
+        page.Items.Select(s => (s.SagaType, s.CorrelationId));
+
+    /// <summary>Every page of <paramref name="firstPage"/>'s query in turn, stopping at the first empty one (or a bound no walk here should reach).</summary>
+    private static async Task<List<(string SagaType, Guid CorrelationId)>> WalkAsync(IProviderStores stores, SagaListFilter firstPage)
+    {
+        var walked = new List<(string SagaType, Guid CorrelationId)>();
+        for (var page = 1; page <= 20; page++)
+        {
+            var result = await ListAsync(stores, new SagaListFilter
+            {
+                Kind = firstPage.Kind,
+                SortBy = firstPage.SortBy,
+                SortDescending = firstPage.SortDescending,
+                PageSize = firstPage.PageSize,
+                Page = page,
+            });
+            if (result.Items.Count == 0)
+                break;
+            walked.AddRange(Keys(result));
+        }
+
+        return walked;
+    }
+
+    /// <summary>
+    /// Clause 9 (fix F2): Search is case-insensitive in the saga type — the dashboard's search box is bound
+    /// to it, and nobody types a saga type in its exact casing.
+    /// </summary>
+    [Fact]
+    public async Task Search_IgnoresCaseInTheSagaType()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var order = NewState("OrderFulfilmentSaga");
+        await InsertAsync(stores, order, NewState("ShippingChoreography"));
+
+        foreach (var term in new[] { "orderfulfilment", "ORDERFULFILMENT", "oRDERfULFILMENT" })
+            Assert.Equal([order.CorrelationId], Ids(await ListAsync(stores, new SagaListFilter { Search = term })));
+    }
+
+    /// <summary>
+    /// Clause 9 (fix F2), the other field: a correlation id is pasted in whatever case it was copied in, so
+    /// its text is matched case-insensitively too, whatever case the provider happens to store a Guid in.
+    /// </summary>
+    [Fact]
+    public async Task Search_IgnoresCaseInTheCorrelationId()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var target = NewState("OrderSaga", Guid.Parse("abcdef12-3456-4789-abcd-ef0123456789"));
+        await InsertAsync(stores, target, NewState("OrderSaga", Guid.Parse("12345678-9012-3456-7890-123456789012")));
+
+        foreach (var term in new[] { "abcdef12", "ABCDEF12", "aBcD-eF01" })
+            Assert.Equal([target.CorrelationId], Ids(await ListAsync(stores, new SagaListFilter { Search = term })));
+    }
+
     [Fact]
     public async Task FindByCorrelationId_ReturnsEverySagaTypeTrackingIt()
     {

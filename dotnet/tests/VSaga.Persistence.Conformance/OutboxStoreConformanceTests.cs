@@ -78,6 +78,51 @@ public abstract class OutboxStoreConformanceTests(IProviderFixture fixture) : St
         Assert.Equal(5, MessageIds(first.Concat(second)).Distinct(StringComparer.Ordinal).Count());
     }
 
+    /// <summary>
+    /// Clause 8 (fix F6): earliest-created first. Rows are enqueued newest first and given message ids whose
+    /// ordinal order also runs against creation order, so neither insertion, row-id nor message-id order can
+    /// pass for it; and the batch is smaller than the backlog — the oldest crash-recovered publish must
+    /// never wait behind newer ones.
+    /// </summary>
+    [Fact]
+    public async Task ClaimPending_ReturnsTheEarliestCreatedRowsFirst()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        await EnqueueCommittedAsync(stores, Enumerable.Range(0, 5).Reverse().Select(i => ($"m{4 - i}", T0.AddSeconds(i))).ToArray());
+
+        var claimed = await ClaimPendingAsync(stores, T0.AddMinutes(1), batchSize: 3);
+
+        Assert.Equal(["m4", "m3", "m2"], MessageIds(claimed), StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Fix F13: the row records the headers as they were at the enqueue. A caller mutating its dictionary
+    /// afterwards — while the row is still staged, or after it is committed — changes nothing claimed, and
+    /// the claimed headers are keyed ordinally whatever comparer the caller's dictionary used, never the
+    /// caller's dictionary itself (<see cref="ISagaOutboxStore"/>'s clauses on both methods).
+    /// </summary>
+    [Fact]
+    public async Task ClaimPending_ReturnsHeadersIndependentOfTheEnqueuedDictionary()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["x-vsaga-source-service"] = "OrderSaga" };
+
+        await using (var uow = await stores.BeginAsync())
+        {
+            await uow.Outbox.EnqueueAsync("OrderSaga", Guid.NewGuid(), "m1", "InventoryReserved", "{}"u8.ToArray(), destination: null, headers, T0);
+            headers["x-vsaga-source-service"] = "Tampered";
+            await uow.CommitAsync();
+        }
+
+        headers["x-added-later"] = "1";
+        var claimed = Assert.Single(await ClaimAllPendingAsync(stores, T0.AddMinutes(1)));
+
+        Assert.NotSame(headers, claimed.Headers);
+        Assert.Equal("OrderSaga", claimed.Headers["x-vsaga-source-service"]);
+        Assert.False(claimed.Headers.ContainsKey("x-added-later"));
+        Assert.False(claimed.Headers.ContainsKey("X-VSAGA-SOURCE-SERVICE"));
+    }
+
     /// <summary>The inline drain's path: a row it already sent is never the recovery poller's to republish.</summary>
     [Fact]
     public async Task MarkDispatched_ExcludesTheRowFromTheRecoveryClaim()

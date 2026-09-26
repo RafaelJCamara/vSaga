@@ -80,6 +80,23 @@ public abstract class StoreConformanceTests(IProviderFixture fixture)
     }
 
     /// <summary>
+    /// Runs <paramref name="workers"/> copies of <paramref name="work"/> truly at once: each on a thread of
+    /// its own, released together from a barrier. A provider whose calls complete synchronously would
+    /// otherwise let the first worker finish before the next one starts, and the case would race nothing.
+    /// </summary>
+    protected static async Task<IReadOnlyList<T>> RunTogetherAsync<T>(int workers, Func<Task<IReadOnlyList<T>>> work)
+    {
+        using var barrier = new Barrier(workers);
+        var running = Enumerable.Range(0, workers).Select(_ => Task.Factory.StartNew(() =>
+        {
+            barrier.SignalAndWait();
+            return work();
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap()).ToList();
+
+        return (await Task.WhenAll(running)).SelectMany(results => results).ToList();
+    }
+
+    /// <summary>
     /// Asserts two timestamps name the same instant at the provider's declared
     /// <see cref="IProviderFixture.TimestampResolution"/> — never exact equality, because a provider may
     /// legitimately store coarser than a tick (Postgres keeps microseconds).

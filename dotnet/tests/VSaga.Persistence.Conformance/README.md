@@ -45,9 +45,10 @@ suite your declarations call for can go missing.
 
 ## What a green run does not cover, by design
 
-A null or corrupt state blob must make `FindAsync` throw rather than return null
-(`ISagaSnapshotStore.FindAsync`). The suite writes only through the contracts, so it has no way to
-plant such a blob; verify that case against your own storage.
+A state blob that is not valid JSON at all must make `FindAsync` throw rather than return null
+(`ISagaSnapshotStore.FindAsync`). The suite writes only through the contracts and `System.Text.Json`,
+which can produce a blob of JSON `null` — and the suite does check that one — but never malformed text;
+verify that case against your own storage.
 
 ## Docs
 
