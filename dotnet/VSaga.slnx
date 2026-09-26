@@ -13,6 +13,7 @@
     <Project Path="src/VSaga.Persistence.EFCore/VSaga.Persistence.EFCore.csproj" />
     <Project Path="src/VSaga.Persistence.EFCore.Postgres/VSaga.Persistence.EFCore.Postgres.csproj" />
     <Project Path="src/VSaga.Persistence.InMemory/VSaga.Persistence.InMemory.csproj" />
+    <Project Path="src/VSaga.Persistence.Redis/VSaga.Persistence.Redis.csproj" />
     <Project Path="src/VSaga.Testing/VSaga.Testing.csproj" />
     <Project Path="src/VSaga.Transport.Brighter/VSaga.Transport.Brighter.csproj" />
     <Project Path="src/VSaga.Transport.Common/VSaga.Transport.Common.csproj" />

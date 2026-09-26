@@ -30,6 +30,7 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.11" />
@@ -45,12 +46,17 @@
     <PackageVersion Include="Paramore.Brighter" Version="[10.7.0,11.0.0)" />
     <PackageVersion Include="Paramore.Brighter.MessagingGateway.RMQ.Async" Version="[10.7.0,11.0.0)" />
     <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
+    <!-- MIT, the de facto .NET client. Bounded below 4.0.0 like the bus SDKs above so a consumer restore
+         never silently floats onto an untested next-major release. No NRedisStack: that package exists for
+         the module commands (RediSearch, RedisJSON) the Redis provider deliberately does not use. -->
+    <PackageVersion Include="StackExchange.Redis" Version="[3.0.11,4.0.0)" />
     <PackageVersion Include="SonarAnalyzer.CSharp" Version="10.33.0.1635">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageVersion>
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.14.0" />
+    <PackageVersion Include="Testcontainers.Redis" Version="4.14.0" />
     <!-- Bounded the same way as the other two bus SDKs in this file: a consumer's own restore should
          never silently float onto an untested next-major release. -->
     <PackageVersion Include="WolverineFx" Version="[6.30.0,7.0.0)" />

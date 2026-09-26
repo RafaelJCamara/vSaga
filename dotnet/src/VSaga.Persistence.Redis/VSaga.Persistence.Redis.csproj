@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Package-specific description for nuget.org search results, overriding Directory.Build.props's
+       shared fallback (MSBuild evaluates that file first, so this later value wins). -->
+  <PropertyGroup>
+    <Description>Redis persistence for vSaga: saga snapshot storage, the event log, timeouts and the transactional outbox on core Redis data types plus server-side Lua -- no module dependency, Valkey supported. A durable single-node provider with a stated loss window; see docs/persistence.md for the durability tiers.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The unit of work's outbox-only commit and the persist scripts' failure-injection hook are
+         internal: the conformance fixture needs the first to make a staged row durable without a
+         persist, and the torn-sentinel test needs the second. Neither is API surface. -->
+    <InternalsVisibleTo Include="VSaga.Persistence.Redis.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VSaga.Abstractions\VSaga.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="StackExchange.Redis" />
+  </ItemGroup>
+
+</Project>
