@@ -346,16 +346,23 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
     {
         var claimed = new List<SagaTimeout>();
 
-        foreach (var (id, timeout) in _timeouts)
+        // Earliest-due first (clause 8), then by id for a stable order among rows due in the same
+        // instant. The dictionary enumerates in hash order, so walking it directly would claim an
+        // arbitrary subset whenever the backlog exceeds the batch, leaving the most overdue rows
+        // waiting behind newer ones. The snapshot taken here can be stale by the time each swap runs,
+        // which is what the compare-and-swap is for: a row another claimer took in between is skipped.
+        var due = _timeouts.Values
+            .Where(t => t.Status == SagaTimeoutStatus.Pending && t.DueAtUtc <= asOf)
+            .OrderBy(t => t.DueAtUtc)
+            .ThenBy(t => t.Id);
+
+        foreach (var timeout in due)
         {
             if (claimed.Count >= batchSize)
                 break;
 
-            if (timeout.Status != SagaTimeoutStatus.Pending || timeout.DueAtUtc > asOf)
-                continue;
-
             var fired = timeout with { Status = SagaTimeoutStatus.Fired };
-            if (_timeouts.TryUpdate(id, fired, timeout))
+            if (_timeouts.TryUpdate(timeout.Id, fired, timeout))
                 claimed.Add(fired);
         }
 
@@ -412,16 +419,21 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
     {
         var claimed = new List<SagaOutboxMessage>();
 
-        foreach (var (id, message) in _outboxMessages)
+        // Earliest-created first (clause 8), then by id for a stable order among rows created in the
+        // same instant -- see ClaimDueAsync for why the dictionary's own order will not do, and why
+        // the compare-and-swap stays.
+        var pending = _outboxMessages.Values
+            .Where(m => m.Status == SagaOutboxStatus.Pending && m.CreatedAtUtc <= olderThan)
+            .OrderBy(m => m.CreatedAtUtc)
+            .ThenBy(m => m.Id);
+
+        foreach (var message in pending)
         {
             if (claimed.Count >= batchSize)
                 break;
 
-            if (message.Status != SagaOutboxStatus.Pending || message.CreatedAtUtc > olderThan)
-                continue;
-
             var dispatched = message with { Status = SagaOutboxStatus.Dispatched };
-            if (_outboxMessages.TryUpdate(id, dispatched, message))
+            if (_outboxMessages.TryUpdate(message.Id, dispatched, message))
                 claimed.Add(dispatched);
         }
 
