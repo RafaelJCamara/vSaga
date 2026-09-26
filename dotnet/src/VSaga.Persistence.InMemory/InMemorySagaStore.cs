@@ -82,49 +82,56 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
     {
         var key = (state.SagaType, state.CorrelationId);
 
-        while (true)
+        if (!_snapshots.TryGetValue(key, out var current))
+            throw new SagaNotFoundException(state.SagaType, state.CorrelationId);
+
+        if (current.Version != expectedVersion)
+            throw new SagaConcurrencyException(state.SagaType, state.CorrelationId, expectedVersion);
+
+        // BusinessKey has a plain public setter on SagaState (nothing enforces "set once at
+        // creation" at the type level), so Update must not assume it is unchanged from Insert --
+        // doing so is exactly how the reservation dictionary and DataJson silently disagreed
+        // before this fix. Mirror the EF provider's unconditional column reassignment
+        // (EfCoreSagaSnapshotStore.UpdateAsync:74), but since this store's "unique index" is a
+        // second ConcurrentDictionary rather than a database constraint, moving the reservation is
+        // this method's job: reserve the new key BEFORE the swap becomes visible (so a concurrent
+        // writer targeting the same new key collides here, the same guarantee Insert gives), and
+        // only release the old key AFTER the swap succeeds (so a swap that loses still holds it,
+        // instead of exposing a window where neither writer holds the old key).
+        var oldBusinessKey = current.BusinessKey;
+        var newBusinessKey = state.BusinessKey;
+        var businessKeyChanged = !string.Equals(oldBusinessKey, newBusinessKey, StringComparison.Ordinal);
+
+        if (businessKeyChanged && newBusinessKey is not null &&
+            !_businessKeyReservations.TryAdd((state.SagaType, newBusinessKey), state.CorrelationId))
+            throw new SagaAlreadyExistsException(state.SagaType, state.CorrelationId);
+
+        // Clause 1 (ISagaSnapshotStore.UpdateAsync): the live object's Version is bumped before it is
+        // serialised, so the blob carries the new version, and restored on every throw path after the
+        // bump -- the orchestrator persists the same object again on a timeout's final step and would
+        // otherwise report a race it never lost.
+        state.Version = expectedVersion + 1;
+        try
         {
-            if (!_snapshots.TryGetValue(key, out var current))
-                throw new SagaNotFoundException(state.SagaType, state.CorrelationId);
-
-            if (current.Version != expectedVersion)
-                throw new SagaConcurrencyException(state.SagaType, state.CorrelationId, expectedVersion);
-
-            // BusinessKey has a plain public setter on SagaState (nothing enforces "set once at
-            // creation" at the type level), so Update must not assume it is unchanged from Insert --
-            // doing so is exactly how the reservation dictionary and DataJson silently disagreed
-            // before this fix. Mirror the EF provider's unconditional column reassignment
-            // (EfCoreSagaSnapshotStore.UpdateAsync:74), but since this store's "unique index" is a
-            // second ConcurrentDictionary rather than a database constraint, moving the reservation is
-            // this method's job: reserve the new key BEFORE the swap becomes visible (so a concurrent
-            // writer targeting the same new key collides here, the same guarantee Insert gives), and
-            // only release the old key AFTER the swap succeeds (so a losing CAS below can retry while
-            // still holding it, instead of exposing a window where neither writer holds the old key).
-            var oldBusinessKey = current.BusinessKey;
-            var newBusinessKey = state.BusinessKey;
-            var businessKeyChanged = !string.Equals(oldBusinessKey, newBusinessKey, StringComparison.Ordinal);
-
-            if (businessKeyChanged && newBusinessKey is not null &&
-                !_businessKeyReservations.TryAdd((state.SagaType, newBusinessKey), state.CorrelationId))
-                throw new SagaAlreadyExistsException(state.SagaType, state.CorrelationId);
-
-            state.Version = expectedVersion + 1;
             var updated = ToStored(state);
 
-            if (_snapshots.TryUpdate(key, updated, current))
-            {
-                if (businessKeyChanged && oldBusinessKey is not null)
-                    _businessKeyReservations.TryRemove((state.SagaType, oldBusinessKey), out _);
-
-                return;
-            }
-
-            // Another writer beat us to it between the read and the compare-and-swap. Release the new
-            // reservation we just took (if any) so it doesn't leak while we retry -- the retry re-reads
-            // current and re-derives businessKeyChanged from scratch, so re-reserving is safe.
+            // Every successful write to _snapshots bumps Version and nothing ever removes a row, so a
+            // rival landing between the guard above and this compare-and-swap has necessarily moved the
+            // instance past expectedVersion: re-reading could only rethrow the guard. Report the race
+            // rather than retrying into it.
+            if (!_snapshots.TryUpdate(key, updated, current))
+                throw new SagaConcurrencyException(state.SagaType, state.CorrelationId, expectedVersion);
+        }
+        catch
+        {
+            state.Version = expectedVersion;
             if (businessKeyChanged && newBusinessKey is not null)
                 _businessKeyReservations.TryRemove((state.SagaType, newBusinessKey), out _);
+            throw;
         }
+
+        if (businessKeyChanged && oldBusinessKey is not null)
+            _businessKeyReservations.TryRemove((state.SagaType, oldBusinessKey), out _);
     }
 
     // Mirrors the EF provider's real columns, parent pointer and business key included: both stores
