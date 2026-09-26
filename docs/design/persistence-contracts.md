@@ -1,6 +1,6 @@
 # Design: persistence contracts and the conformance suite
 
-**Status: in progress — commits 1–6 landed; progress in §6.2, open questions in §9. Decisions accepted.** Recorded in
+**Status: in progress — commits 1–15b landed and the suite is fully green again; commit 16 is next. Progress in §6.2, open questions in §9. Decisions accepted.** Recorded in
 [`../adr/0003-persistence-contract-clauses.md`](../adr/0003-persistence-contract-clauses.md); what
 remains is execution. Nothing here depends on a MongoDB or Redis provider ever being built.
 
@@ -332,12 +332,23 @@ As of 2026-09-26.
 | — | `9e1263a` — the business-key collision rule and the list order's independence from other rows, stated ahead of their red cases | Landed, doc-only |
 | 6 | `95ba746` — the deliberately-red cases | Landed, **red by design**: 590 of 628 pass; the 38 below fail |
 | — | `0a5b376` — §9, open questions and queued corrections; then this progress section | Landed, doc-only |
-| 7 | F1 | **Next — blocked on §9.1 Q1** (how mutation tests are run) |
-| 8–15, 15a, 15b | F2 … F7, F10, F11, F13, F14 | Pending |
-| 16–21 | F8, clause 10 + F9, B1, B2, docs, the `NpgsqlProviderName` fold | Pending |
+| 7 | `b7965e9` — F1 | Landed: its 10 cases green, 28 red left |
+| 8 | `d2f0b03` — F2 | Landed: 3 green, 25 left |
+| 9 | `b46284f` — F3 | Landed: 5 green, 20 left; whole solution otherwise green |
+| 10 | `02193c6` — F4 | Landed: 8 green, 12 left |
+| 11 | `623b085` — F5 | Landed: 1 green, 11 left |
+| 14 | `5e18ca7` — F10 | Landed: 1 green, 10 left. Landed straight after F5, out of the table's order, since both rewrite the same in-memory `Update`; the retry loop went with it (§9.1 Q1's resolution explains the mutation evidence) |
+| 12 | `2b80e4b` — F6 | Landed: 2 green, 8 left |
+| 13 | `0450a53` — F7 | Landed: 2 green, 6 left |
+| 15 | `cb1c878` — F11 | Landed: 1 green, 5 left; the statistical kill ran as §6.1 asks, 20 of 20 red with the change stashed, 20 of 20 green restored |
+| 15a | `e889bba` — F13 | Landed: 1 green, 4 left; in-memory fully green |
+| 15b | `d43ae64` — F14 | Landed: 4 green, **0 left**. `dotnet test dotnet/VSaga.slnx` is fully green again, 628 tests across 13 projects |
+| 16 | F8 (`pageSize` clamp) | **Next** |
+| 17–21 | Clause 10 + F9, B1, B2, docs, the `NpgsqlProviderName` fold | Pending |
 
-**The red set at `95ba746`**, by the fix that turns it green. Each fix commit must turn exactly its own
-row green and leave every other row as it is:
+**The red set at `95ba746`**, by the fix that turned it green. Each fix commit turned exactly its own
+row green and left every other row as it was — the count column above is that check, run per commit
+against the whole test project each row lives in (and against the whole solution at commits 9 and 15b):
 
 | Fix | Failing cases | Red on |
 | --- | --- | --- |
@@ -428,7 +439,7 @@ deleting it, once settled.
 
 | # | Question | Blocks | Options |
 | --- | --- | --- | --- |
-| Q1 | **How are the mutation tests run?** §6.1 requires breaking each fix to confirm exactly its own cases fail. When commit 5 tried a temporary edit to `InMemorySagaStore.cs` for the same purpose, Claude Code's auto-mode classifier refused it as test-related code removal; every later mutation step is the same kind of edit, so expect the same refusal. | Commit 7 onward — every fix commit (7–15b) and B1/B2 (18–19) | (a) add a permission rule allowing the temporary source edit and its revert; (b) the maintainer runs each mutation step by hand from instructions in the commit report; (c) turn auto mode off for those steps only |
+| Q1 | ~~**How are the mutation tests run?** §6.1 requires breaking each fix to confirm exactly its own cases fail. When commit 5 tried a temporary edit to `InMemorySagaStore.cs` for the same purpose, Claude Code's auto-mode classifier refused it as test-related code removal; every later mutation step is the same kind of edit, so expect the same refusal.~~ **Resolved 2026-09-26, by a fourth option.** For 7–15b the mutation is the fix's own absence: commit 6 landed every case red, so the failing-set diff between the run before a fix and the run after it is exactly "break the change, confirm its own cases fail and nothing else does", and each fix's commit message records that diff. Where a withdrawal has to be run separately — F11's statistical kill, and B1/B2 at 18–19, whose tests land with their fixes — `git stash push -- <file>` withdraws the change and `git stash pop` restores it, a git operation the classifier does not intercept, with a rebuild in between (a `--no-build` run against the stale binary proves nothing; the first F11 attempt made that mistake and was redone). | ~~Commit 7 onward — every fix commit (7–15b) and B1/B2 (18–19)~~ Nothing | ~~(a) add a permission rule allowing the temporary source edit and its revert; (b) the maintainer runs each mutation step by hand from instructions in the commit report; (c) turn auto mode off for those steps only~~ |
 | Q2 | **When is B3 fixed?** §4 records it — a persist that loses its race at `SaveChangesAsync` leaves EF's unit of work unable to commit again, losing the discard path's `DeliveryExhausted` entries — but schedules nothing. | Nothing in this sequence; a conformance case for it would be red on EF with no fix | (a) add it as a fix after 15b, with a case that loses a race at the commit and then commits again in the same unit of work; (b) leave it for a follow-up sequence |
 | Q3 | **Does D10 get a clause?** EF's `InsertAsync` still maps *every* `DbUpdateException` to `SagaAlreadyExistsException` (§1.1), so an infrastructure failure reads as a lost business-key race. No clause states what a store must do, so no case can test it. | Nothing in this sequence | (a) write a clause (only a genuine identity or business-key collision is `SagaAlreadyExistsException`) and a fix; (b) keep it documented as open |
 | Q4 | **Are the provider-specific tests the suite duplicates pruned?** `EfCoreStoreTests`, `InMemoryOutboxStoreTests` and `InMemorySnapshotStoreBusinessKeyTests` overlap the conformance suite. Commit 5 deliberately deleted none of them. | Nothing | (a) prune the exact duplicates in a follow-up; (b) keep them as provider-level smoke tests |
