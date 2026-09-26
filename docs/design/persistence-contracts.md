@@ -114,8 +114,10 @@ XML documentation on `VSaga.Abstractions`. **Clauses 7 and 10 are not doc-only**
    fetches and skip-free, repeat-free page walks. The final tiebreak is on the row's own identity, so
    writes to rows outside a result never reorder the rows inside it. It does **not** require a byte-identical sequence
    across providers: `SagaType` sorts under database collation on EF versus `StringComparer.Ordinal`
-   in-memory, and `Guid` ordering differs between Postgres `uuid`, SQLite BLOB and
-   `Comparer<Guid>.Default`. Nothing consumes a cross-provider-identical order.
+   in-memory, and a relational provider orders `Guid` however its column type does — SQL Server's
+   `uniqueidentifier`, a documented target, compares byte groups in a different order than
+   `Comparer<Guid>.Default` (Postgres `uuid` and SQLite, which stores a Guid as TEXT, happen to agree
+   with it). Nothing consumes a cross-provider-identical order.
 10. **`ClaimDueAsync` gains `IReadOnlyCollection<string>? sagaTypes = null`** — not doc-only.
     **`ClaimPendingAsync` does not.** `SagaOutboxDispatcherHostedService` has no saga-type registry
     (constructor at `:17-22`; `RedispatchAsync` at `:59-66` republishes raw bytes by type name), so
@@ -281,7 +283,7 @@ plus the `TimeProvider` clock, one breaking change), clauses 11 and 12, and B2's
 | # | Commit |
 | --- | --- |
 | 1 | Clauses 1–3, 5, 6, 8, plus a one-paragraph preamble on the seven-contract carve-up. Clause 6 **corrects** `ISagaEventLogStore.cs:19` |
-| 2 | Clause 4 (enumerating all six EF commit sites) |
+| 2 | Clause 4 (enumerating all seven EF commit sites) |
 | 3 | Clause 7 + the `ResetStateAsync` signature change + F12 |
 | 4 | Clauses 9, 11, 12 |
 | 5 | `VSaga.Persistence.Conformance` + fixtures, with `IsPackable`/`IsTestProject` explicit |
@@ -450,14 +452,16 @@ decided 2026-09-25); the outbox headers difference (F13 unifies it); clause 11's
 
 ### 9.2 Corrections queued for commit 20
 
-Commit 20 is the documentation pass. Each item below is verified as wrong today; none is applied yet.
+Commit 20 was the documentation pass; every item below is applied there, with one deviation noted in place.
 
 - **This plan, clause 9 (§2):** the example "`Guid` ordering differs between Postgres `uuid`, SQLite BLOB
   and `Comparer<Guid>.Default`" is false. EF's SQLite provider stores a Guid as TEXT, and a 20,000-Guid
   experiment shows all three orders coincide. The divergent target that is real and documented is SQL
   Server's `uniqueidentifier`, which `ISagaSummaryReader`'s own remarks already cite.
+  **Applied in commit 20.**
 - **This plan, §6's commit-2 row:** says "six EF commit sites"; clause 4's own list, and the landed
   `ISagaOutboxStore` remarks, name seven.
+  **Applied in commit 20.**
 - ~~**This plan, the status line:** still reads "planned, nothing built".~~ Fixed alongside §6.2.
 - **`docs/persistence.md:10`:** says to remove its divergence note "once that plan's conformance suite is
   green" — a condition commit 5 met while the divergences were all still live. Reword it to "once fixes
@@ -467,6 +471,8 @@ Commit 20 is the documentation pass. Each item below is verified as wrong today;
   `docs/design/mongodb-persistence.md:519` (a Stage 10 gate of **17** packages) and
   `docs/design/redis-persistence.md:765` ("today: 16", and its "Mongo's gate asserts 17; Redis makes it
   18") are each one short. Restate them as deltas rather than absolute counts.
+  **Applied in commit 20.**
 - **`SagaState.BusinessKey`'s doc** says the key is "set once at creation", while `ISagaSnapshotStore`'s
   `UpdateAsync` remarks (`9e1263a`) now require a store to move the reservation when an update changes
   it. The engine does set it once; say that stores must still handle a change.
+  **Applied in commit 20.**

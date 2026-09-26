@@ -260,7 +260,7 @@ live verification passes.
   unbounded strings can exceed WiredTiger's 1024-byte index-key limit on a hot path.
 - **Stage 0 changes two shipped providers' observable behaviour and a published abstractions package
   before any Mongo code exists.**
-- `dotnet pack` grows from 16 packages to 17, and `MongoDB.Driver`'s transitive graph becomes a
+- `dotnet pack` grows by one package, and `MongoDB.Driver`'s transitive graph becomes a
   solution-wide restore-failure surface under `TreatWarningsAsErrors` — a failure class
   `Directory.Build.props:36-39` records having already hit this repo once.
 

@@ -762,7 +762,7 @@ written provider-neutrally and run against all providers.
 
 | Conflict | Resolution |
 |---|---|
-| `dotnet pack` count: Mongo's gate asserts 17; Redis makes it 18 | state it as a **delta**, not an absolute (today: 16) |
+| `dotnet pack` count: each plan's gate once named an absolute | state it as a **delta** — each provider adds one package — never an absolute, which unrelated packages move (the conformance suite already made it 17 before either provider landed) |
 | Port slots in `docs/transports/index.md:125-130` | Mongo claims 27018 / 5580 / 6172-16172; Redis takes 6479 / 5680 / 6272-16272, conditional on the Mongo overlay existing |
 | `docs/persistence.md:3`, `CONTRIBUTING.md:9-12`/`:59-62`, `docs/README.md`, `ci.yml:16` | both plans edit the same sentences; land coordinated |
 | `VSaga.Abstractions` edits | Mongo scopes three, Redis adds one conditional — **one coordinated change, not two** |

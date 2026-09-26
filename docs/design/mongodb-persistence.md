@@ -516,7 +516,7 @@ Each stage is independently reviewable and leaves the build green.
 | 7 | Conformance green on Mongo + one end-to-end orchestrator-sequence test | Whole suite green. `SagaTestHarness` is deliberately **not** modified — it hardwires in-memory persistence (`SagaTestHarness.cs:44-52`) and excludes both pollers (`:72-78`) precisely because it is a deterministic unit-testing tool. |
 | 8 | `Persistence:Provider` seam in `Dashboard.Api` and the sample | Existing `VSaga.Dashboard.Api.Tests` green; `docker compose build` succeeds for both images |
 | 9 | `docker-compose.mongo.yml` overlay + live verification | A real `docker compose -f docker-compose.yml -f docker-compose.mongo.yml -p vsaga-mongo up --build` run: a timeout firing and compensating, a **killed saga host mid-step** so the outbox poller republishes, a second `up` on the persisted volume, and the saga map resolving destinations |
-| 10 | CI, packaging, documentation | Zero stale hits for "two persistence providers", "five suites", "EF Core/Postgres and in-memory"; `dotnet pack` produces **17** packages |
+| 10 | CI, packaging, documentation | Zero stale hits for "two persistence providers", "five suites", "EF Core/Postgres and in-memory"; `dotnet pack` produces one package more than at the stage's start — a delta, since unrelated packages move the absolute count |
 
 ### 8.1 Notes on specific stages
 

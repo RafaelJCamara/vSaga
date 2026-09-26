@@ -5,10 +5,10 @@ vSaga ships two persistence providers, both implementing the same set of store c
 `ISagaEventLogStore`, `ISagaTimeoutStore`, `ISagaOutboxStore`, `ISagaAdminStore`, and
 `IServiceTopologyStore`.
 
-> **They do not yet behave identically.** Eight verified divergences and three shared defects between
-> the two are catalogued in [`design/persistence-contracts.md`](design/persistence-contracts.md) §1,
-> along with the accepted plan to write the contracts down and fix them. Remove this note once that
-> plan's conformance suite is green.
+Both are held to the same written contracts by the cross-provider `VSaga.Persistence.Conformance`
+suite, which a third-party provider can run against itself. The eight divergences and three shared
+defects the two once had are catalogued, with their fixes, in
+[`design/persistence-contracts.md`](design/persistence-contracts.md) §1 and §3; all are fixed.
 
 ## EF Core / Postgres
 

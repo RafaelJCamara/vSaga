@@ -36,10 +36,12 @@ public abstract class SagaState
 
     /// <summary>
     /// This saga type's declared business key (via <c>CorrelateOn</c>), or null if the saga
-    /// type hasn't declared one. Engine-owned, set once at creation -- same precedent as
-    /// <see cref="ParentSagaType"/> above. Promoted to a real column in every persistence provider (not
-    /// left inside the serialized state blob) so it can be looked up directly; see
-    /// <c>ISagaSnapshotStore{TState}.FindByBusinessKeyAsync</c>.
+    /// type hasn't declared one. Engine-owned: the engine sets it once, at creation -- same precedent
+    /// as <see cref="ParentSagaType"/> above. Nothing at the type level prevents an update from
+    /// changing it, though, so a persistence provider must still handle that case: its
+    /// <c>ISagaSnapshotStore{TState}.UpdateAsync</c> moves the key's reservation. Promoted to a real
+    /// column in every persistence provider (not left inside the serialized state blob) so it can be
+    /// looked up directly; see <c>ISagaSnapshotStore{TState}.FindByBusinessKeyAsync</c>.
     /// </summary>
     public string? BusinessKey { get; set; }
 
