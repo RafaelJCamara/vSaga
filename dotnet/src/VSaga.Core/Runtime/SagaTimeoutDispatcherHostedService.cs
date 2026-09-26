@@ -27,10 +27,13 @@ internal sealed class SagaTimeoutDispatcherHostedService(
         {
             try
             {
-                var due = await ClaimDueTimeoutsAsync(stoppingToken);
+                var due = await ClaimDueTimeoutsAsync(runtimesBySagaType.Keys, stoppingToken);
 
                 foreach (var timeout in due)
                 {
+                    // Cannot happen with a conforming store, since the claim was scoped to exactly these
+                    // keys; kept because the alternative is a null dereference, and a store that ignores
+                    // the filter has just fired a row nobody here can dispatch -- worth a warning.
                     if (!runtimesBySagaType.TryGetValue(timeout.SagaType, out var runtime))
                     {
                         logger.LogWarning("No registered saga runtime for timeout of unknown saga type {SagaType}", timeout.SagaType);
@@ -59,11 +62,17 @@ internal sealed class SagaTimeoutDispatcherHostedService(
     /// one <c>DbContext</c> per unit of work — is never captured for this singleton
     /// <see cref="BackgroundService"/>'s process lifetime. Matches <see cref="SagaRuntime{TState}"/>'s
     /// own per-unit-of-work scoping.
+    /// <para>
+    /// The claim is scoped to <paramref name="sagaTypes"/>, the types this process has runtimes for. A
+    /// claim fires the row for good, so claiming a type hosted elsewhere -- several services sharing
+    /// one store, each running its own sagas -- would fire that service's timeout and then drop it
+    /// here as unknown, never to be claimed again.
+    /// </para>
     /// </summary>
-    private async Task<IReadOnlyList<SagaTimeout>> ClaimDueTimeoutsAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<SagaTimeout>> ClaimDueTimeoutsAsync(IReadOnlyCollection<string> sagaTypes, CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var timeoutStore = scope.ServiceProvider.GetRequiredService<ISagaTimeoutStore>();
-        return await timeoutStore.ClaimDueAsync(timeProvider.GetUtcNow(), BatchSize, cancellationToken);
+        return await timeoutStore.ClaimDueAsync(timeProvider.GetUtcNow(), BatchSize, sagaTypes, cancellationToken);
     }
 }

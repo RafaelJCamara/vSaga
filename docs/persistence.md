@@ -77,6 +77,12 @@ atomic `UPDATE ... WHERE ... FOR UPDATE SKIP LOCKED ... RETURNING`, so multiple
 `SagaTimeoutDispatcherHostedService`/`SagaOutboxDispatcherHostedService` instances (or replicas) can
 poll concurrently without double-claiming a row.
 
+`ClaimDueAsync` also takes the saga types the caller can dispatch, filtered inside that locking subquery:
+`SagaTimeoutDispatcherHostedService` passes the ones it has runtimes for, so a process hosting some of
+the saga types sharing a database never fires — and so loses — the other services' timeouts.
+`ClaimPendingAsync` deliberately has no such filter; the outbox dispatcher republishes raw bytes and can
+act on every row.
+
 > **This applies to Postgres and nothing else.** The choice is an exact string comparison against
 > `"Npgsql.EntityFrameworkCore.PostgreSQL"` (`EfCoreSagaTimeoutStore.cs:37`, `:46-49`;
 > `EfCoreSagaOutboxStore.cs:67`, `:76-79`). **Every** other provider — including `UseSqlServer`,

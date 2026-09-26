@@ -347,9 +347,12 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<SagaTimeout>> ClaimDueAsync(DateTimeOffset asOf, int batchSize, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<SagaTimeout>> ClaimDueAsync(DateTimeOffset asOf, int batchSize, IReadOnlyCollection<string>? sagaTypes = null, CancellationToken cancellationToken = default)
     {
         var claimed = new List<SagaTimeout>();
+        // Null claims every type; a set claims only its members (ISagaTimeoutStore.ClaimDueAsync), so a
+        // process hosting some of the saga types sharing this store never fires the others' rows.
+        var wanted = sagaTypes is null ? null : new HashSet<string>(sagaTypes, StringComparer.Ordinal);
 
         // Earliest-due first (clause 8), then by id for a stable order among rows due in the same
         // instant. The dictionary enumerates in hash order, so walking it directly would claim an
@@ -357,7 +360,7 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
         // waiting behind newer ones. The snapshot taken here can be stale by the time each swap runs,
         // which is what the compare-and-swap is for: a row another claimer took in between is skipped.
         var due = _timeouts.Values
-            .Where(t => t.Status == SagaTimeoutStatus.Pending && t.DueAtUtc <= asOf)
+            .Where(t => t.Status == SagaTimeoutStatus.Pending && t.DueAtUtc <= asOf && (wanted is null || wanted.Contains(t.SagaType)))
             .OrderBy(t => t.DueAtUtc)
             .ThenBy(t => t.Id);
 

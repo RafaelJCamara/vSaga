@@ -100,9 +100,11 @@ public sealed class SagaTestHarness<TDefinition, TState> : IAsyncDisposable
 
         var timeoutStore = _provider.GetRequiredService<ISagaTimeoutStore>();
         var orchestrator = _provider.GetRequiredService<SagaOrchestrator<TState>>();
-        var due = await timeoutStore.ClaimDueAsync(TimeProvider.GetUtcNow(), batchSize: 1000, cancellationToken);
+        // Scoped to this harness's one saga type at the claim, as the real dispatcher scopes its own:
+        // a claim fires the row, so filtering afterwards would fire and then drop any other type's.
+        var due = await timeoutStore.ClaimDueAsync(TimeProvider.GetUtcNow(), batchSize: 1000, [Saga.SagaType], cancellationToken);
 
-        foreach (var timeout in due.Where(t => string.Equals(t.SagaType, Saga.SagaType, StringComparison.Ordinal)))
+        foreach (var timeout in due)
             await orchestrator.HandleTimeoutAsync(timeout, cancellationToken);
 
         return this;

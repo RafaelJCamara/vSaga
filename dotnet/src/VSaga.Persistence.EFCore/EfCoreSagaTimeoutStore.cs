@@ -43,20 +43,30 @@ public sealed class EfCoreSagaTimeoutStore(VSagaDbContext db) : ISagaTimeoutStor
     /// SQLite in tests) falls back to a plain load-then-update, which is only correct for a single
     /// dispatcher instance — that fallback exists for provider portability, not as a v1 shortcut.
     /// </remarks>
-    public Task<IReadOnlyList<SagaTimeout>> ClaimDueAsync(DateTimeOffset asOf, int batchSize, CancellationToken cancellationToken = default) =>
-        string.Equals(db.Database.ProviderName, NpgsqlProviderName, StringComparison.Ordinal)
-            ? ClaimDueViaSkipLockedAsync(asOf, batchSize, cancellationToken)
-            : ClaimDueViaLoadAndUpdateAsync(asOf, batchSize, cancellationToken);
+    public Task<IReadOnlyList<SagaTimeout>> ClaimDueAsync(DateTimeOffset asOf, int batchSize, IReadOnlyCollection<string>? sagaTypes = null, CancellationToken cancellationToken = default)
+    {
+        // Null claims every type; a set claims only its members (ISagaTimeoutStore.ClaimDueAsync), so a
+        // process hosting some of the saga types sharing this database never fires the others' rows.
+        // Materialised once here: both paths hand it to the database as a parameter.
+        var wanted = sagaTypes?.ToArray();
+
+        return string.Equals(db.Database.ProviderName, NpgsqlProviderName, StringComparison.Ordinal)
+            ? ClaimDueViaSkipLockedAsync(asOf, batchSize, wanted, cancellationToken)
+            : ClaimDueViaLoadAndUpdateAsync(asOf, batchSize, wanted, cancellationToken);
+    }
 
     /// <summary>
     /// Not safe for multiple concurrent dispatcher instances — two dispatchers can both load the same
     /// due row before either marks it Fired. Only reached for non-Postgres providers, where a portable
     /// atomic claim isn't available.
     /// </summary>
-    private async Task<IReadOnlyList<SagaTimeout>> ClaimDueViaLoadAndUpdateAsync(DateTimeOffset asOf, int batchSize, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<SagaTimeout>> ClaimDueViaLoadAndUpdateAsync(DateTimeOffset asOf, int batchSize, string[]? sagaTypes, CancellationToken cancellationToken)
     {
-        var due = await db.SagaTimeouts
-            .Where(x => x.Status == SagaTimeoutStatus.Pending && x.DueAtUtc <= asOf)
+        var query = db.SagaTimeouts.Where(x => x.Status == SagaTimeoutStatus.Pending && x.DueAtUtc <= asOf);
+        if (sagaTypes is not null)
+            query = query.Where(x => sagaTypes.Contains(x.SagaType));
+
+        var due = await query
             .OrderBy(x => x.DueAtUtc)
             .Take(batchSize)
             .ToListAsync(cancellationToken);
@@ -78,23 +88,40 @@ public sealed class EfCoreSagaTimeoutStore(VSagaDbContext db) : ISagaTimeoutStor
     /// caller's due-date ordering is reapplied in memory after materializing; no further LINQ can be
     /// composed onto the raw SQL itself (EF can't wrap a bare UPDATE...RETURNING in a subquery).
     /// </summary>
-    private async Task<IReadOnlyList<SagaTimeout>> ClaimDueViaSkipLockedAsync(DateTimeOffset asOf, int batchSize, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<SagaTimeout>> ClaimDueViaSkipLockedAsync(DateTimeOffset asOf, int batchSize, string[]? sagaTypes, CancellationToken cancellationToken)
     {
         var asOfUtc = asOf.UtcDateTime;
         var pending = (int)SagaTimeoutStatus.Pending;
         var fired = (int)SagaTimeoutStatus.Fired;
 
-        var claimed = await db.SagaTimeouts.FromSqlInterpolated($"""
-            UPDATE "SagaTimeouts" SET "Status" = {fired}
-            WHERE "Id" IN (
-                SELECT "Id" FROM "SagaTimeouts"
-                WHERE "Status" = {pending} AND "DueAtUtc" <= {asOfUtc}
-                ORDER BY "DueAtUtc"
-                LIMIT {batchSize}
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING "Id", "CorrelationId", "SagaType", "ForState", "DueAtUtc", "Status"
-            """)
+        // Two statements rather than one with a nullable array parameter: Npgsql cannot infer a type
+        // for a null array in "{p} IS NULL OR ...", and the filter belongs inside the locking subquery
+        // so that SKIP LOCKED only ever locks rows this claim will take. A string[] binds as text[].
+        FormattableString sql = sagaTypes is null
+            ? (FormattableString)$"""
+                UPDATE "SagaTimeouts" SET "Status" = {fired}
+                WHERE "Id" IN (
+                    SELECT "Id" FROM "SagaTimeouts"
+                    WHERE "Status" = {pending} AND "DueAtUtc" <= {asOfUtc}
+                    ORDER BY "DueAtUtc"
+                    LIMIT {batchSize}
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING "Id", "CorrelationId", "SagaType", "ForState", "DueAtUtc", "Status"
+                """
+            : (FormattableString)$"""
+                UPDATE "SagaTimeouts" SET "Status" = {fired}
+                WHERE "Id" IN (
+                    SELECT "Id" FROM "SagaTimeouts"
+                    WHERE "Status" = {pending} AND "DueAtUtc" <= {asOfUtc} AND "SagaType" = ANY({sagaTypes})
+                    ORDER BY "DueAtUtc"
+                    LIMIT {batchSize}
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING "Id", "CorrelationId", "SagaType", "ForState", "DueAtUtc", "Status"
+                """;
+
+        var claimed = await db.SagaTimeouts.FromSqlInterpolated(sql)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 

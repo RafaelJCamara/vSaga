@@ -11,10 +11,41 @@ public abstract class TimeoutStoreConformanceTests(IProviderFixture fixture) : S
         await uow.Timeouts.ScheduleAsync(sagaType, correlationId, forState, dueAtUtc);
     }
 
-    private static async Task<IReadOnlyList<SagaTimeout>> ClaimDueAsync(IProviderStores stores, DateTimeOffset asOf, int batchSize = 1000)
+    private static async Task<IReadOnlyList<SagaTimeout>> ClaimDueAsync(IProviderStores stores, DateTimeOffset asOf, int batchSize = 1000, IReadOnlyCollection<string>? sagaTypes = null)
     {
         await using var uow = await stores.BeginAsync();
-        return await uow.Timeouts.ClaimDueAsync(asOf, batchSize);
+        return await uow.Timeouts.ClaimDueAsync(asOf, batchSize, sagaTypes);
+    }
+
+    /// <summary>
+    /// Clause 10 (fix F9): a claim scoped to a set of saga types fires only their rows. The others stay
+    /// Pending for whichever process hosts them — a later unscoped claim still finds them — because a
+    /// claim is destructive and a process hosting some of the types sharing a store must never fire the
+    /// rest. The set is honoured exactly: ordinal names, and an empty set claims nothing. The batch is
+    /// smaller than the rows due across all types, so the filter has to apply before the truncation, not
+    /// to whatever the truncation happened to return.
+    /// </summary>
+    [Fact]
+    public async Task ClaimDue_ScopedToSagaTypes_FiresOnlyTheirRowsAndLeavesTheRestPending()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var order = Guid.NewGuid();
+        var shipping = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        await ScheduleAsync(stores, "OtherServiceSaga", other, "Waiting", T0);
+        await ScheduleAsync(stores, "OrderSaga", order, "AwaitingPayment", T0.AddSeconds(1));
+        await ScheduleAsync(stores, "ShippingChoreography", shipping, "Tracking", T0.AddSeconds(2));
+
+        Assert.Empty(await ClaimDueAsync(stores, T0.AddMinutes(1), sagaTypes: []));
+        Assert.Empty(await ClaimDueAsync(stores, T0.AddMinutes(1), sagaTypes: ["ordersaga", "OrderSaga "]));
+
+        var scoped = await ClaimDueAsync(stores, T0.AddMinutes(1), batchSize: 2, sagaTypes: ["OrderSaga", "ShippingChoreography"]);
+        Assert.Equal([order, shipping], scoped.Select(t => t.CorrelationId));
+        Assert.All(scoped, t => Assert.Equal(SagaTimeoutStatus.Fired, t.Status));
+
+        var unscoped = Assert.Single(await ClaimDueAsync(stores, T0.AddMinutes(1)));
+        Assert.Equal(other, unscoped.CorrelationId);
+        Assert.Equal("OtherServiceSaga", unscoped.SagaType);
     }
 
     [Fact]
