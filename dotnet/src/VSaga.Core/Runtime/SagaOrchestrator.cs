@@ -938,7 +938,11 @@ public sealed class SagaOrchestrator<TState>(
         var message = new ChildSagaFinished(state.CorrelationId, SagaType, status);
         var envelope = MessageEnvelope.From(SagaType, parentCorrelationId, causationMessageId);
 
-        await outboxStore.EnqueueAsync(SagaType, state.CorrelationId, envelope.MessageId, nameof(ChildSagaFinished),
+        // Keyed on the envelope's correlation id -- the parent's -- not this child's, for the reason
+        // EnqueueOutboxRowsAsync gives: the recovery poller rebuilds the envelope from the stored id, so
+        // a row keyed on the child would have a crash-recovered ChildSagaFinished republished under the
+        // child's identity, where the parent never receives it and hangs until its own state timeout.
+        await outboxStore.EnqueueAsync(SagaType, envelope.CorrelationId, envelope.MessageId, nameof(ChildSagaFinished),
             JsonSerializer.SerializeToUtf8Bytes(message), destination: null, envelope.Headers!,
             timeProvider.GetUtcNow(), cancellationToken);
 
