@@ -51,23 +51,3 @@ Confirms/DLQ/redelivery, and the header-threading gotchas RabbitMQ's own adapter
 `SourceService`/`CausationId` story), are covered in the general
 [production-hardening history](../history/project-origins-and-hardening-pass.md) and
 [sub-saga parent-linkage history](../history/sub-saga-parent-linkage.md).
-
-## TypeScript
-
-`@vsaga/transport-rabbitmq` is wire-compatible with this adapter for Node participants — see
-[`../typescript-participants.md`](../typescript-participants.md).
-
-```ts
-import { createRabbitMqTransport } from '@vsaga/transport-rabbitmq';
-import { createParticipant } from '@vsaga/participant';
-
-const transport = await createRabbitMqTransport({
-  connectionString: 'amqp://guest:guest@localhost:5672/',
-});
-
-const payments = createParticipant({
-  serviceName: 'payments',
-  queue: 'vsaga.participant.payments',
-  transport,
-});
-```

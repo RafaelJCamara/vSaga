@@ -142,16 +142,7 @@ if (role != ServiceRole.Sagas)
     builder.Services.AddHostedService<StockParticipant>();
 
     // The choreographed leg's participants: no conductor commands these, they each react to OrderShipped.
-    //
-    // Notification is the one that can be handed to another runtime. docker-compose.node.yml sets this
-    // to false and starts typescript/samples/notification-participant in its place — same queue, same
-    // message types, same replies, different language. Leaving this one registered alongside the Node
-    // service would not fail loudly: both would bind the same queue and the broker would round-robin
-    // deliveries between them, so roughly half the notifications would still be handled in .NET and the
-    // cross-runtime run would prove much less than it appears to.
-    if (builder.Configuration.GetValue("Participants:NotificationInProcess", defaultValue: true))
-        builder.Services.AddHostedService<NotificationParticipant>();
-
+    builder.Services.AddHostedService<NotificationParticipant>();
     builder.Services.AddHostedService<LoyaltyParticipant>();
     builder.Services.AddHostedService<InvoicingParticipant>();
 }

@@ -11,7 +11,6 @@ namespace VSaga.Transport.Http.Tests;
 /// means the message had nowhere to go at all and retrying the same publish can only fail the same
 /// way.
 ///
-/// Mirrors typescript/packages/transport-http/test/transport.test.ts's "remote failures" block.
 /// Split out from <see cref="HttpTransportTests"/> because these nodes talk to a canned responder
 /// (NodeRegistry.RegisterStub) rather than to another real vSaga node.
 /// </summary>

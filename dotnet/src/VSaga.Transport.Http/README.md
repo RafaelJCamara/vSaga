@@ -2,8 +2,7 @@
 
 Brokerless `IMessageTransport` for vSaga — run sagas and participants over plain HTTP instead of a
 message broker. No RabbitMQ, no broker infrastructure: publish/send POST directly to a configured
-endpoint, and a `200` response is itself the reply. Wire-compatible with the TypeScript SDK's
-`@vsaga/transport-http`.
+endpoint, and a `200` response is itself the reply.
 
 ## Install
 

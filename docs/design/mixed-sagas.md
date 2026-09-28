@@ -298,7 +298,7 @@ which merged its DSL addition with its own Map fix. This change affects edge ren
 the repo, not only HTTP ones, and deserves its own green-suite-plus-mutation gate rather than riding
 along.
 
-No Angular change is needed: `typescript/dashboard-web/src/app/components/saga-map/saga-map.ts:44` already carries
+No Angular change is needed: `dashboard-web/src/app/components/saga-map/saga-map.ts:44` already carries
 `isCompensation` through, `saga-map.html:16` already binds `.edge--compensation`, and `saga-map.scss:41`
 already styles it as a dotted edge with a legend entry — the API-side fix alone lights it up.
 

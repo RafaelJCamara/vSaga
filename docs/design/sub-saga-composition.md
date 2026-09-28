@@ -72,7 +72,7 @@ anything new — the intent is to reuse patterns, not invent parallel ones.
 | Header threading onto new instances | `dotnet/src/VSaga.Core/Runtime/SagaOrchestrator.cs:127,135,309,336` | Exact pattern the parent link should copy |
 | Outbound envelope stamping | `dotnet/src/VSaga.Core/Runtime/SagaContext.cs:53`, `MessageEnvelope.From` | Where `StartChildAsync` hangs off |
 | Cross-instance lookup for the dashboard | `ISagaSummaryReader.FindByCorrelationIdAsync` (`ISagaSummaryReader.cs:27`) | Precedent for a `FindChildrenAsync` |
-| Related-saga UI strip | `typescript/dashboard-web/src/app/pages/saga-detail/saga-detail.ts:104` | Becomes two relations instead of one |
+| Related-saga UI strip | `dashboard-web/src/app/pages/saga-detail/saga-detail.ts:104` | Becomes two relations instead of one |
 | Migration precedent | `dotnet/src/VSaga.Persistence.EFCore.Postgres/Migrations/20260825045219_*` | Adding columns + index to `SagaInstances` |
 
 ---

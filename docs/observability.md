@@ -103,13 +103,6 @@ needs scoped-store access from a meter callback that `VSaga.Observability` doesn
 follow-up, not built here. Wiring the wrong instrument (and shipping a permanently-wrong dashboard
 number) was judged worse than shipping none.
 
-**Node participants: propagation only, no metrics.** The TypeScript SDK's participant (`vsaga/participant`)
-threads the inbound `traceparent`/`tracestate` headers onto every reply it publishes, so a Node
-participant correctly continues a trace started by a .NET saga rather than rooting a new one. It does
-not start its own spans and emits no OpenTelemetry metrics of its own — there is no TypeScript
-equivalent of `VSagaDiagnostics`/`AddVSagaOpenTelemetry` today, so a Node hop shows up in a trace as
-propagated context only, with none of the counters/histograms above.
-
 ## Wiring it up: `AddVSagaOpenTelemetry`
 
 ```csharp

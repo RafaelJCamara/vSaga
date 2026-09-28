@@ -15,12 +15,8 @@ coverage/
 .idea/
 .vscode/
 
-## Node / TypeScript
-typescript/**/node_modules/
-typescript/**/dist/
-typescript/**/coverage/
-typescript/**/*.tsbuildinfo
-typescript/dashboard-web/.angular/
+## Angular dashboard (node_modules/ and dist/ are ignored by dashboard-web/.gitignore itself)
+dashboard-web/.angular/
 npm-debug.log*
 
 ## Docker

@@ -80,7 +80,8 @@ redelivery reproduce the original delivery exactly?**
   an error log carrying type/correlation/message id *is* the dead-letter record). Requeue is honest on
   these paths because the redelivered copy differs from the original in nothing but time — same body,
   the very same headers dictionary instance, same deferred-never-inline dispatch, landing back exactly
-  where the first copy came from.
+  where the first copy came from. Once the dispatcher is disposed and that channel completed, a
+  requeue has nowhere to land and degrades to an error-level drop.
 - **No for a genuine inbound HTTP request.** That delivery gets `CreateInboundRequestAck`, where
   `AckAsync` drops and **both** nack forms log at error and drop. It is inseparable from the request
   carrying it: it is dispatched inline under the ambient `SyncReplyCollector`, and the status and body
@@ -108,16 +109,6 @@ spin this channel forever on a counter nobody owns. The two bounds compose rathe
 requeue chains terminate here, republish chains terminate at `MaxDeliveryAttempts` because every
 republish increments the header this dispatcher preserves, and interleaving them is bounded by their
 product.
-
-**TypeScript parity.** `@vsaga/transport-http` implements the same model, with the same split and the
-same cap of five. A delivery the transport enqueued itself — a same-process `publish()`/`send()` that
-resolved to a local subscriber, or a `200` synchronous reply to one of its own outbound POSTs —
-honours `nack(requeue: true)` by re-dispatching it byte-identically, and degrades to an error-level
-drop once the transport is closed, exactly as the .NET side does on a completed channel. A delivery
-that arrived as an inbound HTTP request logs at error and drops on both nack forms. The one divergence
-is the log sink: .NET uses `ILogger`, TypeScript uses `console.error`/`console.warn` behind a
-`[vsaga]` prefix, because `@vsaga/transport-http` takes no logger dependency — `@vsaga/participant`
-owns the `Logger` interface, and depending on it would invert the package layering.
 
 ## Known, deliberate limitations
 
@@ -153,21 +144,3 @@ unroutable-return signal at all.
 Options: [`../configuration.md#httptransportoptions-vsagatransporthttp`](../configuration.md#httptransportoptions-vsagatransporthttp).
 Compose overlay: `docker-compose.http.yml` (splits the sample into separate Sagas/Participants
 containers so local-subscription counting as a "route" doesn't collapse into one process).
-
-## TypeScript
-
-`@vsaga/transport-http` is wire-compatible with this adapter for Node participants — see
-[`../typescript-participants.md`](../typescript-participants.md).
-
-```ts
-import { createHttpTransport } from '@vsaga/transport-http';
-import { createVSagaRouter } from '@vsaga/express'; // or @vsaga/fastify, @vsaga/nestjs
-
-const transport = createHttpTransport({
-  serviceName: 'payments',
-  endpoints: { orders: 'http://orders:8080' },
-  routes: { ChargeCard: ['orders'] },
-});
-
-app.use(createVSagaRouter(transport)); // mounts the inbound receive endpoint
-```

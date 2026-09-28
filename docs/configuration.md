@@ -1,8 +1,7 @@
 # Configuration
 
-This page covers the **.NET engine's** options classes specifically. None of them participate in the
-framework's options-binding pipeline: there is no `services.Configure<T>(...)` step anywhere in this
-library, and calling one yourself is a silent no-op (it registers an `IOptions<T>` nobody reads — every
+This page covers vSaga's options classes. None of them participate in .NET's options-binding pipeline:
+there is no `services.Configure<T>(...)` step anywhere in this library, and calling one yourself is a silent no-op (it registers an `IOptions<T>` nobody reads — every
 options class below is resolved as a plain `T` singleton, with the one `IOptions<T>` exception noted
 under [`Dashboard:ApiKey`](#dashboardapikey)). Every adapter's own options
 (`RabbitMqOptions`, `HttpTransportOptions`, ...) are set the same way: pass an `Action<TOptions>` to
@@ -29,22 +28,6 @@ depending on its `Role`). Config keys nest with `:` (or `__` in environment vari
 `AddVSagaEngine` takes no options delegate of its own — configured instead via
 `SagaEngineBuilder.ConfigureOrchestrator`/`ConfigureOutbox`, shown below. Defaults are shown as written
 in source.
-
-## TypeScript SDK options
-
-The TypeScript SDK (`@vsaga/transport-rabbitmq`, `@vsaga/transport-http`, `@vsaga/participant`, ...) has
-its own options interfaces, each documented in that package's own README rather than duplicated here —
-see the package table in [`typescript-participants.md`](typescript-participants.md#packages). They mirror
-the .NET shapes below closely but are not identical; the one most worth knowing about before you cross
-runtimes:
-
-| | .NET | TypeScript |
-| --- | --- | --- |
-| HTTP request timeout | `HttpTransportOptions.RequestTimeout` — a `TimeSpan`, default `30s` | `HttpTransportOptions.requestTimeoutMs` — a plain `number` of milliseconds, default `30_000` |
-
-`@vsaga/transport-rabbitmq`'s options also add a `prefetchCount` knob (default `32`, matching the fixed
-`BasicQosAsync` call `RabbitMqTransport` already makes) that `RabbitMqOptions` on the .NET side doesn't
-expose as a setting at all.
 
 ## `SagaOrchestratorOptions`
 
@@ -144,6 +127,9 @@ on `order-processing` only, while `docker-compose.http.yml` sets it on `dashboar
 | `ClientProvidedName` | `VSaga` |
 | `ExchangeName` | `vsaga.saga.events` |
 | `DeadLetterExchangeName` | `vsaga.dlx` |
+
+The consumer prefetch is not a setting: `RabbitMqTransport` always calls
+`BasicQosAsync(prefetchCount: 32)` (see [`transports/rabbitmq.md`](transports/rabbitmq.md)).
 
 ### `WolverineTransportOptions` (`VSaga.Transport.Wolverine`)
 

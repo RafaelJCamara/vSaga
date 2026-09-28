@@ -12,6 +12,12 @@ otherwise.
 contradict the §8 claim above — `release.yml` was only ever described in §3's prose and was never given a
 numbered §8 item — which is exactly why the gap is invisible from here. See the status note at the end of §3.
 
+**Status note (2026-09-27): the TypeScript participant SDK has since been removed.** The
+`typescript/packages/*` workspace — the seven `@vsaga/*` npm packages — and its docs were deleted from
+the repository, so the npm/SDK half of this plan no longer applies: every npm publishing step,
+`NPM_TOKEN`, per-package README, `typescript-participants.md` item and TS file citation or test command
+below describes code that no longer exists. The Angular dashboard stays, now at `dashboard-web/`.
+
 Written to be picked up cold in a later session: every claim about the current codebase carries a
 `file:line` so it can be re-checked rather than trusted. Line numbers were accurate at commit
 `e5ff42f` and will drift — re-grep rather than trusting them.

@@ -11,9 +11,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
 - [`saga-dsl.md`](saga-dsl.md) — the full method inventory for the fluent DSL:
   `OrchestratedSagaDefinition`, `ChoreographedSagaDefinition`, `StateBuilder`, `EventBuilder`,
   `ChoreographyEventBuilder`, `TimeoutBuilder`, `RetryPolicy`, `ISagaContext`, and `.CallHttp`.
-- [`configuration.md`](configuration.md) — every **.NET** options class: `SagaOrchestratorOptions`, the
-  outbox, each transport adapter, chaos, dashboard auth, OpenTelemetry wiring (the TypeScript SDK's
-  options live in each package's own README instead, cross-linked from there).
+- [`configuration.md`](configuration.md) — every options class: `SagaOrchestratorOptions`, the
+  outbox, each transport adapter, chaos, dashboard auth, OpenTelemetry wiring.
 - [`persistence.md`](persistence.md) — EF Core/Postgres (migrations, the Postgres-volume caveat),
   MongoDB (the replica-set prerequisite, pinned write concern, the collections and indexes, supported
   servers), Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
@@ -25,9 +24,6 @@ new here; the rest of this index is organized by topic, roughly in the order you
 - [`testing.md`](testing.md) — `SagaTestHarness`, for unit-testing saga definitions against the real
   engine with no broker/database.
 - [`chaos.md`](chaos.md) — `VSaga.Chaos`'s fault-injection middleware (delay/drop/duplicate).
-- [`typescript-participants.md`](typescript-participants.md) — the Node.js SDK for writing
-  cross-runtime participants (`@vsaga/protocol`, `@vsaga/participant`, `@vsaga/transport-*`, hosting
-  adapters).
 
 ## Transports
 
@@ -46,7 +42,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
   *reasoning* behind a decision; read the reference docs above for the shipped shape. Each carries its
   own **Status** line at the top; one of them describes work that does not exist: the
   release-automation half of `production-readiness.md` §3 was never built. The three persistence plans
-  are all implemented.
+  are all implemented. `production-readiness.md` also plans an npm/TypeScript-SDK half; that SDK was
+  removed on 2026-09-27, and a status note at the top of the plan says which parts no longer apply.
   - [`design/http-based-sagas.md`](design/http-based-sagas.md)
   - [`design/mixed-sagas.md`](design/mixed-sagas.md)
   - [`design/sub-saga-composition.md`](design/sub-saga-composition.md)
@@ -84,7 +81,9 @@ new here; the rest of this index is organized by topic, roughly in the order you
   preserved verbatim, one file per topic, each headed with the commit(s) it describes. Read these for
   *how* a feature was built and verified — live-verification traces, mutation-testing results, bugs
   found and fixed along the way — content that matters for provenance but would clutter a reference
-  doc meant to describe the feature as it stands today.
+  doc meant to describe the feature as it stands today. Because they are verbatim, some still describe
+  the TypeScript participant SDK (removed 2026-09-27) and the dashboard's old `typescript/dashboard-web`
+  path (now `dashboard-web/`).
 
 ## Project meta
 

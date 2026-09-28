@@ -1,6 +1,0 @@
-# The SPA is irrelevant to any SDK/sample image and is the bulk of this context.
-dashboard-web/
-**/node_modules/
-**/dist/
-**/coverage/
-**/*.tsbuildinfo

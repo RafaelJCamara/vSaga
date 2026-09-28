@@ -1,7 +1,7 @@
 # Dashboard
 
-`VSaga.Dashboard.Api` (ASP.NET Core Minimal API + SignalR) and `typescript/dashboard-web` (Angular
-21 SPA) together form a saga-type-agnostic ops dashboard: list/filter/search every saga instance
+`VSaga.Dashboard.Api` (ASP.NET Core Minimal API + SignalR) and `dashboard-web` (Angular 21 SPA)
+together form a saga-type-agnostic ops dashboard: list/filter/search every saga instance
 across every registered saga type, drill into one instance's timeline or a visual service map, and
 manually retry a failed or timed-out saga — all against the same `ISagaSummaryReader`/
 `ISagaEventLogStore` contracts every persistence provider implements, so the dashboard needs no
@@ -21,7 +21,6 @@ All routes below require authentication (see [Authentication](#authentication)) 
 | `POST` | `/api/sagas/{sagaType}/{correlationId}/retry` | Manually redrives a `Failed`/`TimedOut` instance — see [Manual retry](#manual-retry). `202` once the redrive is published, `404` if no such instance, `409` for any other status, `422` if the timeline has neither a `StepFailed` entry nor a usable `SagaStarted` one to redrive from, `502` if the transport republish itself fails. |
 | `GET` | `/api/saga-types` | Every distinct saga type currently known to the store, for populating filter dropdowns. |
 | `GET` | `/api/correlations/{correlationId}` | Every saga instance — of any type — currently tracking this correlation id. The one route that still takes a bare correlation id, since two saga types (an orchestrated one and a choreography observing the same transaction, or a parent and its child sharing an id — see [`concepts.md`](concepts.md#saga-instances-and-identity)) may both track it. Does **not** include sub-saga children, which have their own correlation ids and are reached via `/children` instead. |
-| `POST` | `/api/topology/registrations` | Body is a **JSON array** of `{serviceName, messageType, queueName}` objects, not a single object. Records those `(serviceName, messageType, queueName)` bindings so a service resolves to a named node on the [Saga Map](#saga-map). For participants that can't write to the store directly — a .NET participant gets this from `AddVSagaTopologyRecording` instead. Upserts on `(serviceName, messageType)`, so re-reporting on every restart is expected. `204` on success (including an empty array — a no-op, not an error), `400` if any registration in the array has a blank field. |
 | `GET` | `/health` | Unauthenticated. Two real connectivity checks, `persistence` and `rabbitmq` — `503` with a per-check breakdown when either is unreachable, not a hardcoded `200`. `persistence` is named for the role, not the store: under `Persistence:Provider=Postgres` it is a `CanConnect` probe; under `Redis` it is the provider's own `RedisPersistenceHealthCheck`, which re-verifies `appendonly`, `maxmemory-policy`, cluster mode, memory pressure and the torn-write sentinel on every call and reports Unhealthy naming the guarantee (or that it could not be verified) — see [`persistence.md`](persistence.md#redis); under `MongoDb` it is `MongoPersistenceHealthCheck`, which re-verifies the replica-set topology, the primary, the server version, the indexes and the schema marker on every call — see [`persistence.md`](persistence.md#mongodb). The Postgres and RabbitMQ checks degrade to a pass when their dependency isn't registered at all ("No message broker configured." / "No relational database configured."), so under `Transport:Provider=Http` — where no RabbitMQ connection manager is registered — the broker check is an unconditional pass rather than a real probe. |
 
 Every per-instance route is keyed by `(sagaType, correlationId)`, not correlation id alone — see
@@ -69,10 +68,10 @@ missing key, a wrong key, and an unconfigured server: the specific reason is log
 never echoed, so the response can't be used to probe whether a guessed key was close.
 
 **Client wiring.** The Angular app sends the key via an `HttpInterceptorFn`
-(`typescript/dashboard-web/src/app/interceptors/api-key.interceptor.ts`) on ordinary HTTP calls, and
+(`dashboard-web/src/app/interceptors/api-key.interceptor.ts`) on ordinary HTTP calls, and
 via the hub connection's own `accessTokenFactory` for SignalR. Both the key it sends
 (`DASHBOARD_API_KEY`) and the API it sends it to (`API_BASE_URL`, which `HUB_URL` is derived from)
-are plain compile-time constants in `typescript/dashboard-web/src/app/api-config.ts` — not
+are plain compile-time constants in `dashboard-web/src/app/api-config.ts` — not
 environment variables and not Angular environment files — so pointing the SPA at a non-default API,
 or at a server whose `Dashboard:ApiKey` isn't the compose dev value, means editing that file and
 rebuilding.
@@ -102,7 +101,7 @@ so a detail page only receives updates for the instance it's actually viewing. T
 
 ## The SPA
 
-`typescript/dashboard-web` (Angular 21) is a saga-type-agnostic client: a list view (paginated,
+`dashboard-web` (Angular 21) is a saga-type-agnostic client: a list view (paginated,
 filterable by status/type/kind/search, sortable by Status/Updated — sorting and paging are both
 pushed to the backend query, not applied client-side to whatever page happens to be loaded) and a
 detail view with three tabs — Map (first and the one it opens on), then Timeline and Data. The detail
@@ -111,10 +110,8 @@ correlation id through `GET /api/correlations/{id}` and, when more than one saga
 renders an "Also tracking this correlation id" strip linking to each sibling (a snapshot, refreshed
 only when the current instance itself updates — not independently live-pushed).
 
-It is deliberately **not** an npm-workspace member of `typescript/`'s own workspace (the TypeScript
-SDK packages) — see [`typescript-participants.md`](typescript-participants.md) for why the two
-toolchains are kept separate. It is not part of `docker-compose.yml`: run it with `npx ng serve` (see
-["Run the demo"](../README.md#run-the-demo) in the root README) against the containerized API.
+It is not part of `docker-compose.yml`: run it with `npx ng serve` (see ["Run the demo"](../README.md#run-the-demo)
+in the root README) against the containerized API.
 
 **The API only accepts one browser origin.** Its CORS policy is built from `Dashboard:WebOrigin`
 (default `http://localhost:4200`) and allows credentials, so it is a single exact origin, not a

@@ -1,9 +1,10 @@
-# Repo-wide baseline for files outside the language trees (docs, compose, CI).
+# Repo-wide baseline for files outside dotnet/ and dashboard-web/ (docs, compose, CI).
 #
 # The .NET tree carries its own root=true .editorconfig at dotnet/.editorconfig -- that is where all
 # the C# analyzer/style configuration lives, and keeping it there is what lets its path-anchored
 # [tests/**.cs] section keep matching after the dotnet/ restructure, and what lets both Dockerfiles
-# COPY it with a build context of ./dotnet. Likewise typescript/dashboard-web keeps its own.
+# COPY it with a build context of ./dotnet. Likewise the Angular dashboard keeps its own root=true
+# .editorconfig at dashboard-web/.editorconfig, which is why there is no web-file section here.
 root = true
 
 [*]
@@ -14,9 +15,6 @@ trim_trailing_whitespace = true
 charset = utf-8
 
 [*.{json,yml,yaml}]
-indent_size = 2
-
-[*.{ts,js,mjs,cjs,html,scss,css}]
 indent_size = 2
 
 [*.md]

@@ -63,7 +63,7 @@ the field existed. In-memory obeys it (`OrdinalIgnoreCase`); EF's `EF.Functions.
 `LIKE`, which is case-**sensitive**.
 
 The doc comment is the contract, and the dashboard ships a live search box bound to it
-(`typescript/dashboard-web/src/app/pages/saga-list/saga-list.html:23-26`) that any user would read as
+(`dashboard-web/src/app/pages/saga-list/saga-list.html:23-26`) that any user would read as
 case-insensitive.
 
 **The mechanism is provider-agnostic lowering, not `EF.Functions.ILike`.** An earlier draft of this ADR

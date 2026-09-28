@@ -1,13 +1,10 @@
 namespace VSaga.Transport.Http.Tests;
 
 /// <summary>
-/// Mirrors typescript/packages/transport-http/test/route-table.test.ts case for case.
-///
 /// The route table is a pure function of config, so it is worth pinning directly rather than only
 /// through the transport: the wildcard fallback and the drop-unknown-endpoint-name rule are both
 /// silent behaviours -- they turn a config mistake into "the message went somewhere else" or "the
-/// message went nowhere" rather than into an error -- and the two runtimes have to agree on them
-/// exactly, or the same appsettings.json routes differently per runtime.
+/// message went nowhere" rather than into an error.
 /// </summary>
 public sealed class ConfigHttpRouteTableTests
 {
@@ -72,11 +69,10 @@ public sealed class ConfigHttpRouteTableTests
     }
 
     /// <summary>
-    /// Subtle, and the two runtimes agree only by coincidence of how each looks the key up: .NET
-    /// short-circuits on TryGetValue succeeding before its Count == 0 check, TypeScript on <c>??</c>
-    /// (an empty array is not nullish, so the wildcard is never consulted). An explicit empty list is
-    /// how you say "this one type goes nowhere" while a wildcard covers everything else, so it has to
-    /// stay an opt-out rather than a fall-through.
+    /// Subtle, because it rests on the order of the lookup: the table short-circuits on TryGetValue
+    /// succeeding before its Count == 0 check, so the wildcard is never consulted. An explicit empty
+    /// list is how you say "this one type goes nowhere" while a wildcard covers everything else, so it
+    /// has to stay an opt-out rather than a fall-through.
     /// </summary>
     [Fact]
     public void ResolveRemoteEndpoints_TreatsAnExplicitEmptyListAsNoEndpoints_NotAsAMissThatFallsThroughToTheWildcard()

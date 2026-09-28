@@ -632,67 +632,6 @@ public sealed class SagaEndpointsTests : IAsyncDisposable
         Assert.Equal(edge.Id, startedEvent.EdgeId);
     }
 
-    // The registration half of the Saga Map's topology, used by participants that can't write to the
-    // store directly -- @vsaga/participant's httpTopologyReporter is the reason it exists.
-    [Fact]
-    public async Task RecordTopology_UpsertsRegistrationsAndResolvesThemOnTheMap()
-    {
-        var response = await _client.PostAsJsonAsync("/api/topology/registrations", new[]
-        {
-            new TopologyRegistration("NotificationService", "OrderShipped", "vsaga.participant.notification"),
-            new TopologyRegistration("NotificationService", "SendInvoiceEmail", "vsaga.participant.notification"),
-        });
-
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-
-        var recorded = await _factory.Services.GetRequiredService<IServiceTopologyStore>().GetAllAsync();
-        Assert.Equal(2, recorded.Count(e => string.Equals(e.ServiceName, "NotificationService", StringComparison.Ordinal)));
-    }
-
-    [Fact]
-    public async Task RecordTopology_IsIdempotent_SoAParticipantMayReReportOnEveryRestart()
-    {
-        var registrations = new[] { new TopologyRegistration("NotificationService", "OrderShipped", "vsaga.participant.notification") };
-
-        await _client.PostAsJsonAsync("/api/topology/registrations", registrations);
-        await _client.PostAsJsonAsync("/api/topology/registrations", registrations);
-
-        var recorded = await _factory.Services.GetRequiredService<IServiceTopologyStore>().GetAllAsync();
-        Assert.Single(recorded, e => string.Equals(e.ServiceName, "NotificationService", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task RecordTopology_EmptyBatch_Returns204()
-    {
-        var response = await _client.PostAsJsonAsync("/api/topology/registrations", Array.Empty<TopologyRegistration>());
-
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task RecordTopology_BlankField_Returns400()
-    {
-        var response = await _client.PostAsJsonAsync("/api/topology/registrations", new[]
-        {
-            new TopologyRegistration("NotificationService", "", "vsaga.participant.notification"),
-        });
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task RecordTopology_WithoutApiKey_Returns401()
-    {
-        using var client = _factory.CreateClient();
-
-        var response = await client.PostAsJsonAsync("/api/topology/registrations", new[]
-        {
-            new TopologyRegistration("NotificationService", "OrderShipped", "vsaga.participant.notification"),
-        });
-
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
     // Every 401 carries a ProblemDetails body naming the accepted credentials: a bare status code left
     // the most common setup mistake (no key at all) with nothing to go on from curl.
     [Fact]

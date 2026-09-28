@@ -1,21 +1,15 @@
 # vSaga
 
-vSaga is an orchestration-first saga library with two first-class runtimes: a .NET 10 engine, built
-directly on `RabbitMQ.Client` (no MassTransit/Wolverine dependency required — though adapters for both
-exist if you're already standardized on one), and a TypeScript SDK for writing Node.js **participants**
-that react to those sagas without running the engine itself. Both sides speak the same wire protocol,
-so a Node participant and a .NET saga exchange messages with neither side aware of the other's
-language.
+vSaga is an orchestration-first saga library for .NET 10, built directly on `RabbitMQ.Client` (no
+MassTransit/Wolverine dependency required — though adapters for both exist if you're already
+standardized on one).
 
-The .NET engine gives you a fluent saga DSL for both orchestrated and choreographed sagas, a persisted
+The engine gives you a fluent saga DSL for both orchestrated and choreographed sagas, a persisted
 event log, EF Core (Postgres), MongoDB, Redis and in-memory persistence, six interchangeable `IMessageTransport`
 adapters, a transport-agnostic `.CallHttp` step for calling plain REST APIs, an in-memory testing
-harness, OpenTelemetry instrumentation, and a chaos-engineering fault-injection package. The TypeScript
-SDK — seven `@vsaga/*` packages — gives Node participants the same dispatch/dedupe/reply-with-causation
-semantics, a broker transport (`transport-rabbitmq`) and a brokerless HTTP transport (`transport-http`)
-with Express/Fastify/NestJS hosting adapters, wire-compatible with their .NET counterparts. A
-saga-type-agnostic ops dashboard (ASP.NET Core API + Angular SPA) gives both runtimes live updates, a
-per-saga visual service map, and manual retry.
+harness, OpenTelemetry instrumentation, and a chaos-engineering fault-injection package. A
+saga-type-agnostic ops dashboard (ASP.NET Core API + Angular SPA) adds live updates, a per-saga visual
+service map, and manual retry.
 
 ## Install
 
@@ -25,17 +19,13 @@ dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + 
 dotnet add package VSaga.Transport.InMemory     # or VSaga.Transport.RabbitMQ / .Wolverine / .MassTransit / .Brighter / .Http
 ```
 
-```bash
-npm install @vsaga/participant @vsaga/protocol @vsaga/transport-rabbitmq   # or @vsaga/transport-http + @vsaga/express / .fastify / .nestjs
-```
-
-> No tagged release exists yet, so these aren't published to nuget.org/npm as of this commit — see
+> No tagged release exists yet, so these aren't published to nuget.org as of this commit — see
 > [`docs/getting-started.md`](docs/getting-started.md) for how to reference them locally in the
 > meantime. The commands above are the shape usage will take once the first release ships.
 
 ## Quick start
 
-### A first saga (.NET)
+### A first saga
 
 ```csharp
 public sealed class OrderApprovalSaga : OrchestratedSagaDefinition<OrderApprovalState>
@@ -65,34 +55,6 @@ state class, host wiring, and a test) and [`docs/saga-dsl.md`](docs/saga-dsl.md)
 reference, including compensation, timeouts, fan-out/join, sub-saga composition, and choreographed
 sagas.
 
-### A first participant (TypeScript)
-
-```ts
-import { createParticipant } from '@vsaga/participant';
-import { message } from '@vsaga/protocol';
-import { createRabbitMqTransport } from '@vsaga/transport-rabbitmq';
-
-const ChargeCard = message<{ CorrelationId: string; OrderId: string; Amount: number }>('ChargeCard');
-const CardCharged = message<{ CorrelationId: string; OrderId: string }>('CardCharged');
-
-const transport = await createRabbitMqTransport({ connectionString: 'amqp://localhost' });
-const payments = createParticipant({ serviceName: 'payments', queue: 'vsaga.participant.payments', transport });
-
-payments.on(ChargeCard, async (body, ctx) => {
-  // ... charge the card ...
-  await ctx.reply(CardCharged, { CorrelationId: body.CorrelationId, OrderId: body.OrderId });
-});
-
-await payments.start();
-```
-
-A participant isn't a saga — it holds no persisted state and never talks to the orchestrator directly —
-but it exchanges messages with one over the exact same wire format, message-type-name for
-message-type-name, with no translation layer. Swap `@vsaga/transport-rabbitmq` for
-`@vsaga/transport-http` (plus `@vsaga/express`, `@vsaga/fastify`, or `@vsaga/nestjs` to receive inbound
-requests) to run the same participant over a broker-free HTTP topology instead. See
-[`docs/typescript-participants.md`](docs/typescript-participants.md) for the full SDK reference.
-
 ## Run the demo
 
 The full reference stack — Postgres, RabbitMQ, the dashboard API, and a continuously-submitting
@@ -120,14 +82,11 @@ docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml 
 Then serve the dashboard UI — a dev server, deliberately not part of `docker-compose.yml`:
 
 ```bash
-cd typescript/dashboard-web && npm install && npx ng serve     # http://localhost:4200
+cd dashboard-web && npm install && npx ng serve     # http://localhost:4200
 ```
 
 > This command chains with `&&`, which Windows PowerShell 5.1 (`powershell.exe`) can't parse. Use
 > PowerShell 7+ (`pwsh`) or Git Bash/WSL, or just run each command on its own line.
-
-(`dashboard-web` has its own lockfile and toolchain — it is deliberately not part of the
-`typescript/` npm workspace, so it needs its own `npm install`.)
 
 | What | Where | Notes |
 | --- | --- | --- |
@@ -144,19 +103,6 @@ need a `-p <project-name>` flag and use different, remapped ports so they can ru
 stack; see ["Running an adapter's own overlay"](docs/transports/index.md#running-an-adapters-own-overlay)
 for the exact commands and ports.
 
-### See both runtimes at once
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.node.yml up -d --build
-docker compose logs -f notification-participant
-```
-
-This overlay hands the sample's `NotificationService` to a Node process
-([`typescript/samples/notification-participant`](typescript/samples/notification-participant)) — same
-queue, same message types, same replies, different language. The .NET sagas are not reconfigured for
-it and the dashboard still draws `NotificationService` as a named node on the Saga Map, which is the
-whole point: nothing on either side has to know the other's runtime.
-
 > **Postgres volume note:** `docker compose up` reuses the named volume across restarts — it is not
 > reset for you. See [`docs/persistence.md`](docs/persistence.md#the-volume-caveat) if you're
 > comparing before/after counts or your volume predates the EF Core migrations pass.
@@ -165,16 +111,11 @@ whole point: nothing on either side has to know the other's runtime.
 
 ```
 dotnet/                  .NET 10 solution — engine, persistence, six transport adapters, dashboard API, samples
-typescript/
-  packages/               The TypeScript SDK: @vsaga/protocol, participant, transport-http,
-                           transport-rabbitmq, express, fastify, nestjs
-  samples/                A runnable Node participant — notification-participant swaps into the
-                           OrderProcessing stack via docker-compose.node.yml
-  dashboard-web/          Angular 21 SPA for the dashboard (its own toolchain — see
-                           docs/typescript-participants.md)
+dashboard-web/            Angular 21 SPA for the dashboard (built with npm and the Angular CLI, not the
+                           .NET solution — see dashboard-web/README.md)
 docs/                     Reference documentation, design records, and project history — see below
 docker-compose*.yml       The reference stack plus one overlay per transport adapter, one for chaos,
-                           one each for MongoDB and Redis persistence, and one that swaps in the Node participant
+                           and one each for MongoDB and Redis persistence
 ```
 
 ## Documentation
@@ -185,13 +126,9 @@ Full index: [`docs/README.md`](docs/README.md). Straight to the reference docs:
   full.
 - [`docs/concepts.md`](docs/concepts.md) — orchestrated vs. choreographed, correlation (including
   business-key correlation), compensation, timeouts.
-- [`docs/typescript-participants.md`](docs/typescript-participants.md) — the Node.js SDK: the seven
-  `@vsaga/*` packages, wire compatibility with the .NET side, dispatch semantics, and the HTTP hosting
-  adapters.
 - [`docs/saga-dsl.md`](docs/saga-dsl.md) — the complete DSL method reference.
-- [`docs/configuration.md`](docs/configuration.md) — every **.NET** options class, including the
-  transactional outbox and transport options (the TypeScript SDK's options live in each package's own
-  README instead).
+- [`docs/configuration.md`](docs/configuration.md) — every options class, including the
+  transactional outbox and transport options.
 - [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, MongoDB, Redis, in-memory, migrations.
 - [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log, OTLP
   wiring.

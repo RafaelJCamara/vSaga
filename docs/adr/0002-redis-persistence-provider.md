@@ -28,7 +28,7 @@ providers in two ways that dominate every other consideration.
 correlation id's string form, *independently* (`SagaSummary.cs:34`), combined with equality filters, a
 sort with a stable tiebreak, offset paging, and an exact `TotalCount` over the filtered set
 (`EfCoreSagaSummaryReader.cs:10-53`). The Angular dashboard ships a live search box bound to it
-(`typescript/dashboard-web/src/app/pages/saga-list/saga-list.html:23-26`), so degrading it is a visible
+(`dashboard-web/src/app/pages/saga-list/saga-list.html:23-26`), so degrading it is a visible
 feature loss in a shipped UI, not a hypothetical.
 
 Core Redis can serve none of this without hand-maintained index structures. The Redis Query Engine

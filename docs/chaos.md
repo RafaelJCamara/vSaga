@@ -23,10 +23,6 @@ which the test cannot reach while it is still awaiting the publish that triggere
 enabled `Delay` hangs the test rather than slowing it. `Drop` and `Duplicate` touch no clock and behave
 there exactly as they do against a broker. See [`testing.md`](testing.md).
 
-**.NET-only, today.** There is no TypeScript equivalent of `VSaga.Chaos` — fault injection is a .NET
-runtime-only capability; a Node participant in a mixed-runtime saga cannot delay, drop, or duplicate its
-own messages this way.
-
 ```csharp
 services.AddVSagaChaos(o =>
 {

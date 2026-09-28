@@ -8,12 +8,6 @@ namespace VSaga.Dashboard.Api.Endpoints;
 
 public sealed record SagaDetail(SagaSummary Summary, string? DataJson);
 
-/// <summary>
-/// One (service, message type, queue) binding a participant reports about itself. Mirrors
-/// @vsaga/protocol's TopologyRegistration; the API's camelCase JSON matches what that client sends.
-/// </summary>
-public sealed record TopologyRegistration(string ServiceName, string MessageType, string QueueName);
-
 public static class SagaEndpoints
 {
     /// <summary>
@@ -89,50 +83,6 @@ public static class SagaEndpoints
             Results.Ok(await reader.FindByCorrelationIdAsync(correlationId, ct)))
             .WithTags("Sagas")
             .WithName("FindSagasByCorrelationId")
-            .RequireAuthorization();
-
-        MapTopologyEndpoints(app);
-    }
-
-    /// <summary>
-    /// The registration side of the Saga Map's service topology, for participants that can't write to
-    /// the store directly. A .NET participant gets this for free — AddVSagaTopologyRecording wraps its
-    /// transport and writes to EfCoreServiceTopologyStore on every SubscribeAsync — but a Node
-    /// participant (@vsaga/participant's httpTopologyReporter) has no EF Core and no schema, and
-    /// handing it Postgres credentials to register two rows would be a far larger grant than the job
-    /// needs. Without this endpoint such a participant still runs, but every node it owns renders as
-    /// "Unresolved" on the map.
-    /// </summary>
-    private static void MapTopologyEndpoints(IEndpointRouteBuilder app)
-    {
-        app.MapPost("/api/topology/registrations", async (
-            TopologyRegistration[] registrations,
-            IServiceTopologyStore topologyStore,
-            TimeProvider timeProvider,
-            CancellationToken ct) =>
-        {
-            if (registrations.Length == 0)
-                return Results.NoContent();
-
-            if (Array.Exists(registrations, r =>
-                    string.IsNullOrWhiteSpace(r.ServiceName)
-                    || string.IsNullOrWhiteSpace(r.MessageType)
-                    || string.IsNullOrWhiteSpace(r.QueueName)))
-            {
-                return Results.BadRequest(new { error = "serviceName, messageType and queueName are all required on every registration." });
-            }
-
-            // RecordAsync is an upsert keyed on (ServiceName, MessageType), so a participant that
-            // restarts and re-reports simply refreshes LastSeenAtUtc — the same shape and idempotency
-            // the .NET recording path already relies on.
-            var seenAtUtc = timeProvider.GetUtcNow();
-            foreach (var registration in registrations)
-                await topologyStore.RecordAsync(registration.ServiceName, registration.MessageType, registration.QueueName, seenAtUtc, ct);
-
-            return Results.NoContent();
-        })
-            .WithTags("Topology")
-            .WithName("RecordTopologyRegistrations")
             .RequireAuthorization();
     }
 

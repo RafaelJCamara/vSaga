@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: typescript/dashboard-web
+        working-directory: dashboard-web
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,7 +57,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: typescript/dashboard-web/package-lock.json
+          cache-dependency-path: dashboard-web/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -67,43 +67,3 @@ jobs:
 
       - name: Test
         run: npx ng test --watch=false
-
-  typescript:
-    name: TypeScript SDK build & test
-    runs-on: ubuntu-latest
-    # Separate from the `angular` job on purpose: typescript/dashboard-web is deliberately not an
-    # npm-workspace member, so it has its own lockfile and toolchain. See
-    # docs/typescript-participants.md for why.
-    defaults:
-      run:
-        working-directory: typescript
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Kept consistent with the dotnet job's checkout above, which needs full history for MinVer.
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: typescript/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Check formatting
-        run: npm run format:check
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-
-      - name: Test
-        run: npm run test

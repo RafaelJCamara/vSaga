@@ -1,9 +1,0 @@
-// See packages/protocol/tsconfig.build.json -- tsup's .d.ts pass cannot use a composite project.
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "composite": false,
-    "declarationMap": false
-  },
-  "include": ["src/**/*.ts"]
-}

@@ -6,10 +6,13 @@
 > which builds on the two commits before it, `a17f31d` ("Add BugsMQ v1: saga engine, dashboard, and
 > OrderProcessing sample") and `b1ff30b` ("Add CI workflow and expand test coverage"). The repo was
 > renamed BugsMQ → vSaga in `93af87f`, after this pass; names below are as they were written at the
-> time. The "Repository layout" tree below predates the TypeScript SDK packages
-> (`typescript/packages/*`, added across several later commits) and the `dotnet/`/`typescript/`
-> top-level split (`b081445`) — see [`../README.md`](../../README.md) for the current tree and
-> [`../typescript-participants.md`](../typescript-participants.md) for the SDK.
+> time. The "Repository layout" tree below already reflects the `dotnet/`/`typescript/` top-level split
+> (`b081445`, which rewrote its paths in place) but predates the TypeScript SDK packages
+> (`typescript/packages/*`, added across several later commits) — see
+> [the root README](../../README.md) for the current tree. Since
+> then (2026-09-27) the TypeScript participant SDK (`typescript/packages/*`) and its docs have been
+> removed and the dashboard moved from `typescript/dashboard-web/` to a top-level `dashboard-web/`, so
+> `typescript/` no longer exists.
 
 ---
 
