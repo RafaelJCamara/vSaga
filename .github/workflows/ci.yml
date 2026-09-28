@@ -62,6 +62,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # npm ci only reports known vulnerabilities; it never fails on them. npm audit exits non-zero on
+      # any advisory rated low or above (low through critical, i.e. every rated advisory), dev
+      # dependencies included — the same set npm ci reports — so a vulnerable lockfile fails the build
+      # here. The level is spelled out rather than left to npm's default, which is also low.
+      - name: Audit dependencies
+        run: npm audit --audit-level=low
+
       - name: Build
         run: npx ng build
 
