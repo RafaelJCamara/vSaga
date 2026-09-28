@@ -21,8 +21,10 @@ npm install
 npx ng serve                      # http://localhost:4200
 ```
 
-Both run from `dashboard-web/`, which has its own lockfile and Angular CLI toolchain; CI builds and
-tests it as its own job (`angular` in `.github/workflows/ci.yml`).
+Both run from `dashboard-web/`, which has its own lockfile and Angular CLI toolchain. CI installs it
+with `npm ci`, audits it, then builds and tests it as its own job (`angular` in
+`.github/workflows/ci.yml`); the `npm audit --audit-level=low` step fails that job on any known
+advisory rated `low` through `critical`, dev dependencies included.
 
 ## Commands
 
@@ -32,6 +34,7 @@ tests it as its own job (`angular` in `.github/workflows/ci.yml`).
 | `npx ng build` | Production bundle into `dist/` |
 | `npx ng test` | Unit tests (vitest), interactive watch mode |
 | `npx ng test --watch=false` | Same, single run — what CI actually runs |
+| `npm audit --audit-level=low` | Checks the lockfile against known advisories; fails on any rated `low` or above, dev dependencies included — what CI runs |
 
 ## How it reaches the API
 
@@ -65,11 +68,14 @@ CORS will reject its calls until that setting matches.
 
 ```
 src/app/
-  pages/saga-list/      The filterable, sortable, paged saga list
-  pages/saga-detail/    One instance: summary, map/timeline/data tabs, retry
-  components/saga-map/  The service-graph renderer and its replay scrubber
-  services/             HTTP client and the SignalR hub client
-  models/               DTOs mirroring the API's response shapes
+  pages/saga-list/          The filterable, sortable, paged saga list
+  pages/saga-detail/        One instance: summary, map/timeline/data tabs, retry
+  components/saga-map/      The service-graph renderer and its replay scrubber
+  components/kind-badge/    The Orchestrated/Choreographed pill
+  components/status-badge/  The saga-status pill
+  services/                 HTTP client and the SignalR hub client
+  interceptors/             The HTTP interceptor that adds the X-Api-Key header
+  models/                   DTOs mirroring the API's response shapes
 ```
 
 Generated with Angular CLI 21.2.10; `npx ng generate component <name>` still works as usual for

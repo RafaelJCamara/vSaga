@@ -19,6 +19,12 @@ dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + 
 dotnet add package VSaga.Transport.InMemory     # or VSaga.Transport.RabbitMQ / .Wolverine / .MassTransit / .Brighter / .Http
 ```
 
+Optional add-ons: `VSaga.Http` (the `.CallHttp` step — see
+[`docs/saga-dsl.md`](docs/saga-dsl.md#callhttp-from-vsagahttp)), `VSaga.Observability`
+(`AddVSagaOpenTelemetry`), `VSaga.Chaos` (fault injection) and `VSaga.Testing` (`SagaTestHarness`).
+Authors of a third-party persistence provider can run the `VSaga.Persistence.Conformance` suite
+against it — see [`docs/persistence.md`](docs/persistence.md).
+
 > No tagged release exists yet, so these aren't published to nuget.org as of this commit — see
 > [`docs/getting-started.md`](docs/getting-started.md) for how to reference them locally in the
 > meantime. The commands above are the shape usage will take once the first release ships.
@@ -71,13 +77,18 @@ curl -H "X-Api-Key: dev-local-only-change-me" http://localhost:5080/api/sagas
 > `-H`. Call `curl.exe` explicitly (Windows 10+ ships a real curl) or use PowerShell 7+/Git Bash instead.
 
 To run the same stack on MongoDB or Redis persistence instead of Postgres, layer that provider's overlay
-(dashboard on `localhost:5580` and `localhost:5680` respectively; see
+(its dashboard API listens on `localhost:5580` and `localhost:5680` respectively; see
 [`docs/persistence.md`](docs/persistence.md) for what each one requires or trades away):
 
 ```bash
 docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
 ```
+
+The dashboard UI below always calls the plain stack's API on `5080`. To browse an overlay's sagas
+instead, point `API_BASE_URL` in
+[`dashboard-web/src/app/api-config.ts`](dashboard-web/src/app/api-config.ts) at that overlay's port
+before serving it — see ["Running an adapter's own overlay"](docs/transports/index.md#running-an-adapters-own-overlay).
 
 Then serve the dashboard UI — a dev server, deliberately not part of `docker-compose.yml`:
 
@@ -114,8 +125,9 @@ dotnet/                  .NET 10 solution — engine, persistence, six transport
 dashboard-web/            Angular 21 SPA for the dashboard (built with npm and the Angular CLI, not the
                            .NET solution — see dashboard-web/README.md)
 docs/                     Reference documentation, design records, and project history — see below
-docker-compose*.yml       The reference stack plus one overlay per transport adapter, one for chaos,
-                           and one each for MongoDB and Redis persistence
+docker-compose*.yml       The reference stack (RabbitMQ transport, Postgres persistence) plus one
+                           overlay each for the Wolverine, MassTransit, Brighter and HTTP adapters,
+                           one for chaos, and one each for MongoDB and Redis persistence
 ```
 
 ## Documentation
@@ -132,12 +144,14 @@ Full index: [`docs/README.md`](docs/README.md). Straight to the reference docs:
 - [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, MongoDB, Redis, in-memory, migrations.
 - [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log, OTLP
   wiring.
-- [`docs/dashboard.md`](docs/dashboard.md) — API endpoints, authentication, the SPA, the Saga Map.
+- [`docs/dashboard.md`](docs/dashboard.md) — API endpoints, authentication, live updates over SignalR, the
+  SPA, the Saga Map.
 - [`docs/testing.md`](docs/testing.md) — `SagaTestHarness`.
 - [`docs/chaos.md`](docs/chaos.md) — `VSaga.Chaos` fault injection.
 - [`docs/transports/index.md`](docs/transports/index.md) — the transport contract and all six
   adapters (RabbitMQ, Wolverine, MassTransit, Brighter, HTTP, in-memory).
 - [`docs/design/`](docs/design/) — design records for features as they were planned.
+- [`docs/adr/`](docs/adr/) — architecture decision records, one numbered decision per file.
 - [`docs/history/`](docs/history/) — the project's changelog, preserved by topic — live-verification
   traces, mutation-testing results, and bugs found and fixed along the way.
 

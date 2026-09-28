@@ -1,8 +1,7 @@
 # Chaos overlay: layer this on top of docker-compose.yml to exercise VSaga's reliability features
-# (RabbitMQ publisher confirms, the OrderSaga AwaitingPayment timeout + compensation, at-least-once
-# dedup) against injected transport faults, instead of only the sample's own built-in 5-20%
-# simulated-failure rates in the Payment/Inventory/Shipping participants. See docs/chaos.md for what
-# each fault does.
+# (RabbitMQ publisher confirms, OrderSaga's Gathering/AwaitingShipment timeouts + compensation,
+# at-least-once dedup) against injected transport faults, instead of only the sample's own built-in
+# 5-20% simulated-failure rates in its participants. See docs/chaos.md for what each fault does.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
 #

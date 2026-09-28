@@ -1,6 +1,16 @@
 @VSaga.Dashboard.Api_HostAddress = http://localhost:5275
+# appsettings.json leaves Dashboard:ApiKey empty, which fails closed (every /api route answers 401):
+# set Dashboard__ApiKey to this value before running locally, or point HostAddress at the compose
+# stack's http://localhost:5080, which already uses it.
+@ApiKey = dev-local-only-change-me
 
-GET {{VSaga.Dashboard.Api_HostAddress}}/weatherforecast/
+GET {{VSaga.Dashboard.Api_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{VSaga.Dashboard.Api_HostAddress}}/api/sagas
+X-Api-Key: {{ApiKey}}
 Accept: application/json
 
 ###

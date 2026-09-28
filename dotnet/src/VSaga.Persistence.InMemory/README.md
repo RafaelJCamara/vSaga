@@ -19,7 +19,7 @@ services.AddVSagaInMemoryPersistence();
 ## Docs
 
 [docs/persistence.md](https://github.com/RafaelJCamara/vSaga/blob/main/docs/persistence.md) covers this
-alongside the production EF Core/Postgres option and when to reach for each.
+alongside the EF Core/Postgres, MongoDB and Redis providers and when to reach for each.
 
 ## License
 

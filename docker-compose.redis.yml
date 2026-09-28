@@ -11,8 +11,8 @@
 # settings on every call, so `docker compose ps` showing dashboard-api healthy means the configuration
 # was probed, not assumed.
 #
-# postgres stays up even though nothing on this track connects to it: order-processing's depends_on in
-# the base file names it, and Compose can override a depends_on entry but not delete a key. Its port is
+# postgres stays up even though nothing on this track connects to it: both hosts' depends_on in the base
+# file name it, and this overlay leaves those entries alone rather than resetting them. Its port is
 # remapped like every other service's so this track runs alongside the plain stack.
 #
 # Ports use the "!override" merge tag rather than plain sequences, same reason as every other overlay:

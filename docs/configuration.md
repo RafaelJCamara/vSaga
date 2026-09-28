@@ -18,11 +18,15 @@ services.AddVSagaHttp(o => builder.Configuration.GetSection("Http").Bind(o));
 ```
 
 Because the binding is an ordinary `Bind` call and not a registered `IOptions<T>` source, it happens
-once at startup — there is no reload-on-change, and the section name is whatever that call site passes
-(the sample binds `BrighterOptions` and `WolverineTransportOptions` from the same `"RabbitMq"` section
-`RabbitMqOptions` uses, and binds `HttpTransportOptions` from `"HttpSagas"`/`"HttpParticipants"`
-depending on its `Role`). Config keys nest with `:` (or `__` in environment variables), so
-`RabbitMq__ConnectionString` in a compose file reaches `RabbitMqOptions.ConnectionString`.
+once at startup — there is no reload-on-change, and the section name is whatever that call site passes.
+The sample binds `BrighterOptions` and `WolverineTransportOptions` from the same `"RabbitMq"` section
+`RabbitMqOptions` uses, but `MassTransitOptions` from its own `"MassTransit"` section, so the
+MassTransit track needs `MassTransit__ConnectionString` (which `docker-compose.masstransit.yml` sets) —
+`RabbitMq__ConnectionString` alone leaves it on its `localhost` default. The sample binds
+`HttpTransportOptions` from `"HttpSagas"`/`"HttpParticipants"` depending on its
+[`Role`](#role--splitting-the-sample-in-two); the dashboard binds it from `"Http"`. Config keys nest
+with `:` (or `__` in environment variables), so `RabbitMq__ConnectionString` in a compose file reaches
+`RabbitMqOptions.ConnectionString`.
 
 `SagaOrchestratorOptions`/`SagaOutboxOptions` are the two exceptions to the delegate convention —
 `AddVSagaEngine` takes no options delegate of its own — configured instead via
@@ -65,39 +69,43 @@ services.AddVSagaEngine(o => o
 ```
 
 Governs the transactional outbox's crash-recovery poller (`SagaOutboxDispatcherHostedService`) and
-which publishes get an outbox row in the first place.
+which publishes get an outbox row in the first place. The timeout dispatcher's equivalent poll (5s, 50
+rows) is fixed, with no options class — see [`concepts.md`](concepts.md#timeouts).
 
 | Property | Default | Meaning |
 | --- | --- | --- |
-| `Mode` | `SagaOutboxMode.Deferred` | `Deferred`: only `ctx.PublishAfterCommitAsync` calls get an outbox row (the crash-recovery backstop for the deferred-publish queue). `All`: additionally covers `ctx.PublishAsync`/`SendAsync`'s immediate publishes, by routing them through the same deferred queue `PublishAfterCommitAsync` uses — see the trade-off note below. |
+| `Mode` | `SagaOutboxMode.Deferred` | `Deferred`: of the `ctx` calls, only `ctx.PublishAfterCommitAsync` gets an outbox row (the crash-recovery backstop for the deferred-publish queue). `All`: additionally covers the immediate publishes of `ctx.PublishAsync`, `SendAsync`, `StartChildAsync` and `NotifyParentAsync`, by routing them through the same deferred queue `PublishAfterCommitAsync` uses — see the trade-off note below. In either mode, the engine's own `ChildSagaFinished` safety-net publish (sent on a child's behalf when a step throws or a timeout ends it) gets a row too. |
 | `PollInterval` | `5s` | How often the poller checks for `Pending` outbox rows. |
 | `BatchSize` | `50` | Max rows claimed per poll. |
 | `DispatchGracePeriod` | `30s` | A row younger than this is still within the window where the inline drain that wrote it is expected to mark it `Dispatched` itself; only a row older than this is treated as evidence of a crash between commit and drain, worth the poller republishing. |
 
 **`Deferred` (the default) preserves today's inline publish semantics for every existing call site and
-test** — `ctx.PublishAsync`/`SendAsync` still fire mid-step, immediately, exactly as before. `All` is a
-deliberate trade-off, not a strict improvement: because `ctx.PublishAsync`/`SendAsync` fire mid-step
-with no queuing under `Deferred`, the only way to route them through the outbox at all is to defer
-them too — a row written beside a message that's already gone over the wire guarantees nothing. Under
-`All`, a step that publishes and then throws no longer leaks that publish (the failure path discards
-the deferred queue), but an operator choosing `All` is knowingly accepting
-`ISagaContext.PublishAfterCommitAsync`'s own documented trade-off: a deferred publish that fails
-post-commit has nowhere safe to go, and is caught, logged, and recorded as a `DeliveryExhausted`
-timeline entry rather than retried or thrown.
+test** — `ctx.PublishAsync`, `SendAsync`, `StartChildAsync` and `NotifyParentAsync` still fire
+mid-step, immediately, exactly as before. `All` is a deliberate trade-off, not a strict improvement:
+because those calls fire mid-step with no queuing under `Deferred`, the only way to route them through
+the outbox at all is to defer them too — a row written beside a message that's already gone over the
+wire guarantees nothing. Under `All`, a step that publishes and then throws no longer leaks that
+publish (the failure path discards the deferred queue), but an operator choosing `All` is knowingly
+accepting `ISagaContext.PublishAfterCommitAsync`'s own trade-off: a deferred publish that fails
+post-commit cannot fail the step, which has already committed. It is caught, logged, and recorded as a
+`DeliveryExhausted` timeline entry rather than thrown. Its outbox row stays `Pending`, so the recovery
+poller republishes it once `DispatchGracePeriod` has passed — a single, at-most-once attempt, since the
+claim marks the row `Dispatched` before it sends.
 
 ## Transport options
 
-Every `IMessageTransport` adapter has its own options class, registered by its own
-`AddVSaga<Adapter>(...)` extension. `ConnectionString`/`ExchangeName` default identically across the
-RabbitMQ-family adapters so switching providers is close to a drop-in config change.
+Every broker-backed or HTTP `IMessageTransport` adapter has its own options class, registered by its
+own `AddVSaga<Adapter>(...)` extension; the in-memory transport, at the end of this section, has none.
+`ConnectionString`/`ExchangeName` default identically across the RabbitMQ-family adapters so switching
+providers is close to a drop-in config change.
 
 ### `Transport:Provider` — picking the adapter
 
 Nothing in the library reads this key: it is a **host-level** convention, a `switch` in each host's own
 `Program.cs` over `Configuration["Transport:Provider"] ?? "RabbitMq"` deciding which single
-`AddVSaga<Adapter>` call runs. That's what each `docker-compose` overlay sets (`Transport__Provider:
-"Wolverine"`, `"Brighter"`, `"MassTransit"`, `"Http"`). Your own host is free to use a different key,
-or none.
+`AddVSaga<Adapter>` call runs. That's what each transport `docker-compose` overlay sets
+(`Transport__Provider: "Wolverine"`, `"Brighter"`, `"MassTransit"`, `"Http"`). Your own host is free to
+use a different key, or none.
 
 The two shipped hosts deliberately accept **different** sets of values, and both `throw
 InvalidOperationException` at startup on anything else — an unknown provider fails loudly rather than
@@ -111,13 +119,29 @@ silently falling back to RabbitMQ:
 | `MassTransit` | yes | **throws** |
 | `Brighter` | yes | **throws** |
 
-The asymmetry is intentional, not an oversight. The dashboard only needs a working transport for
-`/retry`'s type-erased `PublishRawAsync` redrive, and every RabbitMQ-family adapter (Wolverine,
-MassTransit, Brighter) speaks the same broker over the same exchange as `RabbitMq` does — so running
-the dashboard as `RabbitMq` against a saga host on any of those three is already the right pairing.
-`Http` is the only track where the dashboard genuinely has to match, because there is no broker in the
-middle. So `docker-compose.wolverine.yml`/`.brighter.yml`/`.masstransit.yml` set `Transport__Provider`
-on `order-processing` only, while `docker-compose.http.yml` sets it on `dashboard-api` too.
+The asymmetry leaves a known gap. The dashboard only needs a working transport for `/retry`'s
+type-erased `PublishRawAsync` redrive, but that redrive only lands if it matches the saga host's wire
+format, and the RabbitMQ-family adapters do not all share one (see
+[`transports/index.md`](transports/index.md#choosing-an-adapter)). Brighter binds the same
+lower-kebab-case routing keys `RabbitMq` publishes, so a `RabbitMq` dashboard's redrive routes to a
+Brighter saga host's queues. Wolverine and MassTransit bind the raw PascalCase type name and wrap each
+message in their own envelope, so on those two tracks the redrive is unroutable and `/retry` answers
+`502` — after it has already recorded a `ManualRetryRequested` timeline entry and, when the retry resets
+state, moved the saga back to `Running`. `Http` has no broker in the middle at all, so there the
+dashboard has to run it too: `docker-compose.http.yml` sets `Transport__Provider` on `dashboard-api` as
+well, while `docker-compose.wolverine.yml`/`.brighter.yml`/`.masstransit.yml` set it on
+`order-processing` only.
+
+### `Role` — splitting the sample in two
+
+A sample-only key: `VSaga.Samples.OrderProcessing` reads it, and neither the library nor the dashboard
+does. Unset, empty or `All` runs the whole sample in one process. `Sagas` runs only the saga engine,
+the `OrderSubmitter` front door and the sample's own `/loyalty/lookup` and `/payments/*` endpoints;
+`Participants` runs only the participant services. Any other value throws `InvalidOperationException`
+at startup. Only `docker-compose.http.yml` sets it: over the HTTP transport a single process resolves
+every message to its own local subscribers and sends no message over HTTP at all, so that track runs the one
+image as two containers, one per role. Under `Transport:Provider=Http` the role also picks the section
+`HttpTransportOptions` binds from — `HttpParticipants` for `Participants`, `HttpSagas` otherwise.
 
 ### `RabbitMqOptions` (`VSaga.Transport.RabbitMQ`)
 
@@ -165,10 +189,11 @@ No broker at all — see [`transports/http.md`](transports/http.md) for the full
 | `RequestTimeout` | `30s` | Per-request timeout for the outbound HTTP call, including the participant's own processing time. |
 | `InboundPath` | `/vsaga/messages` | Both halves of the wire convention: the path this service's own receive endpoint is mapped to by `MapVSagaHttp()`, **and** the path appended to every base URL in `Endpoints` when publishing outbound (`HttpMessageTransport.BuildRequestUri`). |
 
-`InboundPath` is symmetric, so change it on every process or none. A host that sets it only on its own
-side still POSTs to the *default* path on its peers (or, if only the peer changed it, POSTs to a path
-the peer no longer serves) — the result is 404s on delivery, not a startup error. `Endpoints` values
-are therefore bare base URLs (`http://payments:8080`), never a full message-endpoint URL.
+`InboundPath` is symmetric, so change it on every process or none. A host that changes it only on its
+own side POSTs that new path to peers that still serve the default, and those peers keep POSTing the
+default path the host no longer serves — the result is 404s on delivery in both directions, not a
+startup error. `Endpoints` values are therefore bare base URLs (`http://payments:8080`), never a full
+message-endpoint URL.
 
 The in-memory transport (`VSaga.Transport.InMemory`, `AddVSagaInMemoryTransport()`) takes no options —
 it's a single-process, dev/test-only provider with nothing to configure.
@@ -179,12 +204,13 @@ The EF Core provider breaks the `Action<TOptions>` convention above: there is no
 class, because EF Core already has one.
 `AddVSagaEfCore(this IServiceCollection services, Action<DbContextOptionsBuilder> configureDbContext)`
 (`VSaga.Persistence.EFCore`) hands you EF Core's own `DbContextOptionsBuilder` instead, so the provider
-hookup (`UseNpgsql`/`UseSqlServer`/`UseSqlite`/...) is yours to make — the package itself references
-only `Microsoft.EntityFrameworkCore`, no specific provider. `AddVSagaInMemoryPersistence()`
-(`VSaga.Persistence.InMemory`) takes no arguments at all. See [`persistence.md`](persistence.md) for
-what each registers, and for the `MigrationsAssembly("VSaga.Persistence.EFCore.Postgres")` requirement
-— `UseNpgsql` alone silently applies no migrations — which is documented there rather than duplicated
-here.
+hookup (`UseNpgsql`/`UseSqlServer`/`UseSqlite`/...) is yours to make — the package's only EF Core
+references are `Microsoft.EntityFrameworkCore` and `Microsoft.EntityFrameworkCore.Relational`, no
+specific provider (the `.Relational` reference rules out non-relational EF Core providers).
+`AddVSagaInMemoryPersistence()` (`VSaga.Persistence.InMemory`) takes no arguments at all. See
+[`persistence.md`](persistence.md) for what each registers, and for the
+`MigrationsAssembly("VSaga.Persistence.EFCore.Postgres")` requirement — `UseNpgsql` alone silently
+applies no migrations — which is documented there rather than duplicated here.
 
 ### `Persistence:Provider` — picking the store
 
@@ -221,9 +247,12 @@ callback runs, so either can be overridden there.
 Bound from the `MongoDb` section by both hosts. The second parameter follows the same precedent: it
 hands you the driver's own `MongoClientSettings`, built from `ConnectionString`, for everything the
 client already models — TLS material, pool sizing, timeouts, and the `ClusterConfigurator` hook that
-provider-level tracing needs (the driver exposes no `ActivitySource` of its own). The provider pins
-`ReadPreference.Primary`, `ReadConcern.Local` and `WriteConcern.WMajority` before your callback runs, so
-each can be overridden there — knowingly, since [`persistence.md`](persistence.md#mongodb) says what
+provider-level tracing needs (driver 3.6, which this repo resolves, exposes no `ActivitySource` of its
+own; 3.7.0 and later, still inside the package's `[3.6.0,4.0.0)` range, add built-in tracing). The
+provider sets `ReadPreference.Primary`, `ReadConcern.Local` and `WriteConcern.WMajority` on these
+settings before your callback runs, and pins all three again on the database handle every collection is
+opened from and on the persist transaction's own options — so changing them in the callback has no
+effect on any read or write the provider makes. [`persistence.md`](persistence.md#mongodb) says what
 each one protects.
 
 | Property | Default | Meaning |
@@ -244,16 +273,22 @@ unset:
 Host=localhost;Port=5432;Database=vsaga;Username=postgres;Password=postgres
 ```
 
-The fallback is there so `dotnet run` against a local Postgres needs no configuration at all; it is a
-development default, not a safe production one, and nothing warns when it is used. In containers it is
-supplied as the environment form `ConnectionStrings__VSaga` — `docker-compose.yml` sets it on both
-`dashboard-api` and `order-processing`, and `docker-compose.http.yml` sets it again on the extra
-`order-processing-participants` service the HTTP track adds.
+Both hosts' `appsettings.json` also set `ConnectionStrings:VSaga` to this same string, so `dotnet run`
+against a local Postgres needs no configuration at all; the hardcoded fallback applies only if that entry
+is removed. Either way it is a development default, not a safe production one, and nothing warns when it
+is used. In containers it is supplied as the environment form `ConnectionStrings__VSaga` —
+`docker-compose.yml` sets it on both `dashboard-api` and `order-processing`, and
+`docker-compose.http.yml` sets it again on the extra `order-processing-participants` service the HTTP
+track adds.
 
 One tool reads the environment variable directly rather than through `IConfiguration`:
 `dotnet/tools/BackfillStrandedTimeouts` (`Environment.GetEnvironmentVariable("ConnectionStrings__VSaga")`),
-and its own fallback is deliberately **`Port=5433`**, not `5432` — it runs on the host against the
-compose stack's published port mapping, not inside the compose network.
+a one-off, Postgres-only maintenance app for the sample, not a library feature. It schedules an
+immediately due timeout for every `OrderSaga` left `Running` in `AwaitingInventory`/`AwaitingShipment`
+without one, and leaves the running engine's timeout dispatcher to unwind them (why:
+[`history/backfill-stranded-sagas.md`](history/backfill-stranded-sagas.md)). Its own fallback is
+deliberately **`Port=5433`**, not `5432` — it runs on the host against the compose stack's published
+port mapping, not inside the compose network.
 
 ## `HttpCallOptions` (`VSaga.Http`)
 
@@ -265,6 +300,14 @@ saga regardless of which `IMessageTransport` it uses.
 | Property | Default | Meaning |
 | --- | --- | --- |
 | `Timeout` | `30s` | Per-call timeout for the outbound HTTP request, before `.WithRetry`'s own bounded retry (if configured) kicks in. |
+
+The sample's two `.CallHttp` sagas take their targets from three sample-only keys, `Loyalty:LookupUrl`,
+`Payments:AuthorizeUrl` and `Payments:VoidUrl`, which default to that same process's own endpoints at
+`http://localhost:8080/loyalty/lookup`, `/payments/authorize` and `/payments/void`. The compose files
+make that default true by setting `ASPNETCORE_URLS=http://+:8080`. A bare `dotnet run` of the sample
+sets no URL (its `launchSettings.json` has none), so it listens on Kestrel's default
+`http://localhost:5000` and those REST hops fail unless `ASPNETCORE_URLS` or the three keys are set to
+match.
 
 ## `ChaosOptions` (`VSaga.Chaos`)
 
@@ -348,12 +391,12 @@ port if you changed it. See [`dashboard.md`](dashboard.md#the-spa).
 Action<TracerProviderBuilder>? configureTracing = null, Action<MeterProviderBuilder>?
 configureMetrics = null)` wires vSaga's shared `ActivitySource`/`Meter` (`VSaga.Saga`, defined once in
 `VSaga.Abstractions` so Core, Persistence, and Transport all emit against the same names) into the
-app's OpenTelemetry pipeline, and registers the W3C trace-context propagator as the SDK default (the
-wire format vSaga's own `traceparent`/`tracestate` handling uses, so a host that set a different
-default propagator first — e.g. B3 — would otherwise silently disagree with what actually goes out on
-the wire).
+app's OpenTelemetry pipeline, and sets the SDK's process-wide default propagator to a composite of the
+W3C trace-context and baggage propagators (trace-context being the wire format vSaga's own
+`traceparent`/`tracestate` handling uses, so a host that set a different default propagator first —
+e.g. B3 — would otherwise silently disagree with what actually goes out on the wire).
 
 It never assumes an OTel collector is present — the dashboard reads the persisted event log instead of
 an OTel backend, so nothing here is required for the dashboard to work. See
-[`observability.md`](observability.md) for the one-line OTLP exporter wiring and the full span/metric
-inventory.
+[`observability.md`](observability.md) for the one-line OTLP exporter wiring, the baggage propagator's
+process-wide side effect, and the full span/metric inventory.

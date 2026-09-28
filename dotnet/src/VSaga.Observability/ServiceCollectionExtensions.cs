@@ -19,8 +19,7 @@ public static class ServiceCollectionExtensions
     /// One-line OTLP wiring for a caller that does want to ship these spans/metrics somewhere: add the
     /// `OpenTelemetry.Exporter.OpenTelemetryProtocol` package and pass
     /// <c>configureTracing: t => t.AddOtlpExporter()</c> / <c>configureMetrics: m => m.AddOtlpExporter()</c>
-    /// to this method. Follow-up for production-readiness §8.19 (docs restructure): fold this one-liner
-    /// into the docs instead of leaving it only here.
+    /// to this method. docs/observability.md ("Wiring it up") documents the same one-liner.
     /// </para>
     /// </summary>
     public static IServiceCollection AddVSagaOpenTelemetry(

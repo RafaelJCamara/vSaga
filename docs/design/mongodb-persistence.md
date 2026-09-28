@@ -99,6 +99,7 @@ persist report a race it did not lose — and that branch only logs (`:342-348`)
 silently with its side effects already sent.
 
 This contract exists **only** as an implementation comment. Nothing in `ISagaSnapshotStore.cs` says it.
+[2026-09-27: it does now — `persistence-contracts.md` clause 1, on `ISagaSnapshotStore.UpdateAsync`.]
 
 ### 2.4 Timeline order feeds compensation
 
@@ -134,14 +135,22 @@ EF's `LIKE` is the bug; a staged outbox row is committed by the next successful 
 of work and dropped if none succeeds, which makes EF's `SagaOrchestrator.cs:130`-false flush a defect;
 `ResetStateAsync` is version-guarded and throws rather than retries; and `ClaimDueAsync`/`ClaimPendingAsync`
 gain an optional `sagaTypes` filter.
+[2026-09-27: as ADR 0003 was amended and landed, only `ClaimDueAsync` gained `sagaTypes` —
+`ClaimPendingAsync` deliberately did not, since the outbox dispatcher has no saga-type registry and a
+filter would strand rows — and a staged row is committed by the next successful *commit* in the unit of
+work, whichever store issues it, not only by a persist.]
 
 Two engine bugs found while planning are scheduled there too — both concerning `ChildSagaFinished` being
 published for a transition no snapshot recorded.
+[2026-09-27: both are fixed — B1 in `09de8ea`, which turned out to be a wrong-identity bug rather than a
+phantom transition, and B2 in `034bde5`; see `persistence-contracts.md` §4 and §6.2.]
 
 **What this plan consumes:** the ten contract clauses, the `VSaga.Persistence.Conformance` project and
 its `IProviderFixture` shape (capability flags plus the `BeginAsync`/`CommitAsync`/`AbandonAsync`
 unit-of-work hook), and the seven behaviour fixes. Stage 1 below starts from a green suite on SQLite,
 Postgres-Testcontainers and in-memory.
+[2026-09-27: as landed, twelve clauses and fourteen behaviour fixes — ten and seven were ADR 0003's
+first-draft counts.]
 
 ---
 
@@ -247,6 +256,9 @@ Detection is from `IMongoClient.Cluster.Description.Type` (`ReplicaSet` or `Shar
 populates from its own SDAM handshake — **not** a `hello` command, which returns `CommandNotFound` on
 MongoDB 4.x. The `Sharded` arm is **dropped from v1** unless a shard key is designed and cross-shard
 transaction cost is measured.
+[2026-09-27: as built, `MongoServerProbe` runs `hello` — safe once 6.0 is the minimum (§8.2 deviation
+8) — because a direct connection's cluster description reports the member rather than the set;
+`setName`, `isWritablePrimary` and `msg: isdbgrid` decide replica set, primary and mongos.]
 
 ---
 
@@ -493,6 +505,8 @@ then silently drops any whose `SagaType` has no registered runtime in this proce
 (`SagaTimeoutDispatcherHostedService.cs:34-38`) — *after* the row is already terminal, so it can never
 fire again. This is a pre-existing defect, not a Mongo one, but a shared Mongo database across services is
 a far more common idiom than a shared Postgres schema, so Mongo makes it far more likely to be hit.
+[2026-09-27: fixed as `persistence-contracts.md` clause 10 + F9 (`c8eb78c`): `ClaimDueAsync` takes
+`sagaTypes`, and the dispatcher passes the saga types it hosts.]
 
 **R-18 (minor) — length constraints disappear.** `VSagaDbContext` caps `SagaType`/`CurrentState`/`ForState`
 at 200 and `MessageType`/`MessageTypeName`/`QueueName`/`Destination`/`BusinessKey` at 400. Mongo enforces
@@ -549,7 +563,10 @@ the seven interface types plus `DbContextOptions<VSagaDbContext>`/`VSagaDbContex
 breaks the *second* `docker compose up` on a persisted volume, and because `dashboard-api` gates
 `order-processing`, the whole stack then fails to start. The overlay also **removes** the `postgres`
 service and both `depends_on: postgres` arms — leaving it running would leave a `persistence` health
-check probing a database nothing uses. Next free port slot in the allocated sequence
+check probing a database nothing uses. [2026-09-27: not done — the shipped overlay keeps `postgres`
+running, remapped to 5448, and leaves the base file's `depends_on: postgres` arms in place; nothing on
+the track connects to it, and the `persistence` check under the overlay is the Mongo provider's, so no
+vSaga health check probes it.] Next free port slot in the allocated sequence
 (`docs/transports/index.md:125-130`): Mongo 27018, Dashboard API 5580, RabbitMQ 6172/16172.
 
 **Stage 10 needs no CI workflow change beyond a comment.** There is no matrix and no `services:` block —
@@ -596,7 +613,9 @@ scanning every instance of the saga type through `ix_sagaType_updated`. The look
    left the registration in `Dashboard.Api` under the neutral `"persistence"` name because moving it
    into a persistence package needs `Microsoft.Extensions.Diagnostics.HealthChecks` rather than
    `.Abstractions`; this provider follows that precedent, so all three provider packages have the same
-   dependency footprint. `PostgresHealthCheck` stays where it is.
+   dependency footprint. `PostgresHealthCheck` stays where it is. [2026-09-27: more precisely, no
+   provider package references the full `Microsoft.Extensions.Diagnostics.HealthChecks` — Redis and
+   MongoDB reference only its `.Abstractions`, and EF Core references no health-check package at all.]
 2. **The stranded-work mitigation reports only Pending outbox rows older than a threshold.** The plan's
    second count — Fired timeouts older than an hour — was dropped: `Fired` is a terminal status the
    engine never cleans up, so that count only ever grows and says nothing about stranding.
@@ -702,6 +721,10 @@ reports Unhealthy while any named index or the marker is missing, so `docker-com
 via `SagaLogEntry.cs:18-22`'s precedent. Both land in `persistence-contracts.md`, not here. The deferred
 stranded-timeout listing on `ISagaAdminStore` remains deferred (§10).
 
+[2026-09-27: as landed, ADR 0003 has twelve clauses, and clauses 7 (`ResetStateAsync` gains
+`expectedVersion`) and 10 are not doc-only; only `ClaimDueAsync` gained `sagaTypes` — `ClaimPendingAsync`
+deliberately did not (decision 4).]
+
 ### Q6 — Search case-sensitivity — **RESOLVED**
 
 **Answered 2026-09-25 (ADR 0003 decision 1):** case-insensitive is the contract, EF moves to
@@ -714,6 +737,10 @@ which is an Npgsql extension this package cannot reference. Lands in `persistenc
 in the same unit of work, and dropped if none succeeds — Mongo's behaviour, pinned as the contract. EF's
 `SagaOrchestrator.cs:130`-false flush is therefore a defect and is scheduled as bug B2 in
 `persistence-contracts.md` §4.
+
+[2026-09-27: B2 landed in `034bde5`. The contract as amended says the next successful *commit* in the
+unit of work, whichever store issues it; on Mongo only the persist commits staged rows, so the two
+readings coincide here.]
 
 ### Q8 — Timestamps: the `Date` + `Ticks` pair, or Ticks only?
 
@@ -809,6 +836,9 @@ Following `docs/design/mixed-sagas.md:556`'s pattern.
   one tool serves both providers. **Cheap interim mitigation shipped in Stage 6 instead:** the health check
   reports counts of Pending outbox rows older than 10× `DispatchGracePeriod` and Fired timeouts older than
   an hour — two `countDocuments` calls that make stranding visible rather than invisible.
+  [2026-09-27: as shipped, one count only — Pending outbox rows older than
+  `VSagaMongoOptions.StrandedOutboxThreshold` (default 5 minutes), reported in the health check's data
+  (`strandedOutboxRows`) rather than failed on; the Fired-timeout count was dropped, §8.2 deviation 2.]
 - **Native BSON storage of `TState`** (Q12).
 - **Change streams** as an opt-in push source for the dashboard, with the existing poller as the portable
   fallback. Rejected for v1: it requires a replica set *and* oplog-retention tuning *and* resume-token

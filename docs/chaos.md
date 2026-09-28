@@ -21,7 +21,11 @@ runs, so `AddVSagaChaos`'s own `TryAddSingleton(TimeProvider.System)` is a no-op
 middlewares await the fake clock. The only thing that advances that clock is `AdvanceTimeByAsync`,
 which the test cannot reach while it is still awaiting the publish that triggered the delay — so an
 enabled `Delay` hangs the test rather than slowing it. `Drop` and `Duplicate` touch no clock and behave
-there exactly as they do against a broker. See [`testing.md`](testing.md).
+there exactly as they do against a broker. To make one deterministic in a test, set its `Probability`
+to `1` (it always fires, skipping the roll) or `0` (it never does), and narrow it with
+`ApplyToOutbound`/`ApplyToInbound`. To script individual rolls instead, register your own
+`IChaosRandomSource`: `AddVSagaChaos` adds the default `ThreadRandomChaosSource` with
+`TryAddSingleton`, so yours wins. See [`testing.md`](testing.md).
 
 ```csharp
 services.AddVSagaChaos(o =>
@@ -38,9 +42,10 @@ defaults.
 ## Fault types
 
 - **Delay** — waits a random `[MinDelay, MaxDelay]` before the publish/delivery continues through the
-  rest of the pipeline. Driven by an injected `TimeProvider` (not `Task.Delay` directly), so a unit test
-  that drives the middleware directly uses `FakeTimeProvider` instead of actually waiting — but see the
-  `SagaTestHarness` caveat above, where nothing is in a position to advance that clock.
+  rest of the pipeline. Driven by an injected `TimeProvider` (`Task.Delay(delay, timeProvider)`, not
+  the system-clock `Task.Delay(TimeSpan)` overload), so a unit test that drives the middleware directly
+  uses `FakeTimeProvider` instead of actually waiting — but see the `SagaTestHarness` caveat above,
+  where nothing is in a position to advance that clock.
 - **Drop** — outbound sets `OutboundMessageContext.Suppressed` (the publish call returns normally;
   nothing ever arrives, simulating an unroutable or lost publish). Inbound sets
   `InboundMessageContext.Suppressed` **and acks the delivery itself** before returning without calling
@@ -82,8 +87,8 @@ docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
 ```
 
 `docker-compose.chaos.yml` is an overlay that turns all three faults on with sample-tuned
-probabilities against the `OrderProcessing` sample (`Chaos:Enabled` config; the base compose file
-leaves it `false`).
+probabilities against the `OrderProcessing` sample (`Chaos:Enabled` config; the sample's
+`appsettings.json` leaves it `false`, and the base compose file does not set it).
 
 **A caution on tuning `Delay` against a single-consumer subscription.** `RabbitMqTransport` gives each
 `SubscribeAsync` call one channel with a single sequential consumer — an inbound delay doesn't just

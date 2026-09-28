@@ -69,7 +69,10 @@ harness.AssertPublished<ChargePayment>(m => m.Amount == 42m);
 - `SagaTimeoutDispatcherHostedService` and `SagaOutboxDispatcherHostedService` — the production
   crash-recovery pollers — are deliberately never started here. Both are driven by a `PeriodicTimer`
   built against this same `FakeTimeProvider`, so `AdvanceTimeByAsync` would otherwise wake their
-  background polling loop too, racing its own explicit claim-and-handle call for the exact timeout it's
-  trying to fire deterministically. `AdvanceTimeByAsync` already does everything either poller would
-  for a saga under test; leaving them running would only reintroduce the non-determinism the harness
-  exists to remove.
+  background polling loops too, and the timeout poller's loop would race the harness's own explicit
+  claim-and-handle call for the exact timeout `AdvanceTimeByAsync` is trying to fire deterministically.
+  `AdvanceTimeByAsync` already does everything the timeout poller would for a saga under test. It does
+  not replay outbox rows, though: a message queued with `ctx.PublishAfterCommitAsync` whose post-commit
+  send throws stays `Pending` in the outbox, and nothing in the harness redrives it the way the outbox
+  poller would after `DispatchGracePeriod`. Leaving the pollers running would only reintroduce the
+  non-determinism the harness exists to remove.

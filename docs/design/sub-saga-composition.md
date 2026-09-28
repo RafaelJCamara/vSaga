@@ -1,10 +1,14 @@
 # Design: sub-saga composition
 
-**Status: Slices 1, 2a, and 2b are built and shipped** — see the README's "Sub-saga composition: parent
-linkage", "Sub-saga composition: completion notification", and "Sub-saga composition: engine safety net"
-sections, which are the authoritative description of what exists. **Slice 3 is closed, deliberately not
-built** — see §3.5's status note and §4 for the reasoning and sign-off. This file is now a historical
-record of that analysis; there is no further open work behind it.
+**Status: Slices 1, 2a, and 2b are built and shipped** — see
+[`docs/concepts.md`](../concepts.md#sub-saga-composition) and [`docs/saga-dsl.md`](../saga-dsl.md) for
+what exists today. The README's "Sub-saga composition: parent linkage", "…: completion notification" and
+"…: engine safety net" sections this file cites throughout now live, verbatim, at
+[`docs/history/sub-saga-parent-linkage.md`](../history/sub-saga-parent-linkage.md),
+[`sub-saga-completion-notification.md`](../history/sub-saga-completion-notification.md) and
+[`sub-saga-engine-safety-net.md`](../history/sub-saga-engine-safety-net.md). **Slice 3 is closed,
+deliberately not built** — see §3.5's status note and §4 for the reasoning and sign-off. This file is
+now a historical record of that analysis; there is no further open work behind it.
 
 **One claim in the original sketch was wrong, and it bears directly on the §3.4 decision.** §3.4(a)
 said a child publishing its own domain message "works today with no engine change, once the child knows
@@ -34,7 +38,9 @@ analysis; §7.1 carries the current status.
 
 **Slice 2a shipped, and surfaced a real hazard this file didn't anticipate**: a child that addresses its
 parent from the very same step that started it can race ahead of the parent's own not-yet-persisted
-transition. See the README section for the live/mutation-tested detail and §5 for the failure mode.
+transition. See
+[`docs/history/sub-saga-completion-notification.md`](../history/sub-saga-completion-notification.md) for
+the live/mutation-tested detail and §5 for the failure mode.
 
 Written to be picked up cold in a later session: every claim about the current codebase carries a
 `file:line` so it can be re-checked rather than trusted. Line numbers in §2 were accurate at commit
@@ -216,8 +222,10 @@ already built from `ISagaDefinition.MessageTypes` — the union of every message
 declared handler for. A parent that never declares `.When<ChildSagaFinished>()` (or
 `.On<ChildSagaFinished>()`) anywhere in its own DSL never subscribes to the message type at all, so the
 transport never delivers it and `UnhandledEventPolicy` never enters the picture. Declaring the handler
-*is* the opt-in; no separate switch exists. See the README's "Sub-saga composition: engine safety net"
-section for the full shipped shape, live verification, and mutation results.
+*is* the opt-in; no separate switch exists. See
+[`docs/history/sub-saga-engine-safety-net.md`](../history/sub-saga-engine-safety-net.md) (formerly the
+README's "Sub-saga composition: engine safety net" section) for the full shipped shape, live
+verification, and mutation results.
 
 ### 3.5 Compensation cascade — **CLOSED, not built**
 
@@ -257,9 +265,10 @@ receive the request — that is Slice 3, and it is the one I would push back on.
 (argument 4) rather than re-approved from the sketch alone. No `.CompensateChildren()`, no child-side
 compensation hook. A parent that needs a child compensated publishes its own compensating command
 explicitly, the same way it would address any other collaborator. Documented as shipped (non-)behaviour
-in the README's "Sub-saga composition: parent linkage" section. If a concrete use case surfaces later
-that changes this calculus, treat it as a fresh design question — the arguments above assume no such
-case exists yet.
+in [`docs/concepts.md`](../concepts.md#compensation)'s Compensation section (originally the README's
+"Sub-saga composition: parent linkage" section, now `docs/history/sub-saga-parent-linkage.md`). If a
+concrete use case surfaces later that changes this calculus, treat it as a fresh design question — the
+arguments above assume no such case exists yet.
 
 ---
 
@@ -303,9 +312,10 @@ engine starts injecting messages on anyone's behalf.
       loudly on a root saga. Deliberately *not* a general publish-under-any-id overload; see §3.4
 - [x] A parent in the sample that actually waits: `InvoiceFollowUpSaga`, via the existing join
       (`During(state).When<T>().TransitionTo(...)`) plus a timeout on the waiting state. Not
-      `PostShipmentChoreography` — see the README section for why that would have contradicted its own
-      documented "must not hold the leg open" invariant, and why archival (`InvoiceArchivalSaga`)
-      rather than a second `InvoiceDeliverySaga` avoids sending two customer emails per invoice
+      `PostShipmentChoreography` — see `docs/history/sub-saga-completion-notification.md` for why that
+      would have contradicted its own documented "must not hold the leg open" invariant, and why
+      archival (`InvoiceArchivalSaga`) rather than a second `InvoiceDeliverySaga` avoids sending two
+      customer emails per invoice
 - [x] Tests through the real publish/receive path (`NotifyParentAsyncTests`), mutation-verified from
       both ends the same way Slice 1 was. The fan-out note from §3.4 turned out narrower than written
       there once built and live-verified: it reaches every saga type that both tracks the parent's
@@ -372,9 +382,10 @@ original sketch alone. Nothing here shipped:
 - [x] ~~Child-side hook to receive a compensation request~~ — not building
 - [x] ~~Ordering and double-compensation semantics~~ — moot; there is nothing to order or deduplicate
 
-A parent that needs a child compensated publishes its own compensating command explicitly. See the
-README's "Sub-saga composition: parent linkage" section for where this is documented as shipped
-(non-)behaviour, and §3.5 above for the full reasoning. If a concrete use case ever changes the
+A parent that needs a child compensated publishes its own compensating command explicitly. See
+[`docs/concepts.md`](../concepts.md#compensation) (and `docs/history/sub-saga-parent-linkage.md`,
+formerly the README's "Sub-saga composition: parent linkage" section) for where this is documented as
+shipped (non-)behaviour, and §3.5 above for the full reasoning. If a concrete use case ever changes the
 calculus, that is a new design question, not a resumption of this checklist.
 
 ---
@@ -383,18 +394,19 @@ calculus, that is a new design question, not a resumption of this checklist.
 
 - **Child never starts** (nothing's `CanInitiate` matched). Parent hangs until its timeout.
   Unpreventable at publish time; must be documented. **Now pinned by a test**
-  (`AChildMessageNobodyInitiatesOn_StartsNothingAndTellsNobody`) and described in the README, so it is
-  documented behaviour rather than a surprise.
+  (`AChildMessageNobodyInitiatesOn_StartsNothingAndTellsNobody`) and described in `docs/saga-dsl.md`'s
+  `StartChildAsync` entry, so it is documented behaviour rather than a surprise.
 - **Two saga types initiate on the child message** → two children, parent counts one. Wants a guard or
   a loud note. Compare the `AddSaga` duplicate-`TState` guard added in `f00dee3`
   (`dotnet/src/VSaga.Core/ServiceCollectionExtensions.cs`), which turned a similar silent misbehaviour into a
-  startup error. **Still unguarded** after Slice 1 — noted in the README, not solved.
+  startup error. **Still unguarded** after Slice 1 — noted in `docs/saga-dsl.md`'s `StartChildAsync`
+  entry, not solved.
 - **Parent times out while the child still runs** → orphaned child, still holding whatever it reserved.
 - **Parent retried from the dashboard** → children are *not* re-run; the reset replays the parent's
   own message only.
 - **Adding a timeout to an existing state does not rescue in-flight instances** — timeouts are scheduled
-  on entry to a state. Same trap as the 60 stranded sagas in the "Timeout coverage for every awaiting
-  state" README section.
+  on entry to a state. Same trap as the 60 stranded sagas in
+  `docs/history/timeout-coverage-every-awaiting-state.md` (formerly a README section).
 - **A child that calls `NotifyParentAsync` from the same step `StartChildAsync` started it in can race
   ahead of the parent's own not-yet-persisted transition.** Found building Slice 2a, not anticipated by
   this doc. `InMemoryMessageTransport.DispatchAsync` invokes every subscriber synchronously and
@@ -423,6 +435,10 @@ calculus, that is a new design question, not a resumption of this checklist.
   dispatches independently on its own poll loop. Pinned by
   `ChildSagaFinishedTests.ChildSagaFinished_FromAChildsOwnInitiatingStep_CanRaceAheadOfTheParentsUnpersistedTransition`
   (`dotnet/tests/VSaga.Core.Tests/ChildSagaFinishedTests.cs`). Not fixed, same reasoning as above.
+  [2026-09-27: both races are still unfixed under the default `SagaOutboxMode.Deferred`, but opting into
+  `SagaOutboxOptions.Mode = SagaOutboxMode.All` (`0d40afe`) closes both: it holds the parent's
+  `StartChildAsync` publish until the parent's own persist has committed — see
+  [`concepts.md`](../concepts.md#sub-saga-composition).]
 
 ---
 
@@ -433,7 +449,8 @@ previous pass threaded `SourceService`/`CausationId` onto envelope headers, and 
 `SagaLogEntry` objects with the field already populated passed while the orchestrator never actually
 read the header. Any test that constructs the parent link by hand proves nothing.
 
-Required, and **all three were done for Slice 1** — see the README section for the results:
+Required, and **all three were done for Slice 1** — see `docs/history/sub-saga-parent-linkage.md` for the
+results:
 
 1. Tests that drive the **real** publish → receive → create-instance path and assert
    `ParentSagaType`/`ParentCorrelationId` on the persisted snapshot.
@@ -450,7 +467,8 @@ against a header nobody read. Any Slice 2 test for `NotifyParentAsync` has the s
 it: a test that hand-publishes under the parent's correlation id proves nothing about whether
 `NotifyParentAsync` reads `ParentCorrelationId`.
 
-**All three done for Slice 2a too, same discipline** — see the README section for the full results:
+**All three done for Slice 2a too, same discipline** — see
+`docs/history/sub-saga-completion-notification.md` for the full results:
 
 1. `NotifyParentAsyncTests` drives the real `StartChildAsync` → transport → orchestrator →
    `NotifyParentAsync` → transport → orchestrator path; nothing hand-sets `ParentCorrelationId` or the
@@ -462,14 +480,14 @@ it: a test that hand-publishes under the parent's correlation id proves nothing 
    treating the read of `Saga.ParentCorrelationId` as always absent. Each failed exactly the 3 tests
    that depend on a real notification reaching its parent, and nothing else.
 
-**All three done for Slice 2b too** — see the README's "Sub-saga composition: engine safety net"
-section for the full results:
+**All three done for Slice 2b too** — see `docs/history/sub-saga-engine-safety-net.md` for the full
+results:
 
 1. `ChildSagaFinishedTests`/`ChildSagaFinishedOptInTests` drive the real
    `StartChildAsync`/exception-or-timeout → engine publish → transport → orchestrator path; nothing
    hand-sets `ParentCorrelationId`, hand-builds a `ChildSagaFinished` message, or stamps a header.
-2. Live under `docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d` — see the README
-   section for the run's numbers.
+2. Live under `docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d` — see
+   `docs/history/sub-saga-engine-safety-net.md` for the run's numbers.
 3. Mutated four ways: published under the child's own id instead of the parent's (failed exactly the 4
    tests that depend on real delivery to the parent); removed the root-saga guard, falling back to the
    child's own id (failed exactly the one root-saga test); made the ordinary success path also publish
@@ -506,9 +524,10 @@ section for the full results:
 4. **Which sample?** Further answered, still additively. `InvoiceDeliverySaga` (Slice 1) demonstrates
    linkage without waiting; `InvoiceFollowUpSaga`/`InvoiceArchivalSaga` (Slice 2a) demonstrate a parent
    that actually waits, kept as a *separate* pair rather than retrofitted onto
-   `PostShipmentChoreography` — see the README section for why. The original question — whether
-   `OrderSaga` itself should be restructured around sub-sagas — is still open and still a product
-   decision about what the sample is *for*, the same one the parallel fan-out work left open.
+   `PostShipmentChoreography` — see `docs/history/sub-saga-completion-notification.md` for why. The
+   original question — whether `OrderSaga` itself should be restructured around sub-sagas — is still
+   open and still a product decision about what the sample is *for*, the same one the parallel fan-out
+   work left open.
 5. **Resolved by not needing it.** Should the parent learn its child's correlation id?
    `StartChildAsync` still returns `Task`, not `Task<Guid>`. Slice 2a didn't need it: `NotifyParentAsync`
    has the child address the parent via `Saga.ParentCorrelationId`, not the reverse, and

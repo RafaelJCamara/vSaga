@@ -3,25 +3,28 @@
 `VSaga.Dashboard.Api` (ASP.NET Core Minimal API + SignalR) and `dashboard-web` (Angular 21 SPA)
 together form a saga-type-agnostic ops dashboard: list/filter/search every saga instance
 across every registered saga type, drill into one instance's timeline or a visual service map, and
-manually retry a failed or timed-out saga — all against the same `ISagaSummaryReader`/
-`ISagaEventLogStore` contracts every persistence provider implements, so the dashboard needs no
-knowledge of any specific saga definition.
+manually retry a failed or timed-out saga — all against provider-neutral contracts every persistence
+provider implements (`ISagaSummaryReader`, `ISagaEventLogStore`, `ISagaAdminStore`,
+`IServiceTopologyStore`), plus a raw `IMessageTransport` republish for retry, so the dashboard needs
+no knowledge of any specific saga definition.
 
 ## API endpoints
 
-All routes below require authentication (see [Authentication](#authentication)) except `/health`.
+All routes below require authentication (see [Authentication](#authentication)) except `/health` and
+the Development-only `/openapi/v1.json`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/sagas` | Paginated, filterable saga list. Query params: `status`, `sagaType`, `kind`, `search`, `page` (default 1), `pageSize` (default 25, clamped to a maximum of 500 — the response's `pageSize` reports the size applied), `sortBy`, `sortDescending`. |
+| `GET` | `/api/sagas` | Paginated, filterable saga list. Query params: `status`, `sagaType`, `kind`, `search`, `page` (default 1), `pageSize` (default 25, clamped to a maximum of 500 — the response's `pageSize` reports the size applied), `sortBy` (`UpdatedAt` or `Status`), `sortDescending`. `400` under `Persistence:Provider=Redis` when a `search` would scan more index members than `Redis:MaxSearchScanMembers` allows — narrow it with a `sagaType`/`status`/`kind` filter; see [`persistence.md`](persistence.md#search). |
 | `GET` | `/api/sagas/{sagaType}/{correlationId}` | One instance's summary plus its raw state `DataJson`. `404` if not found. |
 | `GET` | `/api/sagas/{sagaType}/{correlationId}/timeline` | The full, ordered `SagaLogEntry` history for one instance. |
-| `GET` | `/api/sagas/{sagaType}/{correlationId}/map` | The Saga Map for one instance — see [below](#saga-map). |
+| `GET` | `/api/sagas/{sagaType}/{correlationId}/map` | The Saga Map for one instance — see [below](#saga-map). `404` if not found. |
 | `GET` | `/api/sagas/{sagaType}/{correlationId}/children` | Every saga this instance started via `StartChildAsync`. Empty (not `404`) for both "no children" and "no such saga" — the caller already has the plain `GET` above to tell those apart. |
-| `POST` | `/api/sagas/{sagaType}/{correlationId}/retry` | Manually redrives a `Failed`/`TimedOut` instance — see [Manual retry](#manual-retry). `202` once the redrive is published, `404` if no such instance, `409` for any other status, `422` if the timeline has neither a `StepFailed` entry nor a usable `SagaStarted` one to redrive from, `502` if the transport republish itself fails. |
+| `POST` | `/api/sagas/{sagaType}/{correlationId}/retry` | Manually redrives a `Failed`/`TimedOut` instance — see [Manual retry](#manual-retry). `202` once the redrive is published, `404` if no such instance, `409` for any other status, or if the saga changed concurrently while a business-failure/timeout retry was resetting it to its initial state (reload and try again), `422` if the timeline has neither a `StepFailed` entry nor a usable `SagaStarted` one to redrive from, `502` if the transport republish itself fails. |
 | `GET` | `/api/saga-types` | Every distinct saga type currently known to the store, for populating filter dropdowns. |
-| `GET` | `/api/correlations/{correlationId}` | Every saga instance — of any type — currently tracking this correlation id. The one route that still takes a bare correlation id, since two saga types (an orchestrated one and a choreography observing the same transaction, or a parent and its child sharing an id — see [`concepts.md`](concepts.md#saga-instances-and-identity)) may both track it. Does **not** include sub-saga children, which have their own correlation ids and are reached via `/children` instead. |
-| `GET` | `/health` | Unauthenticated. Two real connectivity checks, `persistence` and `rabbitmq` — `503` with a per-check breakdown when either is unreachable, not a hardcoded `200`. `persistence` is named for the role, not the store: under `Persistence:Provider=Postgres` it is a `CanConnect` probe; under `Redis` it is the provider's own `RedisPersistenceHealthCheck`, which re-verifies `appendonly`, `maxmemory-policy`, cluster mode, memory pressure and the torn-write sentinel on every call and reports Unhealthy naming the guarantee (or that it could not be verified) — see [`persistence.md`](persistence.md#redis); under `MongoDb` it is `MongoPersistenceHealthCheck`, which re-verifies the replica-set topology, the primary, the server version, the indexes and the schema marker on every call — see [`persistence.md`](persistence.md#mongodb). The Postgres and RabbitMQ checks degrade to a pass when their dependency isn't registered at all ("No message broker configured." / "No relational database configured."), so under `Transport:Provider=Http` — where no RabbitMQ connection manager is registered — the broker check is an unconditional pass rather than a real probe. |
+| `GET` | `/api/correlations/{correlationId}` | Every saga instance — of any type — currently tracking this correlation id. The one route that still takes a bare correlation id, since two saga types (an orchestrated one and a choreography observing the same transaction — see [`concepts.md`](concepts.md#saga-instances-and-identity)) may both track it. Does **not** include sub-saga children, which have their own correlation ids and are reached via `/children` instead. |
+| `GET` | `/health` | Unauthenticated. Two real connectivity checks, `persistence` and `rabbitmq` — `503` with a per-check breakdown when either is unreachable, not a hardcoded `200`. `persistence` is named for the role, not the store: under `Persistence:Provider=Postgres` it is a `CanConnect` probe; under `Redis` it is the provider's own `RedisPersistenceHealthCheck`, which re-verifies `appendonly`, `maxmemory-policy`, cluster mode, the primary role, memory pressure, the schema marker, server-side Lua and the torn-write sentinel on every call and reports Unhealthy naming the guarantee (or that it could not be verified) — see [`persistence.md`](persistence.md#redis); under `MongoDb` it is `MongoPersistenceHealthCheck`, which re-verifies the replica-set topology, the primary, the server version, the indexes and the schema marker on every call, and reports any connection-string setting that contradicts the ones it pins — see [`persistence.md`](persistence.md#mongodb). The Postgres and RabbitMQ checks degrade to a pass when their dependency isn't registered at all ("No relational database configured." / "No message broker configured."), so under `Transport:Provider=Http` — where no RabbitMQ connection manager is registered — the broker check is an unconditional pass rather than a real probe. |
+| `GET` | `/openapi/v1.json` | Unauthenticated, and mapped only in the `Development` environment (which `dotnet run` gets from `launchSettings.json`; the compose containers don't set it). The generated OpenAPI document. |
 
 Every per-instance route is keyed by `(sagaType, correlationId)`, not correlation id alone — see
 [`concepts.md`](concepts.md#saga-instances-and-identity) for why.
@@ -42,6 +45,15 @@ dashboard never needs to know the saga's `TState` or definition; whichever proce
 saga's engine picks the republish up through its own normal subscription. Because the republish is
 still correlation-id-addressed, every saga type subscribed to that message type sees it, not only the
 one being retried — the same fan-out an original delivery has.
+
+**In-process retry, without the dashboard.** `AddVSagaEngine` also registers `ISagaRetryDispatcher`
+(`VSaga.Core.Runtime`), whose `RetryAsync(sagaType, correlationId)` redrives an instance from a process
+that runs its saga's engine. It implements shape 1 only, and runs the replayed step directly in that
+process instead of republishing it. It accepts only a `Failed` instance, throwing
+`SagaRetryNotAllowedException` otherwise (including for `TimedOut`); it throws `SagaNotFoundException`
+for an unknown instance, and `InvalidOperationException` when there is no `StepFailed` entry to replay
+or the saga type isn't registered in that process. `SagaTestHarness.RetryAsync` is a thin wrapper over
+it (see [`testing.md`](testing.md)).
 
 ## Authentication
 
@@ -85,8 +97,15 @@ authentication or authorization.
 `SagaHub` is mapped at `/hubs/saga` (see `dotnet/src/VSaga.Dashboard.Api/Program.cs`) and requires the
 same authentication as the REST routes above — see [Authentication](#authentication) for how a
 non-Angular client should supply the key on the hub connection. It groups connections per saga instance
-(`saga:{sagaType}:{correlationId}`) and per list view,
-so a detail page only receives updates for the instance it's actually viewing. Two paths push into it:
+(`saga:{sagaType}:{correlationId}`) and per list view (`saga:list`), and every push targets a group, so
+a connection receives nothing until it joins one by invoking the hub methods
+`SubscribeToList()`/`UnsubscribeFromList()` or
+`SubscribeToSaga(sagaType, correlationId)`/`UnsubscribeFromSaga(sagaType, correlationId)`. `correlationId` is passed as a string, and a malformed
+one joins no group rather than failing the invocation. A connection that joins only an instance's group
+receives updates for that instance alone. (The SPA shares one hub connection across
+pages and never leaves the list group once the list view has joined it, so its detail page also
+filters incoming `SagaUpdated` pushes by `(sagaType, correlationId)` client-side.)
+Two paths push into it:
 
 - **In-process** (`SignalRSagaChangeNotifier`) — used when the hub and the saga engine share a
   process.
@@ -96,8 +115,13 @@ so a detail page only receives updates for the instance it's actually viewing. T
   difference; the watermark only advances after a successful push, so a tick that throws retries the
   same window on its next tick instead of skipping past it.
 
-`TimelineEntryAdded` events carry the saga type as a leading argument, and the saga-list update event
-(`SagaUpdated`) reaches both the list group and the specific instance's group.
+Pushes arrive as two client methods, with enums serialized as their string names:
+`SagaUpdated(summary)`, a `SagaSummary` that reaches both the list group and the specific instance's
+group, and `TimelineEntryAdded(sagaType, correlationId, entry)`, a `SagaLogEntry` with the saga type as
+a leading argument, sent to the instance's group only. Only the in-process path sends
+`TimelineEntryAdded`; the cross-process poller pushes `SagaUpdated` alone, so in the deployed topology
+a client re-fetches the timeline and map when an instance's `SagaUpdated` arrives (as the SPA's detail
+page does).
 
 ## The SPA
 
@@ -108,7 +132,11 @@ detail view with three tabs — Map (first and the one it opens on), then Timeli
 page also resolves its own
 correlation id through `GET /api/correlations/{id}` and, when more than one saga instance shares it,
 renders an "Also tracking this correlation id" strip linking to each sibling (a snapshot, refreshed
-only when the current instance itself updates — not independently live-pushed).
+only when the current instance itself updates — not independently live-pushed). It also links
+sub-saga composition in both directions: a "Started by" link to the parent, read straight off the
+instance's own summary, and a "Started N sub-sagas" strip from
+`GET /api/sagas/{sagaType}/{correlationId}/children`, refreshed on the same snapshot terms as the
+sibling strip.
 
 It is not part of `docker-compose.yml`: run it with `npx ng serve` (see ["Run the demo"](../README.md#run-the-demo)
 in the root README) against the containerized API.
@@ -139,6 +167,15 @@ resolves its destination from `IServiceTopologyStore` (populated by `TopologyRec
 observing real `SubscribeAsync` calls across the fleet) — or renders as an "unresolved" placeholder if
 even that doesn't know it — and is marked **unanswered** rather than dropped, since a hung downstream
 service is often the most useful thing the map can show.
+
+**Topology recording is opt-in, per process.** `IServiceTopologyStore` is filled only by hosts that call
+`services.AddVSagaTopologyRecording()` (`VSaga.Core`). Call it in every process that subscribes, saga
+hosts and participant hosts alike, after that process's `AddVSaga<Transport>` call (it throws
+`InvalidOperationException` when there is no transport registration to wrap yet — see
+[`transports/index.md`](transports/index.md#the-two-decorators-every-adapter-is-wrapped-in)) and in a
+process with a persistence provider registered (without one it records into a no-op store). The
+dashboard API does not call it; it only reads the store. A service whose host skips it never becomes a
+known destination, so a message sent to it that gets no reply renders as unresolved.
 
 **Failure detection covers two shapes:** a `StepFailed` entry (an action threw), and a business
 failure reached through a normal, successful step transition with no exception at all (e.g. "payment

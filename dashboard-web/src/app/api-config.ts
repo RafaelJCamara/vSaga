@@ -1,6 +1,9 @@
 // Kept deliberately simple (no environment-file build variants) for a v1 sample dashboard: the
-// browser talks to Dashboard.Api directly on its host-exposed port, whether that's `ng serve`
-// against a locally-running API or the docker-compose stack's published port.
+// browser talks to Dashboard.Api directly on its host-exposed port, which these defaults assume is
+// the docker-compose stack's published one. A locally run API (`dotnet run`) listens on
+// launchSettings.json's http://localhost:5275 instead and ships an empty Dashboard:ApiKey (every
+// request fails closed), so it needs Dashboard__ApiKey set to the value below plus either this URL
+// edited or the API started on port 5080.
 export const API_BASE_URL = 'http://localhost:5080';
 export const HUB_URL = `${API_BASE_URL}/hubs/saga`;
 

@@ -13,7 +13,7 @@
   <!-- Package-specific description for nuget.org search results, overriding Directory.Build.props's
        shared fallback (MSBuild evaluates that file first, so this later value wins). -->
   <PropertyGroup>
-    <Description>PostgreSQL provider wiring for VSaga.Persistence.EFCore -- migrations and connection setup for running vSaga sagas against Postgres.</Description>
+    <Description>PostgreSQL provider wiring for VSaga.Persistence.EFCore -- the migrations for running vSaga sagas against Postgres, plus the Npgsql.EntityFrameworkCore.PostgreSQL dependency that supplies UseNpgsql.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,7 +1,7 @@
 # VSaga.Observability
 
-OpenTelemetry instrumentation for vSaga: traces and metrics for saga steps, message dispatch, and the
-persisted event log.
+OpenTelemetry instrumentation for vSaga: traces and metrics for saga steps and message dispatch. The
+persisted event log the dashboard reads is written by the engine itself and needs none of this wiring.
 
 ## Install
 

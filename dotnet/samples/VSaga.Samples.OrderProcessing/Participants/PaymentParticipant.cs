@@ -25,7 +25,7 @@ internal sealed class PaymentParticipant(IMessageTransport transport, ILogger<Pa
                 var roll = Random.Shared.NextDouble();
                 if (roll < 0.05)
                 {
-                    // Simulated hung payment gateway: never replies, so the saga's AwaitingPayment
+                    // Simulated hung payment gateway: never replies, so OrderSaga's Gathering reply
                     // timeout is what eventually moves this order to Failed/TimedOut.
                     logger.LogWarning("Order {OrderId}: payment gateway simulated as hung — no reply will be sent", m.OrderId);
                     return;

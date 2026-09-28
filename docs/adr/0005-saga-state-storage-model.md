@@ -27,7 +27,8 @@ The only statement of this anywhere is a doc comment on the entity itself
 
 That says *what*, not *why*, and records no alternative. The obvious alternative — a table per saga type,
 with each saga's own fields as columns — is what most hand-rolled saga stores do and what an ORM-shaped
-instinct reaches for first.
+instinct reaches for first. [2026-09-27: `docs/persistence.md`'s table of the EF Core tables now states
+the model too, linking here.]
 
 ---
 
@@ -38,22 +39,24 @@ instinct reaches for first.
 
 The promoted set is exactly: `SagaType`, `CorrelationId`, `Kind`, `CurrentState`, `Status`, `Version`,
 `ParentSagaType`, `ParentCorrelationId`, `BusinessKey`, `CreatedAtUtc`, `UpdatedAtUtc`
-(`Entities.cs:10-70`).
+(`Entities.cs:10-46`).
 
 **The rule this establishes: anything that must be queried, filtered, sorted or uniquely constrained
 must first become a promoted column.** The blob is opaque to the database by design. Every promotion
 since has followed it — the sub-saga parent pointer, the business key, the service-map fields — each
-with its own migration.
+with its own migration. [2026-09-27: the service-map fields are `SagaEventLog` columns
+(`AddServiceMapFields`), not `SagaInstances` promotions; the two `SagaInstances` promotions are the
+parent pointer (`AddSagaParentLinkage`) and the business key (`AddSagaBusinessKey`).]
 
 ### Why one table rather than one per saga type
 
-- **`ISagaSummaryReader` is saga-type-agnostic by contract.** `ISagaSummaryReader.cs:11-14` exists so
+- **`ISagaSummaryReader` is saga-type-agnostic by contract.** `ISagaSummaryReader.cs:7-11` exists so
   the dashboard can list, filter and page across *every* saga type without knowing any of them.
-  `VSaga.Dashboard.Api` deliberately never calls `AddSaga<>()` (`Program.cs:33-36`). A table per saga
+  `VSaga.Dashboard.Api` deliberately never calls `AddSaga<>()` (`Program.cs:36-39`). A table per saga
   type makes that query a dynamic `UNION` over a set of tables discovered at runtime — or forces the
   dashboard to know every saga definition, which is precisely what it is designed not to do.
-- **Adding a saga type must not require a schema migration.** `AddSaga<TState>()` is a DI registration;
-  under a table-per-type model it would become a deployment step.
+- **Adding a saga type must not require a schema migration.** `AddSaga<TDefinition, TState>()` is a DI
+  registration; under a table-per-type model it would become a deployment step.
 - **Two saga types may legitimately track the same correlation id**, which is what lets a choreographed
   saga observe messages already flowing under an orchestrated saga's id. The composite key expresses
   that directly (`VSagaDbContext.cs:98-101`).
@@ -61,11 +64,13 @@ with its own migration.
 ### What it costs, accepted knowingly
 
 - The blob is not queryable, so **every** new queryable field is a migration plus a projection plus the
-  never-disagree invariant `EfCoreSagaSnapshotStore.cs:72-78` names. Eight migrations exist and several
+  never-disagree invariant `EfCoreSagaSnapshotStore.cs:80-86` names. Eight migrations exist and several
   are exactly this.
 - A saga's own fields get no database-level typing or constraints.
-- The projection and the blob can drift. They have: ADR 0003 records that both providers leave
-  `UpdatedAtUtc` stale in the blob on `ResetStateAsync`, and in-memory leaves `Version` stale too.
+- The projection and the blob can drift. They have: ADR 0003 and its plan
+  ([`../design/persistence-contracts.md`](../design/persistence-contracts.md) §1.1 D1, §1.2 S1) record
+  that both providers leave `UpdatedAtUtc` stale in the blob on `ResetStateAsync`, and in-memory leaves
+  `Version` stale too. [2026-09-27: both fixed by F3 and F4.]
 
 ---
 
@@ -73,8 +78,8 @@ with its own migration.
 
 ### Positive
 
-- The dashboard's provider-agnostic, saga-type-agnostic premise (`docs/dashboard.md:6-8`) is
-  implementable at all.
+- The dashboard's provider-agnostic, saga-type-agnostic premise (the opening of
+  [`docs/dashboard.md`](../dashboard.md)) is implementable at all.
 - Registering a new saga type is a code change, never a schema change.
 - The model ports to a document store almost unchanged — both the MongoDB and Redis plans keep the blob
   as a `System.Text.Json` string, byte-identical to `DataJson`, precisely because it is opaque.
@@ -96,9 +101,10 @@ with its own migration.
 
 1. **A provider stores `TState` natively rather than as a JSON string.** ADR 0001 names this as a
    deferred follow-up and [`../design/mongodb-persistence.md`](../design/mongodb-persistence.md) Q12
-   holds it open. Native BSON would make `GetDataJsonAsync` a fidelity-critical reconstruction rather
-   than a field read, and would make the promotion rule partly unnecessary — enough of a shift to
-   warrant its own ADR.
+   holds it open. [2026-09-27: Q12 is now decided — the MongoDB provider ships `TState` as a string,
+   byte-identical to `DataJson`, with native BSON kept as a named follow-up.] Native BSON would make
+   `GetDataJsonAsync` a fidelity-critical reconstruction rather than a field read, and would make the
+   promotion rule partly unnecessary — enough of a shift to warrant its own ADR.
 2. **The promoted set grows past what a single row should carry**, or a saga type needs its own indexes.
    Then per-type storage, or a satellite table, becomes worth its cost.
 3. **`ISagaSummaryReader` stops being saga-type-agnostic.** That premise is the load-bearing argument

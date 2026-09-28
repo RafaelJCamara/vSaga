@@ -3,7 +3,8 @@
 An executable check of vSaga's persistence contracts: abstract xUnit test classes, one per store
 contract in `VSaga.Abstractions.Persistence`, that a persistence provider derives from to verify its
 stores behave the way the engine depends on. The shipped providers (EF Core on SQLite and Postgres,
-and in-memory) run exactly this suite; a third-party provider verifies itself the same way.
+MongoDB, Redis and in-memory) run exactly this suite; a third-party provider verifies itself the same
+way.
 
 ## Requirements
 

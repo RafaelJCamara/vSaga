@@ -3,18 +3,20 @@
 **Status: built and live-verified**, as five commits in the order §4-§7 lay out: `ctx.CallHttpAsync`
 (§4), the §3.2 retry-dedupe fix and the §3.1 timeout-drain fix as two separate engine commits (each
 landed and live-verified alone before anything depended on them — this repo's habit, see `937243a`), the
-Saga Map fix (§6, its own commit per the note below), then `MixedFulfilmentSaga` (§7). See the README's
-"Mixed sagas: RabbitMQ messages and REST calls in one saga" section for the shipped shape and live-
-verification evidence, including the chaos-overlay run that caught `AwaitingStock`'s own timeout firing
-directly (not via a `StockUnavailable` message) and resolving cleanly — the direct live proof that §5's
-drain fix closes the gap it was built for.
+Saga Map fix (§6, its own commit per the note below), then `MixedFulfilmentSaga` (§7). See
+[`docs/saga-dsl.md`](../saga-dsl.md#callhttp-from-vsagahttp) for the shipped shape and
+[`docs/history/mixed-sagas-shipped.md`](../history/mixed-sagas-shipped.md) (formerly the README's "Mixed
+sagas: RabbitMQ messages and REST calls in one saga" section) for the live-verification evidence,
+including the chaos-overlay run that caught `AwaitingStock`'s own timeout firing directly (not via a
+`StockUnavailable` message) and resolving cleanly — the direct live proof that §5's drain fix closes the
+gap it was built for.
 
 Every §9 mutation test passed as specified: removing a fix (or, for the timeout drain, moving it to the
 wrong place instead of deleting it) made exactly the tests written for that fix fail, and reverting
 restored a fully green suite each time. Two implementation notes worth recording for a later reader:
 
 - **§3.2's dedupe fix and §3.1's timeout-drain fix landed as two separate commits**, not one "§5 engine
-  change" commit — each is independently mutation-tested in `docs/mixed-sagas.md` §9's own list (four
+  change" commit — each is independently mutation-tested in `docs/design/mixed-sagas.md` §9's own list (four
   distinct mutations across the two), and splitting them let each be a small, focused, easily-reverted
   diff, consistent with `937243a`'s own "landed and verified alone" precedent.
 - **The retried-`ctx.CallHttpAsync` test can't observe its `.Body(...)` value's identity** the way a
@@ -42,7 +44,7 @@ Written to be picked up cold in a later session: every claim about the current c
 
 ## 1. What it is, and why it doesn't work today
 
-`docs/http-based-sagas.md` §1 splits vSaga's HTTP surface into two things that "share the word HTTP and
+`docs/design/http-based-sagas.md` §1 splits vSaga's HTTP surface into two things that "share the word HTTP and
 nothing else":
 
 1. `dotnet/src/VSaga.Transport.Http` — an `IMessageTransport` adapter so two vSaga services can talk without a
@@ -73,7 +75,7 @@ three separate places:
    `:473`. The timeout path (`:187-239`) does the analogous two-phase persist (`:205`, `:235`) but never
    drains. Anything queued via `ISagaContext.PublishAfterCommitAsync` on that path — which is exactly how
    `.CallHttp`'s loopback outcome publishes (`dotnet/src/VSaga.Http/HttpOutcomeAction.cs:45`) — is silently
-   dropped. `docs/http-based-sagas.md:412` already named this ("`HandleTimeoutAsync` would also need its
+   dropped. `docs/design/http-based-sagas.md:412` already named this ("`HandleTimeoutAsync` would also need its
    own parallel drain after `:235`") when it designed the engine change and it was never built.
 3. **`SagaMapBuilder.ProcessInboundEntry` hardcodes `IsCompensation: false`**
    (`dotnet/src/VSaga.Dashboard.Api/SagaMapBuilder.cs:136`), while outbound `MakeEdge` honours the `_compensating`
@@ -95,7 +97,7 @@ Asked and answered before this was written, so treat them as settled rather than
   ride `VSaga.Transport.Http` — was offered and explicitly **not** chosen. Out of scope for this design.
 - **Demo vehicle: a new saga inside `dotnet/samples/VSaga.Samples.OrderProcessing`**, alongside `OrderSaga` and
   `LoyaltyLookupSaga`, matching this repo's established "one sample, converted" pattern
-  (`docs/http-based-sagas.md` §1's decision 3). Not a new sample project; `OrderSaga` is not modified.
+  (`docs/design/http-based-sagas.md` §1's decision 3). Not a new sample project; `OrderSaga` is not modified.
 
 ---
 
@@ -115,8 +117,8 @@ Asked and answered before this was written, so treat them as settled rather than
 
 ## 3. Two constraints found by tracing the engine
 
-Per this repo's habit (`docs/http-based-sagas.md` §3, `docs/sub-saga-composition.md` §5): read this before
-building anything.
+Per this repo's habit (`docs/design/http-based-sagas.md` §3, `docs/design/sub-saga-composition.md` §5):
+read this before building anything.
 
 ### 3.1 The timeout path drops any deferred publish, and this design makes that reachable for the first time
 
@@ -275,7 +277,7 @@ await RecordTimeoutOutcomeAsync(state, outcome, cancellationToken);
 
 The race-loss branch matters and must not be a silent `return`. The persist lost, so the transition was
 never written; publishing a loopback that announces it would be wrong. But silently discarding it is the
-failure class this repo has been bitten by three times (`docs/http-based-sagas.md` §3, §6).
+failure class this repo has been bitten by three times (`docs/design/http-based-sagas.md` §3, §6).
 `DiscardDeferredPublishesAsync` logs one `DeliveryExhausted` entry per dropped publish, naming the
 `MessageType` from the new `DeferredPublish` struct and the state whose race was lost, reusing
 `DrainDeferredPublishesAsync`'s existing "leave the saga for its own timeout to rescue it" policy
@@ -517,7 +519,7 @@ README):
   pin fails.
 
 **Live verification — not optional in this repo.** It has shipped envelope-header threading the
-orchestrator never actually read three separate times (`docs/http-based-sagas.md` §3, §6), each caught
+orchestrator never actually read three separate times (`docs/design/http-based-sagas.md` §3, §6), each caught
 only by a live run and never by tests that hand-built the objects under test.
 
 ```
@@ -566,5 +568,5 @@ dashboard API on **5080**; header `X-Api-Key: dev-local-only-change-me`):
   the target state handles a given reply type; §8 documents the rule instead of enforcing it.
 - **A composite `IMessageTransport`** (per-message-type transport routing). The interpretation not chosen
   for this design — recorded here so a later session knows it was considered.
-- **Async webhook delivery.** Still reserved as `docs/http-based-sagas.md` §7 item 3's "natural third
+- **Async webhook delivery.** Still reserved as `docs/design/http-based-sagas.md` §7 item 3's "natural third
   phase" — a different axis from mixed sagas, not superseded by this doc.

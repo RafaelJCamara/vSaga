@@ -1,10 +1,10 @@
 # Saga DSL reference
 
 The full method inventory for the fluent saga DSL: `OrchestratedSagaDefinition<TState>`,
-`ChoreographedSagaDefinition<TState>`, `StateBuilder<TState>`, `EventBuilder<TState, TMessage>`,
-`ChoreographyEventBuilder<TState, TMessage>`, `TimeoutBuilder<TState>`, `RetryPolicy`,
-`ISagaContext<TState>`, and the `.CallHttp` extension from `VSaga.Http`. This document did not exist
-before the production-readiness docs restructure (§8.19) — read it alongside
+`ChoreographedSagaDefinition<TState>`, `State<TState>`, `StateBuilder<TState>`,
+`EventBuilder<TState, TMessage>`, `ChoreographyEventBuilder<TState, TMessage>`, `TimeoutBuilder<TState>`,
+`RetryPolicy`, `ISagaContext<TState>`, and the `.CallHttp` extension from `VSaga.Http`. This document
+did not exist before the production-readiness docs restructure (§8.19) — read it alongside
 [`concepts.md`](concepts.md) for *why* each piece exists, not just its signature.
 
 All types below live in `VSaga.Core.Dsl` unless noted. `TState : SagaState, new()` on every generic
@@ -15,7 +15,10 @@ throughout; it is stated once here rather than repeated on every row below.
 ## `OrchestratedSagaDefinition<TState>`
 
 Base class for a state-gated saga. Derive from it, declare states and transitions in the constructor,
-and register with `services.AddVSagaEngine(o => o.AddSaga<TDefinition, TState>())`.
+and register with `services.AddVSagaEngine(o => o.AddSaga<TDefinition, TState>())`. Each definition
+needs its own `TState` class, even when two sagas' state would be structurally identical: the engine
+resolves a definition by its state type, so an `AddSaga` naming an already-registered `TState` throws
+`SagaDefinitionException` from `AddSaga` itself, at registration.
 
 | Member | Signature | Notes |
 | --- | --- | --- |
@@ -37,8 +40,8 @@ and register with `services.AddVSagaEngine(o => o.AddSaga<TDefinition, TState>()
 | `HandleAsync` | `public Task<SagaStepOutcome> HandleAsync(ISagaContext<TState> context, object message, CancellationToken cancellationToken)` | `ISagaDefinition` member — the engine's dispatch entry point, public but not meant to be called from saga code. Runs the step registered for `(CurrentState, message type)`, mutates `context.Saga` in place, and returns the outcome; an unhandled message returns `SagaStepOutcome.Unhandled` (or throws, under `UnhandledEventPolicy.Throw`). Throws if the step's actions fail after `Retry(...)` is exhausted — marking the saga `Failed` is the orchestrator's job, not the definition's. |
 | `HandleTimeoutAsync` | `public Task<SagaStepOutcome> HandleTimeoutAsync(ISagaContext<TState> context, string forState, CancellationToken cancellationToken)` | `ISagaDefinition` member; the same, for the timeout step registered for `forState`. Returns `SagaStepOutcome.Unhandled` if that state has no `WithTimeout(...)`. |
 
-**`UnhandledEventPolicy.Throw`, corrected.** An earlier design note (and a stale doc comment still on
-the enum itself) claimed `Throw` causes the orchestrator to "nack and redeliver forever." Reading
+**`UnhandledEventPolicy.Throw`, corrected.** An earlier design note (and, until it was fixed, the
+enum's own doc comment) claimed `Throw` causes the orchestrator to "nack and redeliver forever." Reading
 `SagaOrchestrator.RunStepAsync` shows that isn't what happens: the exception `Throw` raises is caught
 by `RunStepAsync`'s own catch block and routed to `HandleStepFailureAsync` — the same path an ordinary
 step failure takes, which marks the saga `Failed` and **acks** the message. There is no redelivery
@@ -48,7 +51,8 @@ unexpectedly is a silent, one-shot false `Failed`, not an infinite spin.
 ## `ChoreographedSagaDefinition<TState>`
 
 Base class for an event-gated (not state-gated) saga. Same registration call as orchestration;
-`SagaType`, `Kind` (`SagaKind.Choreographed`), `InitialState`, `State`, `Compensate`, `WithTimeout`,
+the constructor (`protected ChoreographedSagaDefinition(string? sagaType = null)`), `SagaType`,
+`Kind` (`SagaKind.Choreographed`), `InitialState`, `State`, `Compensate`, `WithTimeout`,
 `OnUnhandledEvent`, `CorrelateOn`, `TryGetCorrelationKey`, `InitialStateName`, `MessageTypes`,
 `GetTimeout`, `HandleAsync` and `HandleTimeoutAsync` behave identically to the orchestrated class
 above. Two structural differences:
@@ -67,6 +71,18 @@ above. Two structural differences:
 `CurrentState` from it before dispatching the initiating event — which event actually *created* the
 instance is whichever `.StartsNewInstance()` type was observed, not this label.
 
+## `State<TState>`
+
+The handle `InitialState(...)` and `State(...)` return, and that `During(...)`, `TransitionTo(...)`,
+`RecordState(...)`, `Compensate(...)` and `WithTimeout(...)` take. Its constructor is internal, so saga
+code only ever gets one from those two methods. At runtime a saga's current state is just the string in
+`SagaState.CurrentState`, and this handle carries nothing more than that string:
+
+| Member | Signature | Notes |
+| --- | --- | --- |
+| `Name` | `string` (get) | The name passed to `InitialState(...)`/`State(...)` — the value `SagaState.CurrentState` stores. |
+| `ToString` | `public override string ToString()` | Returns `Name`. |
+
 ## `StateBuilder<TState>`
 
 Returned by `During(...)`. One member:
@@ -82,7 +98,7 @@ Fluent configuration for one `(state, message type)` step (orchestrated DSL). Ev
 
 | Member | Signature | Notes |
 | --- | --- | --- |
-| `CorrelateBy` | `CorrelateBy<TKey>(Func<TMessage, TKey> messageKey, Expression<Func<TState, TKey>> stateKey)` | Extracts a value from the message and assigns it onto saga state. Additionally becomes a business-key extractor if `stateKey`'s property matches a `CorrelateOn` declaration — and **throws from the definition's constructor if it names any other property** once `CorrelateOn` has been declared; see the note below and [`concepts.md`](concepts.md#correlation-transport-id-then-business-key). |
+| `CorrelateBy` | `CorrelateBy<TKey>(Func<TMessage, TKey> messageKey, Expression<Func<TState, TKey>> stateKey)` | Extracts a value from the message and assigns it onto saga state. Additionally becomes a business-key extractor if `stateKey`'s property matches a `CorrelateOn` declaration — and **throws from the definition's constructor if it names any other property** once `CorrelateOn` has been declared. Both happen at the moment `CorrelateBy` is called, so one written *before* `CorrelateOn` in the constructor registers no extractor and is never validated; see the note below and [`concepts.md`](concepts.md#correlation-transport-id-then-business-key). |
 | `Then` | `Then(Action<ISagaContext<TState>, TMessage> action)` / `Then(Func<ISagaContext<TState>, TMessage, Task> action)` | The step's own business logic. Sync and async overloads. |
 | `Publish<TOut>` | `Publish<TOut>(Func<ISagaContext<TState>, TMessage, TOut> factory)` | Publishes a message built from the context and inbound message, via `ctx.PublishAsync` — fires immediately, mid-step, under the default outbox mode; see the immediacy caveat under [`ISagaContext<TState>`](#isagacontexttstate). |
 | `Send<TOut>` | `Send<TOut>(string destination, Func<ISagaContext<TState>, TMessage, TOut> factory)` | Like `Publish`, but sent directly to a named destination via `ctx.SendAsync`, bypassing topic routing. |
@@ -139,6 +155,17 @@ by both DSLs (constructed internally by `WithTimeout(...)`, never directly).
 | `Finalize` | `Finalize(SagaStatus status)` | Fixed only. |
 | `Compensate` | `Compensate()` | Same semantics as `EventBuilder.Compensate()`. |
 
+**`SagaStatus` values** (`VSaga.Abstractions.Sagas`): `Running`, `Completed`, `Failed`,
+`Compensating`, `Compensated`, `TimedOut`, `Cancelled`. The engine itself only ever writes `Running`
+(a new instance, or a `Failed` one picking a message up again) and `Failed` (a step that threw once
+its `Retry` was exhausted, or a message whose delivery was exhausted); the dashboard's manual retry
+can also reset one to `Running`. Every other value, `TimedOut` included, comes only from a
+`Finalize(...)` your saga declares, so a timeout step with no `.Finalize(...)` leaves the instance
+`Running`. The value you pick matters elsewhere: a timeout fires only for a `Running` instance, the
+dashboard's [manual retry](dashboard.md#manual-retry) accepts only `Failed`/`TimedOut`, the Saga Map
+marks the saga's own node failed only for those two, and `vsaga.saga.completed`/`vsaga.saga.failed`
+count only their own status (see [`observability.md`](observability.md#metrics)).
+
 ## `RetryPolicy`
 
 Bounded, in-process retry for one step's actions as a whole — for transient technical failures (a
@@ -149,6 +176,8 @@ actions from the start**, so actions must tolerate being invoked more than once 
 | --- | --- | --- |
 | `None` | `static readonly RetryPolicy None` | Single attempt, no retry. |
 | `Exponential` | `static RetryPolicy Exponential(int maxAttempts, TimeSpan baseDelay)` | `maxAttempts` must be ≥ 1. Delay for attempt *n* is `baseDelay * 2^(n-1)`. |
+| `MaxAttempts` | `int` (get) | Total attempts, including the first — `1` for `None`. |
+| `BaseDelay` | `TimeSpan` (get) | The `baseDelay` passed to `Exponential` — `TimeSpan.Zero` for `None`. |
 
 A step's own deferred-publish queue (see `PublishAfterCommitAsync` below) is cleared on a retry
 catch, before the backoff delay — otherwise a retried step containing both a queued loopback publish
@@ -167,11 +196,11 @@ timeout step. `SagaContext` is the engine's only production implementer.
 | `Headers` | `IReadOnlyDictionary<string, string>` (get) | Inbound message headers. |
 | `Services` | `IServiceProvider` (get) | DI scope for the current unit of work. |
 | `CancellationToken` | `CancellationToken` (get) | |
-| `PublishAsync<TMessage>` | `Task PublishAsync<TMessage>(TMessage message, CancellationToken ct = default)` | Publishes under this instance's own correlation id — immediately, mid-step, under the default outbox mode (see the caveat below). |
-| `SendAsync<TMessage>` | `Task SendAsync<TMessage>(string destination, TMessage message, CancellationToken ct = default)` | Sends directly to a named destination, bypassing topic routing — same immediacy caveat. |
-| `StartChildAsync<TMessage>` | `Task StartChildAsync<TMessage>(TMessage message, CancellationToken ct = default)` | Publishes `message` under a **fresh** correlation id, stamped with this instance's identity (`x-vsaga-parent-saga-type`/`x-vsaga-parent-correlation-id`). Whichever saga's `CanInitiate` matches becomes the child. Does not wait — the parent moves on as soon as the publish returns. If no saga initiates on the message type, no child is created and nobody is told; if two do, two children start silently. |
-| `NotifyParentAsync<TMessage>` | `Task NotifyParentAsync<TMessage>(TMessage message, CancellationToken ct = default)` | Publishes `message` under `Saga.ParentCorrelationId` — the field the engine stamped when this instance was created by `StartChildAsync`. Throws `InvalidOperationException` immediately (before any I/O) if this saga has no parent. Not a general publish-under-any-id overload: the only id reachable is the one the engine already assigned. Fans out to **every** saga type subscribed to `TMessage` that tracks an instance under the parent's correlation id, not only the one that started this child. |
-| `PublishAfterCommitAsync<TMessage>` | `Task PublishAfterCommitAsync<TMessage>(TMessage message, CancellationToken ct = default)` | Default interface method; default body delegates to `PublishAsync`. `SagaContext` overrides it to **queue** the publish until after this step's own persist has committed, draining every queued publish from one step strictly in the order queued. Use this instead of `PublishAsync` whenever the message being published is the mapped result of a synchronous call this step already made (e.g. `.CallHttp`'s message-loopback outcome) — publishing immediately would let the reply re-enter this saga instance before the step's own optimistic-concurrency check has committed. Deliberately opt-in: a deferred publish that fails after commit has nowhere safe to go, so a drain failure is caught, logged, and recorded as a `DeliveryExhausted` timeline entry rather than thrown — the saga is left `Running` for its own state timeout to rescue. |
+| `PublishAsync<TMessage>` | `Task PublishAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)` | Publishes under this instance's own correlation id — immediately, mid-step, under the default outbox mode (see the caveat below). |
+| `SendAsync<TMessage>` | `Task SendAsync<TMessage>(string destination, TMessage message, CancellationToken cancellationToken = default)` | Sends directly to a named destination, bypassing topic routing — same immediacy caveat. |
+| `StartChildAsync<TMessage>` | `Task StartChildAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)` | Publishes `message` under a **fresh** correlation id, stamped with this instance's identity (`x-vsaga-parent-saga-type`/`x-vsaga-parent-correlation-id`). Whichever saga's `CanInitiate` matches becomes the child. Does not wait — the parent moves on as soon as the publish returns. If no saga initiates on the message type, no child is created and nobody is told; if two do, two children start silently. |
+| `NotifyParentAsync<TMessage>` | `Task NotifyParentAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)` | Publishes `message` under `Saga.ParentCorrelationId` — the field the engine stamped when this instance was created by `StartChildAsync`. Throws `InvalidOperationException` immediately (before any I/O) if this saga has no parent. Not a general publish-under-any-id overload: the only id reachable is the one the engine already assigned. Fans out to **every** saga type subscribed to `TMessage` that tracks an instance under the parent's correlation id, not only the one that started this child. |
+| `PublishAfterCommitAsync<TMessage>` | `Task PublishAfterCommitAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)` | Default interface method; default body delegates to `PublishAsync`. `SagaContext` overrides it to **queue** the publish until after this step's own persist has committed, draining every queued publish from one step strictly in the order queued. Use this instead of `PublishAsync` whenever the message being published is the mapped result of a synchronous call this step already made (e.g. `.CallHttp`'s message-loopback outcome) — publishing immediately would let the reply re-enter this saga instance before the step's own optimistic-concurrency check has committed. Deliberately opt-in: a deferred publish that fails after commit has nowhere safe to go, so a drain failure is caught, logged, and recorded as a `DeliveryExhausted` timeline entry rather than thrown — the saga is left `Running` for its own state timeout to rescue. |
 
 **"Immediately" means "under `SagaOutboxMode.Deferred`", the default.** `PublishAsync`, `SendAsync`,
 `StartChildAsync` and `NotifyParentAsync` all route through `SagaContext.RouteAsync`, which under
@@ -186,28 +215,36 @@ nothing at all. `PublishAfterCommitAsync` queues unconditionally, in both modes.
 **Engine-published, not through `ISagaContext`:** `ChildSagaFinished(Guid ChildCorrelationId, string
 ChildSagaType, SagaStatus Status)` is published directly by `SagaOrchestrator` — not via any
 `ISagaContext` method — on the child's behalf, to whichever parent it has, for the two cases a child
-cannot report itself because it never reaches a step that could: **an unhandled exception, or a
-timeout that goes terminal**. The failure path publishes unconditionally; the timeout path stages it
-only when the timeout step resolved a final status, i.e. only when that `WithTimeout(...)` declared
-`.Finalize(...)`. A timeout that merely compensates and transitions tells the parent **nothing** — so
-a parent waiting on a child must either confirm the child's timeout steps finalize, or (better) carry
-its own `WithTimeout(...)` on the state it waits in, which is the only recovery that does not depend
-on the child's DSL. A parent opts in simply by declaring a
-`.When<ChildSagaFinished>()`/`.On<ChildSagaFinished>()` handler anywhere in its own DSL; a parent that
-never declares one is never even subscribed to the message type, so it is never delivered. It
-deliberately does **not** fire from the ordinary message-driven success path — a child that finishes
-normally reports its own result via `NotifyParentAsync` instead, which carries the actual data
-(`ChildSagaFinished` carries only a status).
+cannot report itself because it never reaches a step that could: **an unhandled exception in a
+message-handling step, or a timeout that goes terminal**. The failure path publishes unconditionally;
+the timeout path stages it only when the timeout step resolved a final status, i.e. only when that
+`WithTimeout(...)` declared `.Finalize(...)`. A timeout that merely compensates and transitions tells
+the parent **nothing**, and so does a timeout step that throws: the timeout dispatcher only logs that
+exception, and the child is not even marked `Failed`. So a parent waiting on a child must either
+confirm the child's timeout steps finalize, or (better) carry its own `WithTimeout(...)` on the state
+it waits in, which is the only recovery that does not depend on the child's DSL. A parent opts in
+simply by declaring a `.When<ChildSagaFinished>()`/`.On<ChildSagaFinished>()` handler anywhere in its
+own DSL; a parent that never declares one is never even subscribed to the message type, so it is never
+delivered. It deliberately does **not** fire from the ordinary message-driven success path — a child
+that finishes normally reports its own result via `NotifyParentAsync` instead, which carries the
+actual data (`ChildSagaFinished` carries only a status).
 
 ## `.CallHttp` (from `VSaga.Http`)
 
 An extension method on `EventBuilder<TState, TMessage>`, reached through the DSL's public `Then(...)`
-seam — no change to `VSaga.Core` itself, and `VSaga.Core` gains no `HttpClient` dependency. Any
-saga, on any transport, gets `.CallHttp` by referencing `VSaga.Http`.
+seam — no change to `VSaga.Core`'s DSL (Core does grant `VSaga.Http` `InternalsVisibleTo`, so
+each call can write its own request/reply timeline entries), and `VSaga.Core` gains no `HttpClient`
+dependency. Any orchestrated saga, on any transport, gets `.CallHttp` by referencing `VSaga.Http`.
+There is no `.CallHttp` on `ChoreographyEventBuilder` or `TimeoutBuilder`: a choreographed step calls
+`ctx.CallHttpAsync(...)` (below) from an async `.Then(...)` instead.
 
 > **Requires `AddVSagaHttpCalls()`.** `.CallHttp`/`ctx.CallHttpAsync` resolve an `IHttpClientFactory`
-> from `ISagaContext.Services` at call time — without registering it, the first `.CallHttp` step throws.
-> Call it once per host, alongside your other `AddVSaga*` registrations:
+> from `ISagaContext.Services` at call time and ask it for the named client `AddVSagaHttpCalls`
+> registers. Without that registration, the first `.CallHttp` step throws — unless something else
+> already registered `IHttpClientFactory` (`VSaga.Transport.Http`'s `AddVSagaHttp` does, as does any
+> `AddHttpClient` call), in which case the call quietly runs on an unconfigured client with
+> `HttpClient`'s own 100 s timeout instead of `HttpCallOptions.Timeout`. So call it once per host,
+> alongside your other `AddVSaga*` registrations:
 >
 > ```csharp
 > services.AddVSagaHttpCalls();   // required once per host before any saga using .CallHttp runs
@@ -236,7 +273,7 @@ behind `ctx.CallHttpAsync`, below) expose:
 | `OnSuccess<TOut>()` | Message loopback for any 2xx not covered by a more specific `OnStatus`. Deserializes the response body as `TOut` (case-insensitive, since the far side is an arbitrary REST API) and publishes it via `PublishAfterCommitAsync`. | |
 | `OnSuccess(Action<TState> mutate)` | Inline shape for the same case: mutates state synchronously, no loopback, no race. | |
 | `OnFailure<TOut>()` / `OnFailure(Action<TState> mutate)` | Same two shapes for anything else: a non-2xx with no more specific `OnStatus` entry, **or** a network-level failure (timeout, no response at all — `TOut` must tolerate deserializing from `{}`). | |
-| `OnStatus(int code)` | Returns an `HttpStatusBuilder` with `.As<TOut>()` (loopback) / `.Then(Action<TState> mutate)` (inline) for one exact status code, taking priority over the 2xx/everything-else buckets. | |
+| `OnStatus(int statusCode)` | Returns an `HttpStatusBuilder` with `.As<TOut>()` (loopback) / `.Then(Action<TState> mutate)` (inline) for one exact status code, taking priority over the 2xx/everything-else buckets. | |
 | `WithRetry(int maxAttempts, TimeSpan delay)` | This call's **own** bounded retry for a genuine network-level failure only — a definitive HTTP response, even a 5xx, is never retried; it's mapped via `OnStatus`/`OnFailure` instead. Deliberately separate from `EventBuilder.Retry(RetryPolicy)`, which replays the *entire* step's actions from index 0 (re-POSTing this call along with everything else in the step) — `.WithRetry` is scoped to just this one HTTP call. Defaults to a single attempt. | |
 
 **`ctx.CallHttpAsync(...)`** (`SagaContextHttpExtensions`, `VSaga.Http`) is the imperative counterpart,

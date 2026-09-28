@@ -7,7 +7,7 @@
 #   docker compose -p vsaga-brighter -f docker-compose.yml -f docker-compose.brighter.yml up -d --build
 #
 # Plain `docker compose up` (no overlay) behaves exactly as before -- RabbitMq is still the default
-# Transport:Provider (see samples/VSaga.Samples.OrderProcessing/appsettings.json).
+# Transport:Provider (see dotnet/samples/VSaga.Samples.OrderProcessing/appsettings.json).
 # Ports use the "!override" merge tag rather than plain sequences: Compose's default list-merge
 # behavior concatenates ports arrays across files instead of replacing them, which would leave this
 # overlay trying to bind docker-compose.yml's original host ports (5433/5672/15672/5080) as well as

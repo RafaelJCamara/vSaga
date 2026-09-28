@@ -7,7 +7,7 @@ and the runtime that drives orchestrated and choreographed sagas.
 
 ```bash
 dotnet add package VSaga.Core
-dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + .EFCore.Postgres
+dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.MongoDB / .Redis / .EFCore + .EFCore.Postgres
 dotnet add package VSaga.Transport.InMemory     # or VSaga.Transport.RabbitMQ / .Wolverine / .MassTransit / .Brighter / .Http
 ```
 

@@ -9,18 +9,20 @@ new here; the rest of this index is organized by topic, roughly in the order you
   correlation (including business-key correlation), compensation, timeouts, fan-out/join, sub-saga
   composition.
 - [`saga-dsl.md`](saga-dsl.md) — the full method inventory for the fluent DSL:
-  `OrchestratedSagaDefinition`, `ChoreographedSagaDefinition`, `StateBuilder`, `EventBuilder`,
+  `OrchestratedSagaDefinition`, `ChoreographedSagaDefinition`, `State`, `StateBuilder`, `EventBuilder`,
   `ChoreographyEventBuilder`, `TimeoutBuilder`, `RetryPolicy`, `ISagaContext`, and `.CallHttp`.
 - [`configuration.md`](configuration.md) — every options class: `SagaOrchestratorOptions`, the
-  outbox, each transport adapter, chaos, dashboard auth, OpenTelemetry wiring.
+  outbox, each transport adapter, persistence (the `Persistence:Provider` switch, `VSagaRedisOptions`,
+  `VSagaMongoOptions`, `ConnectionStrings:VSaga`), `.CallHttp`'s `HttpCallOptions`, chaos, dashboard
+  auth, OpenTelemetry wiring.
 - [`persistence.md`](persistence.md) — EF Core/Postgres (migrations, the Postgres-volume caveat),
   MongoDB (the replica-set prerequisite, pinned write concern, the collections and indexes, supported
   servers), Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
   persistence.
 - [`observability.md`](observability.md) — the persisted event log, OpenTelemetry traces/metrics,
   and the one-line OTLP exporter wiring.
-- [`dashboard.md`](dashboard.md) — API endpoints, API-key authentication, the Angular SPA, and the
-  Saga Map.
+- [`dashboard.md`](dashboard.md) — API endpoints, API-key authentication, live updates over SignalR,
+  the Angular SPA, and the Saga Map.
 - [`testing.md`](testing.md) — `SagaTestHarness`, for unit-testing saga definitions against the real
   engine with no broker/database.
 - [`chaos.md`](chaos.md) — `VSaga.Chaos`'s fault-injection middleware (delay/drop/duplicate).
@@ -40,10 +42,11 @@ new here; the rest of this index is organized by topic, roughly in the order you
 
 - [`design/`](design/) — design documents for features as they were planned. Read these for the
   *reasoning* behind a decision; read the reference docs above for the shipped shape. Each carries its
-  own **Status** line at the top; one of them describes work that does not exist: the
-  release-automation half of `production-readiness.md` §3 was never built. The three persistence plans
-  are all implemented. `production-readiness.md` also plans an npm/TypeScript-SDK half; that SDK was
-  removed on 2026-09-27, and a status note at the top of the plan says which parts no longer apply.
+  own **Status** line at the top. Two of them plan work that was never built: the release-automation half of
+  `production-readiness.md` §3, and `sub-saga-composition.md`'s Slice 3, closed by a recorded decision
+  rather than left open. The three persistence plans are all implemented. `production-readiness.md`
+  also plans an npm/TypeScript-SDK half; that SDK was removed on 2026-09-27, and a status note at the
+  top of the plan says which parts no longer apply.
   - [`design/http-based-sagas.md`](design/http-based-sagas.md)
   - [`design/mixed-sagas.md`](design/mixed-sagas.md)
   - [`design/sub-saga-composition.md`](design/sub-saga-composition.md)
@@ -68,22 +71,24 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0002-redis-persistence-provider.md`](adr/0002-redis-persistence-provider.md) — **Accepted**
     and **implemented** 2026-09-26.
   - [`adr/0003-persistence-contract-clauses.md`](adr/0003-persistence-contract-clauses.md) —
-    **Accepted** and **implemented** 2026-09-26.
+    **Accepted** 2026-09-25 and **implemented** 2026-09-26.
   - [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md) — **Accepted**,
-    retroactive: records shipped behaviour, including a live documentation hazard for non-Postgres
-    providers.
+    retroactive: records shipped behaviour, including the claim fallback every non-Postgres EF Core
+    provider silently takes, safe for one dispatcher instance only. `persistence.md` now states it; the
+    startup warning the ADR requires has not been added.
   - [`adr/0005-saga-state-storage-model.md`](adr/0005-saga-state-storage-model.md) — **Accepted**,
     retroactive: one shared table, one opaque state blob, and the promotion rule.
 
 ## History
 
-- [`history/`](history/) — the changelog narrative this project's README used to carry directly,
-  preserved verbatim, one file per topic, each headed with the commit(s) it describes. Read these for
-  *how* a feature was built and verified — live-verification traces, mutation-testing results, bugs
-  found and fixed along the way — content that matters for provenance but would clutter a reference
-  doc meant to describe the feature as it stands today. Because they are verbatim, some still describe
-  the TypeScript participant SDK (removed 2026-09-27) and the dashboard's old `typescript/dashboard-web`
-  path (now `dashboard-web/`).
+- [`history/`](history/) — one file per topic: the changelog narrative this project's README used to
+  carry directly, preserved verbatim and headed with the commit(s) it describes, plus five records
+  written fresh after the docs restructure (the CI flakes, the third field test, the requirements
+  audit, and the Redis and MongoDB providers). Read these for *how* a feature was built and verified —
+  live-verification traces, mutation-testing results, bugs found and fixed along the way — content
+  that matters for provenance but would clutter a reference doc meant to describe the feature as it
+  stands today. Because they are kept unedited, some still describe the TypeScript participant SDK
+  (removed 2026-09-27) and the dashboard's old `typescript/dashboard-web` path (now `dashboard-web/`).
 
 ## Project meta
 

@@ -71,8 +71,8 @@ switch (persistenceProvider)
 }
 
 // Transport:Provider, same convention as the OrderProcessing sample's own switch
-// (samples/VSaga.Samples.OrderProcessing/Program.cs) — RabbitMq by default (matching every prior compose
-// run), Http when a docker-compose overlay says so (docker-compose.http.yml). This only ever needs to
+// (dotnet/samples/VSaga.Samples.OrderProcessing/Program.cs) — RabbitMq by default (matching every prior
+// compose run), Http when a docker-compose overlay says so (docker-compose.http.yml). This only ever needs to
 // match whichever adapter the saga host itself is running, so it doesn't grow a case per adapter the
 // way the sample does: /retry's PublishRawAsync just needs a working IMessageTransport pointed at that
 // host, not feature parity with every track. RabbitMqHealthCheck already degrades to "no message broker

@@ -32,6 +32,11 @@ reports as "no such saga" (so the orchestrator would start a duplicate) while in
 Most survived because there is no shared conformance suite. `Search` is starker still: it has **no test
 on either provider**, so its divergence was never a matter of overlapping coverage.
 
+[2026-09-27: all of this has since been fixed. The clauses are written into the interfaces (the
+corrected text is at `ISagaAdminStore.cs:5-39` and `ISagaEventLogStore.cs:17-43`), every divergence and
+shared defect named above is fixed, and `Search` has conformance cases that run against every provider.
+The `file:line` citations above point at the pre-fix code.]
+
 Planning also turned up two engine bugs unrelated to any provider, both concerning `ChildSagaFinished`
 being published for a transition no snapshot recorded.
 
@@ -54,7 +59,12 @@ rule instead of pinning in-memory's aliasing, and F14, which gives clause 11 the
 alternative of writing the clauses only, or deferring the fixes, was rejected: the clauses without the
 suite are unenforced prose, and the suite without the fixes is red on arrival.
 
-Five substantive questions were settled along the way.
+Five substantive questions were settled along the way. [2026-09-27: where §1–§4 below say *today*,
+*currently* or *never stated*, they describe the tree before the plan's commits; every defect they name
+is now fixed (see Status), and their citations of that pre-fix code — `SagaSummary.cs:34`,
+`SagaOrchestrator.cs:126`/`:130`/`:134`, `ISagaOutboxStore.cs:69-76`, `EfCoreSagaSummaryReader.cs:117`,
+`InMemorySagaStore.cs:249`, `SagaEndpoints.cs:192`, `ISagaTimeoutStore.cs:32` and
+`SagaTimeoutDispatcherHostedService.cs:34-38` — no longer match the current files.]
 
 ### 1. `Search` is case-insensitive, and EF is the one that is wrong
 
@@ -69,8 +79,8 @@ case-insensitive.
 **The mechanism is provider-agnostic lowering, not `EF.Functions.ILike`.** An earlier draft of this ADR
 specified `ILike`; that does not compile. `ILike` is an Npgsql extension method, and
 `VSaga.Persistence.EFCore.csproj:14-16` references only EFCore, `.Relational` and DI.Abstractions -- a
-provider-agnosticism `docs/persistence.md:10-15` documents as deliberate. EF instead lowers both the
-column and the term, on **both** disjuncts: the second one,
+provider-agnosticism [`docs/persistence.md`](../persistence.md#ef-core--postgres) documents as
+deliberate. EF instead lowers both the column and the term, on **both** disjuncts: the second one,
 `x.CorrelationId.ToString().Contains(search)`, is equally case-sensitive today and an `ILike` fix would
 have missed it.
 
@@ -83,18 +93,22 @@ keep in sync.
 
 `ISagaOutboxStore` never stated what happens to a staged row when the persist that should commit it
 throws. EF's shared `DbContext` means a later persist — or even an `AppendAsync` — flushes it, and the
-orchestrator reasons about exactly that at `SagaOrchestrator.cs:640-644`, treating it as intended. But
+orchestrator reasons about exactly that at `SagaOrchestrator.cs:668-673`, treating it as intended. But
 `ISagaOutboxStore.cs:69-76` only ever describes the ambient flush as a *hazard*, never as a guarantee.
 
 The contract is now the stated rule above — *any* commit in the unit of work, not only a persist, since
 six EF call sites issue `SaveChangesAsync` and `ScheduleAsync` does so on the ordinary success path
-(`SagaOrchestrator.cs:259`). Its consequence is that EF's behaviour on
+(`SagaOrchestrator.cs:286`). [2026-09-27: seven, as the plan's §9.2 corrections record: the commits on the
+shared context that `ISagaOutboxStore.cs:48-51` lists — the snapshot store's insert and update, the
+event log's append, the timeout store's schedule and cancel, the outbox's `MarkDispatchedAsync` and
+the admin reset. The provider's other three `SaveChangesAsync` calls are the two claim fallbacks and
+the topology store.] Its consequence is that EF's behaviour on
 `RecordDeliveryExhaustedAsync`'s guard-false branch — where the `LogAsync` at `SagaOrchestrator.cs:126`
 flushes a staged `ChildSagaFinished` and the `PersistAsync` at `:134` is then skipped entirely — is a
 **defect**, not the contract. It publishes "this child finished" for a saga whose terminal status was
 never recorded — or, when the status is already terminal, announcing `Failed` for a saga that is
-`Completed`. That is precisely the class of lie `DiscardStagedChildSagaFinishedAsync` (`:855-870`)
-exists to prevent. Note the guard-**true** branch is *not* a defect: the comment at `:640-644` reasons
+`Completed`. That is precisely the class of lie `DiscardStagedChildSagaFinishedAsync` (`:877-892`)
+exists to prevent. Note the guard-**true** branch is *not* a defect: the comment at `:668-673` reasons
 it through correctly.
 
 *Rejected:* pinning EF's current behaviour as the contract. It is safest against unknown regressions,
@@ -113,10 +127,12 @@ told, not have their reset silently clobber a concurrent step's committed transi
 **This forces two signature changes, landed as one.** `SagaConcurrencyException`'s only constructor
 requires `expectedVersion` (`SagaExceptions.cs:7`) and `ResetStateAsync` has no version parameter, so it
 gains `int expectedVersion` -- the dashboard passes the version it rendered, which is the only thing
-that makes the 409 mean "the saga changed since you looked". `UpdatedAtUtc` likewise moves to the
-caller's `TimeProvider`: both providers currently stamp `DateTimeOffset.UtcNow`
-(`EfCoreSagaSummaryReader.cs:117`, `InMemorySagaStore.cs:249`), bypassing the clock every other engine
-write uses.
+that makes the 409 mean "the saga changed since you looked". [2026-09-27: as built, the SPA sends no
+version: the retry endpoint passes the `Version` its own `GetAsync` read at the start of the request
+(`SagaEndpoints.cs:130`, `:181`), so the 409 covers a write between that read and the reset, not a
+change since the page rendered.] `UpdatedAtUtc` likewise moves to the caller's `TimeProvider`: both
+providers currently stamp `DateTimeOffset.UtcNow` (`EfCoreSagaSummaryReader.cs:117`,
+`InMemorySagaStore.cs:249`), bypassing the clock every other engine write uses.
 
 **And the dashboard needs a mapping commit.** Today `SagaEndpoints.cs:192` is a bare `await` and the API
 has no exception-to-status mapping, so without fix F12 this decision turns a raced retry into an
@@ -140,7 +156,12 @@ raw bytes by type name -- so filtering its claim by types it cannot enumerate wo
 permanently**. The registry exists only at `SagaTimeoutDispatcherHostedService.cs:20`.
 
 Source-compatible via the optional-parameter precedent `SagaLogEntry.cs:18-22` sets, so no external
-`ISagaTimeoutStore` implementation breaks.
+`ISagaTimeoutStore` implementation breaks. [2026-09-27: not source-compatible for implementers, nor for
+every caller. That precedent is a record constructor, which has no implementers, and it appends its
+defaulted parameters after every existing one; `sagaTypes` sits before `cancellationToken`, so a
+caller passing the token positionally no longer compiles (`c8eb78c` updated the two in-tree ones, the
+timeout dispatcher and `SagaTestHarness`). An implementer must add the parameter, as both in-tree
+stores did in the same commit, so an external implementation breaks at compile time.]
 
 *Rejected:* documenting a "one database per service" rule instead — it leaves a real bug live and pushes
 correctness into deployment convention. *Rejected:* having the dispatcher re-schedule rows it cannot
@@ -178,7 +199,7 @@ the long-form plans in `docs/design/`; an ADR links to its plan rather than repe
   from one MinVer tag, so this moves the whole surface.
 - `ResetStateAsync` gains a failure mode it did not have: a dashboard retry racing a live message now
   returns 409 where in-memory previously always succeeded.
-- `SagaEndpoints.cs:31`'s new `pageSize` clamp is a visible API behaviour change — a request for
+- `SagaEndpoints.cs:98`'s new `pageSize` clamp is a visible API behaviour change — a request for
   `pageSize=10000` now returns 500 rows.
 - `ISagaAdminStore.ResetStateAsync` gains a parameter: a breaking change to a published contract.
 - Two clauses touch code outside the providers: the claim filter reaches `VSaga.Core`'s timeout
@@ -190,9 +211,15 @@ the long-form plans in `docs/design/`; an ADR links to its plan rather than repe
 ### Neutral
 
 - No provider is chosen. Both provider ADRs stay `Proposed` and their blocking questions stay open.
+  [2026-09-27: since superseded — ADRs 0001 and 0002 were both accepted and implemented on 2026-09-26,
+  with their blocking questions resolved.]
 - The `Persistence:Provider` switch and the `PostgresHealthCheck` move stay unowned, deferred to
   whichever provider effort lands first. `PostgresHealthCheck.cs:19-21`'s fail-open behaviour is
-  harmless while EF is the only production provider.
+  harmless while EF is the only production provider. [2026-09-27: the Redis provider authored both
+  seams (`19c6303`), the second as a host registration rather than a move. Each host switches on
+  `Persistence:Provider` (`Postgres`, `Redis`, `MongoDb`), and the Dashboard API registers one store
+  check under the provider-neutral name `persistence`: `PostgresHealthCheck` only on the Postgres
+  branch, each other provider's own check otherwise (`Dashboard.Api/Program.cs:106-118`).]
 
 ---
 
@@ -204,7 +231,8 @@ the long-form plans in `docs/design/`; an ADR links to its plan rather than repe
 2. **An external `ISagaSummaryReader`/`ISagaTimeoutStore` implementation exists in the wild.** The repo
    designs for that possibility (`SagaChangePollingService.cs:33-38`, `:113-118`), and the behaviour
    changes here — total-order sorts, case-insensitive search, the `ResetStateAsync` failure mode — are
-   observable to one even though the source signatures stay compatible.
+   observable to one even though the source signatures stay compatible. [2026-09-27: not for
+   `ISagaTimeoutStore`, whether implemented or called with a positional token — see decision 4's note.]
 3. **Both provider ADRs are rejected.** The work still stands on its own (it fixes four live bugs), but
    the conformance suite's third fixture would never arrive, and the `SupportsAtomicUnitOfWork`
    capability flag would have only one shape to describe.

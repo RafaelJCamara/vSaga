@@ -15,9 +15,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <!-- Not used at runtime — the `dotnet ef migrations` tooling requires its startup project to
-         directly reference this package (a transitive reference from VSaga.Persistence.EFCore isn't
-         enough, since that project marks it PrivateAssets="all"). PrivateAssets="all" here too so it
-         doesn't ship in the published output. -->
+         directly reference this package, and no other project in the solution references it, so
+         nothing brings it in transitively. PrivateAssets="all" so it doesn't ship in the published
+         output. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>

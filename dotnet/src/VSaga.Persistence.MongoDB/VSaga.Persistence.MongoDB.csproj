@@ -3,7 +3,7 @@
   <!-- Package-specific description for nuget.org search results, overriding Directory.Build.props's
        shared fallback (MSBuild evaluates that file first, so this later value wins). -->
   <PropertyGroup>
-    <Description>MongoDB persistence for vSaga: saga snapshot storage, the event log, timeouts and the transactional outbox on the native MongoDB.Driver, with a short multi-document transaction committing each snapshot and its staged outbox rows together. Requires a replica set; see docs/persistence.md.</Description>
+    <Description>MongoDB persistence for vSaga: saga snapshot storage, the event log, timeouts and the transactional outbox on the native MongoDB.Driver, with a short multi-document transaction committing a snapshot together with any outbox rows staged alongside it. Requires a replica set; see docs/persistence.md.</Description>
   </PropertyGroup>
 
   <ItemGroup>

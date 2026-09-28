@@ -39,9 +39,10 @@ public sealed class PostShipmentState : SagaState
 /// <b>It runs under <see cref="OrderSaga"/>'s own correlation id</b>, which is the point: it is the
 /// same business transaction, so both sagas track the same order under one id and the dashboard's
 /// <c>/api/correlations/{id}</c> shows them side by side. That is only possible because a saga
-/// instance is keyed by <c>(SagaType, CorrelationId)</c> — see the README section of that name. The
-/// three participants above propagate the inbound correlation id onto their replies (via
-/// <c>MessageEnvelope.From</c>), so their events land on this instance without anyone minting a new id.
+/// instance is keyed by <c>(SagaType, CorrelationId)</c> — see docs/concepts.md's "Saga instances and
+/// identity" section. The three participants above propagate the inbound correlation id onto their
+/// replies (via <c>MessageEnvelope.From</c>), so their events land on this instance without anyone
+/// minting a new id.
 /// </para>
 ///
 /// <para>

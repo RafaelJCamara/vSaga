@@ -4,9 +4,11 @@
 10.7.0, implements `IMessageTransport` directly on Brighter's transport-level primitives
 (`RmqMessageProducer.SendAsync` to publish, `RmqMessageConsumer` to receive/ack/reject) — never
 Brighter's `CommandProcessor` dispatch pipeline, its Outbox/Inbox, or its request-handler routing.
-Constructed directly as plain singletons rather than through `services.AddBrighter(...)`, since that
-helper wires up the dispatch/outbox stack this adapter must not depend on. Full build history and
-live-verification detail: [`../history/transport-adapter-brighter.md`](../history/transport-adapter-brighter.md).
+`AddVSagaBrighter` registers `BrighterOptions` and `BrighterTransport` as plain singletons rather than
+going through `services.AddBrighter(...)`, since that helper wires up the dispatch/outbox stack this
+adapter must not depend on. A new producer is created per publish and a new consumer per subscription,
+all over one shared connection descriptor that Brighter's connection pool resolves to a single AMQP
+connection. Full build history and live-verification detail: [`../history/transport-adapter-brighter.md`](../history/transport-adapter-brighter.md).
 
 - **No default exchange for a direct send.** Brighter's `RmqMessageProducer` is bound to exactly one
   exchange for its whole lifetime and always publishes using the message's `Topic` as the routing key —

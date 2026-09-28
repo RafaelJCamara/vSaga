@@ -27,8 +27,8 @@ traffic; `.CallHttp` is for calling something that was never a vSaga participant
 
 ## Wiring it up
 
-Register the transport and map its inbound receive endpoint — same one-call-plus-one-map shape as
-every other `AddVSaga*`/`Map*` pair:
+Register the transport and map its inbound receive endpoint — the only adapter that needs a `Map*`
+call beside its `AddVSaga*` one, since with no broker to consume from, peers POST to this host directly:
 
 ```csharp
 builder.Services.AddVSagaHttp(o =>
@@ -42,11 +42,13 @@ var app = builder.Build();
 app.MapVSagaHttp();
 ```
 
-`AddVSagaHttp` (`ServiceCollectionExtensions.cs`) registers `HttpMessageTransport` as the host's
-`IMessageTransport`; `MapVSagaHttp` (`VSagaHttpEndpointExtensions.cs`) maps this service's own receive
-endpoint at `HttpTransportOptions.InboundPath` (default `/vsaga/messages`) and returns the
-`RouteHandlerBuilder`, so you can chain `.RequireAuthorization()` yourself — vSaga ships no auth
-opinion here. Full option reference:
+`AddVSagaHttp` (`ServiceCollectionExtensions.cs`) registers `HttpMessageTransport` as a singleton and,
+as the host's `IMessageTransport`, a `MiddlewarePipelineTransport` wrapping it (like every adapter's,
+see [`index.md`](index.md#the-two-decorators-every-adapter-is-wrapped-in)); `MapVSagaHttp`
+(`VSagaHttpEndpointExtensions.cs`) maps this service's own receive endpoint at
+`HttpTransportOptions.InboundPath` (default `/vsaga/messages`) and returns the `RouteHandlerBuilder`,
+so you can chain `.RequireAuthorization()` yourself — vSaga ships no auth opinion here. Full option
+reference:
 [`../configuration.md#httptransportoptions-vsagatransporthttp`](../configuration.md#httptransportoptions-vsagatransporthttp).
 
 Not to be confused with `VSaga.Http`'s `AddVSagaHttpCalls()` — a different package registering a
@@ -129,17 +131,23 @@ product.
   `ParticipantService`, and any consumer that skips a repeated `MessageId` — acks a duplicate delivery
   without invoking its handler, which is correct on a broker because the original reply was already
   published. Over this adapter's synchronous request/response the handler is *also* what produces the
-  response body, so a redelivered request returns `202` with no body and the calling saga gets nothing
-  until its `RequestTimeout` expires and, eventually, its own state timeout rescues it. This is
+  response body, so a redelivered request returns `202` with no body: the calling saga's POST completes
+  at once with no reply to feed back, and only its own state timeout eventually rescues it. This is
   accepted deliberately rather than fixed: redeliveries are rare, and the alternative is making every
   participant cache and replay its replies.
 
 ## Unroutable-publish detection
 
-A non-2xx or connection-level failure on the outbound POST is surfaced as
-`MessageTransportPublishException`, matching the RabbitMQ adapter's own detection fidelity — at higher
-fidelity than the Wolverine and Brighter adapters, whose underlying gateway packages have no
-unroutable-return signal at all.
+A publish with nowhere to go — no local subscriber, and no configured `Endpoints` entry named by its
+type's `Routes` entry (or, when its type has none, by the `"*"` wildcard entry) — throws
+`MessageTransportPublishException` with `IsUnroutable = true`, and so does a `SendAsync`/`SendRawAsync`
+to a name missing from `Endpoints`. Either is first offered to the ambient reply collector when it runs
+underneath a genuine inbound request (see [The two mechanisms](#the-two-mechanisms)), and throws only
+if not captured there. That matches the RabbitMQ adapter's own detection fidelity — at higher fidelity
+than the Wolverine and Brighter adapters, whose underlying gateway packages have no unroutable-return
+signal at all. A POST that *was* routed but then failed — a non-2xx response, a connection-level
+failure, a `RequestTimeout` expiry or cancellation, or a `200` missing one of the reserved `x-vsaga-`
+headers — also throws `MessageTransportPublishException`, but with `IsUnroutable = false`.
 
 Options: [`../configuration.md#httptransportoptions-vsagatransporthttp`](../configuration.md#httptransportoptions-vsagatransporthttp).
 Compose overlay: `docker-compose.http.yml` (splits the sample into separate Sagas/Participants

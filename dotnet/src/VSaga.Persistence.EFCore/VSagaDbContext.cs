@@ -122,7 +122,7 @@ public sealed class VSagaDbContext(DbContextOptions<VSagaDbContext> options) : D
             // Partial: only sagas that declare CorrelateOn ever have a non-null BusinessKey, and one that
             // doesn't leaves it null -- see EfCoreStoreTests for the regression test this protects.
             // Unique so two concurrent initiates for the same business key can't both win; the race is resolved
-            // by reserving before the step runs, not by catching after it -- see production-readiness.md S5.2.
+            // by reserving before the step runs, not by catching after it -- see production-readiness.md §5.2.
             b.HasIndex(x => new { x.SagaType, x.BusinessKey })
                 .IsUnique()
                 .HasFilter("\"BusinessKey\" IS NOT NULL");

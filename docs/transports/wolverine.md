@@ -1,8 +1,9 @@
 # Transport adapter: Wolverine
 
-`VSaga.Transport.Wolverine`, built on WolverineFx.RabbitMQ, uses Wolverine's raw send/receive
-primitives only — never its mediator/handler-discovery machinery, since that would mean Wolverine
-owning dispatch to business logic. Full build history and live-verification detail:
+`VSaga.Transport.Wolverine`, built on WolverineFx.RabbitMQ, sends through Wolverine's raw-send
+primitive and receives through a single adapter-owned handler (`RawEnvelopeHandler`) — never through
+Wolverine's mediator/handler-discovery machinery for business-message types, since that would mean
+Wolverine owning dispatch to business logic. Full build history and live-verification detail:
 [`../history/transport-adapter-wolverine.md`](../history/transport-adapter-wolverine.md).
 
 - **The scope boundary.** Wolverine's normal mode deserializes an inbound envelope into a specific CLR

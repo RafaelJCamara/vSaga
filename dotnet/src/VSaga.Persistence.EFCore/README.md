@@ -1,10 +1,10 @@
 # VSaga.Persistence.EFCore
 
-EF Core persistence for vSaga: saga snapshot storage, the event log, and the transactional outbox,
-backed by any EF Core database provider. Provider-agnostic on purpose — it depends only on
-`Microsoft.EntityFrameworkCore`, not any specific database. Pass the actual provider hookup
-(`UseNpgsql`, `UseSqlServer`, `UseSqlite`, ...) yourself; see `VSaga.Persistence.EFCore.Postgres` for
-the Postgres-specific migrations package.
+EF Core persistence for vSaga: saga snapshot storage, the event log, timeouts and the transactional outbox,
+backed by any relational EF Core database provider. Provider-agnostic on purpose — its only EF Core
+dependencies are `Microsoft.EntityFrameworkCore` and `Microsoft.EntityFrameworkCore.Relational`, not any
+specific database. Pass the actual provider hookup (`UseNpgsql`, `UseSqlServer`, `UseSqlite`, ...)
+yourself; see `VSaga.Persistence.EFCore.Postgres` for the Postgres-specific migrations package.
 
 ## Install
 

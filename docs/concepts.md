@@ -14,15 +14,17 @@ transactions that happen to reuse a correlation id, without colliding. Every sto
 or mutates one instance takes both parts of the key (`ISagaSnapshotStore<TState>.FindAsync(sagaType,
 correlationId, ...)`, `ISagaEventLogStore.GetTimelineAsync(sagaType, correlationId, ...)`, and so on).
 
-`GET /api/correlations/{correlationId}` is the one place a bare correlation id is still meaningful: it
+`GET /api/correlations/{correlationId}` is the one route keyed on a bare correlation id: it
 returns every saga instance — of any type — currently tracking that id, which is how a caller holding
 only an id (a log line, a support ticket) resolves it to a concrete instance.
 
 ## Orchestrated vs. choreographed
 
 vSaga has two DSL base classes, both implementing the same `ISagaDefinition<TState>` contract the
-runtime, persistence, timeout dispatcher, and dashboard are written against. Neither the engine nor
-the dashboard needs to know which kind a saga is to run it — registration is the same
+engine's runtime (`SagaOrchestrator`, for inbound messages and due timeouts alike) is written against;
+persistence and the dashboard never see a definition at all, only what gets persisted — saga state and
+its summaries, each instance's timeline, the recorded service topology. Neither the engine nor the
+dashboard needs to know which kind a saga is to run it — registration is the same
 `services.AddVSagaEngine(o => o.AddSaga<TDefinition, TState>())` call either way. See
 [`saga-dsl.md`](saga-dsl.md) for the full method reference of both.
 
@@ -58,12 +60,14 @@ The default correlation mechanism is the transport-stamped correlation id (`Mess
 the saga instance whose `(SagaType, CorrelationId)` matches. `CorrelateBy` on an `EventBuilder`/
 `ChoreographyEventBuilder` step additionally *assigns* a value extracted from the message onto saga
 state (e.g. stamping `ctx.Saga.OrderId` from an inbound message's own `OrderId` field) — by itself,
-that's just a stored value for dashboard search/traceability with no effect on message routing.
+that's just a stored value, visible in the saga's Data tab on the dashboard (dashboard search matches
+only saga type and correlation id), with no effect on message routing.
 
 **Business-key correlation** (`CorrelateOn`) arms a second, fallback lookup. A saga definition that
-calls `CorrelateOn(s => s.OrderId)` in its constructor declares `OrderId` as its business key; any
-`CorrelateBy` on that same property additionally registers as that message type's business-key
-extractor — and a `CorrelateBy` on any *other* property is a startup failure, not a no-op (see below).
+calls `CorrelateOn(s => s.OrderId)` in its constructor, ahead of its steps, declares `OrderId` as its
+business key; from then on any `CorrelateBy` on that same property additionally registers as that
+message type's business-key extractor — and a `CorrelateBy` on any *other* property is a startup
+failure, not a no-op (see below).
 When an inbound message's transport correlation id doesn't match an existing instance, the
 orchestrator falls back to looking up `(SagaType, BusinessKey)` before concluding the message starts a
 new instance. This matters for messages that legitimately arrive under a *different* transport
@@ -83,14 +87,25 @@ that second extractor — it does not construct at all. Assign non-key fields wi
 `.Then((ctx, msg) => ctx.Saga.ShipmentId = msg.ShipmentId)` instead. Two sibling throws come from the
 same guard: a second `CorrelateBy` for the same message type, and a second `CorrelateOn`. All three
 are constructor-time, which is the point — a mis-declared business key is caught at registration
-rather than surfacing as a mysterious correlation miss in production.
+rather than surfacing as a mysterious correlation miss in production. The guard only sees what comes
+after it, though: a `CorrelateBy` that runs earlier in the constructor than `CorrelateOn` is neither
+registered nor checked — it silently stays assign-only and never drives the fallback lookup — so
+declare `CorrelateOn` first.
 
-The business key is persisted as `SagaState.BusinessKey`, with a **partial unique index** scoped to
-`(SagaType, BusinessKey) WHERE BusinessKey IS NOT NULL` — partial so sagas that never set a business
-key (the common case, unaffected by this feature) impose no uniqueness constraint on `NULL`, and scoped
-by saga type so two different saga types may legitimately reuse the same business-key value (an order
-number meaningful to `OrderSaga` says nothing about a `PostShipmentChoreography` instance that happens
-to reuse the string).
+The business key is persisted as `SagaState.BusinessKey`, and that stored value — not the state
+property `CorrelateOn` names — is what the fallback looks up. The engine stamps it exactly once, when
+the instance is created, from the initiating message's `CorrelateBy` extractor, and never re-syncs it
+from the property: a saga whose initiating message type has no extractor never holds a key and is
+never found by one, even after a later step fills `OrderId`.
+
+Every persistence provider allows at most one instance per `(SagaType, BusinessKey)` for a non-null
+key: EF Core with a **partial unique index** (`WHERE BusinessKey IS NOT NULL`), MongoDB with a unique
+index partial on `businessKey: {$type: "string"}`, Redis and the in-memory store with a per-key
+reservation (see [`persistence.md`](persistence.md)). The constraint is partial so sagas that never set
+a business key (the common case, unaffected by this feature) impose no uniqueness constraint on
+`NULL`, and scoped by saga type so two different saga types may legitimately reuse the same
+business-key value (an order number meaningful to `OrderSaga` says nothing about a
+`PostShipmentChoreography` instance that happens to reuse the string).
 
 **A correlation-id-carrying message still resolves by transport id first.** The business-key fallback
 only runs when the transport correlation id misses. This means `CorrelateOn` does not change behaviour
@@ -108,7 +123,8 @@ would collide with itself. The parent-child relationship rides on two dedicated 
 ## Compensation
 
 `.Compensate()` on a step (or a timeout) runs every registered `Compensate(state, ...)` delegate for
-the states this saga instance has actually visited, **most-recent first**. "Visited" is derived from
+the states this saga instance has actually visited, **most-recent first** — by first visit: a state
+re-entered later keeps its original place, and its delegate runs only once. "Visited" is derived from
 the persisted event log (`ISagaContext.VisitedStates`), not from a static list of every declared
 state — a state the instance never reached has no compensation delegate invoked for it. Compensation
 delegates are ordinary `Func<ISagaContext<TState>, CancellationToken, Task>` callbacks registered via
@@ -160,6 +176,14 @@ concurrently: the timeout claims first (or loses the claim and is abandoned, pub
 than running its side effects and only discovering the lost race on its own final write, after
 messages had already gone out over the transport.
 
+**Timeouts fire on a 5-second poll, not at their exact due time.** `SagaTimeoutDispatcherHostedService`
+claims due timeout rows every 5 seconds, at most 50 per poll per process, and neither number is
+configurable (unlike the outbox poller's, in [`SagaOutboxOptions`](configuration.md#sagaoutboxoptions)).
+A timeout therefore fires up to about 5 seconds after it falls due, and later under a backlog, so a
+`WithTimeout` delay is a lower bound, not a precise deadline. Each process claims only rows for the saga
+types it has registered (see [`persistence.md`](persistence.md#ef-core--postgres)). Under
+`SagaTestHarness`, `AdvanceTimeByAsync` fires due timeouts directly instead.
+
 ## Fan-out and join
 
 A single step can dispatch several messages at once — `.Publish(...).Publish(...)` chains, run
@@ -172,11 +196,14 @@ is last. See [`saga-dsl.md`](saga-dsl.md) for the exact signatures.
 ## Sub-saga composition
 
 A saga can start another saga as a step (`ISagaContext.StartChildAsync`), and a child can notify its
-own parent (`ISagaContext.NotifyParentAsync`) or have the engine notify on its behalf when it fails,
-or when it times out *and the timeout goes terminal* (`ChildSagaFinished`, published by the engine
-itself, not through `ISagaContext`).
+own parent (`ISagaContext.NotifyParentAsync`) or have the engine notify on its behalf when handling a
+message throws — a step's unhandled exception, or an unexpected message under
+`OnUnhandledEvent(UnhandledEventPolicy.Throw)` — or when it times out *and the timeout goes terminal*
+(`ChildSagaFinished`, published by the engine itself, not through `ISagaContext`). A child that
+finishes `Failed` through an ordinary DSL step reports nothing unless it calls `NotifyParentAsync`
+itself.
 
-**`ChildSagaFinished` is not a general "the child stopped waiting" signal.** The failure path publishes
+**`ChildSagaFinished` is not a general "the child stopped waiting" signal.** The exception path publishes
 it unconditionally, but the timeout path publishes only when the timeout step resolved a final status —
 that is, only when the child's `WithTimeout(...)` declared `.Finalize(...)`. A child whose timeout
 merely compensates and transitions tells its parent nothing at all. A parent must therefore not treat
@@ -185,7 +212,12 @@ which is the only recovery that does not depend on how the child's DSL happens t
 
 See [`saga-dsl.md`](saga-dsl.md) for the method reference and
 [`design/sub-saga-composition.md`](design/sub-saga-composition.md) for the full design history,
-including two races found in production traffic (a child that reports back from the very step that
-started it can race ahead of the parent's own not-yet-persisted transition) that are pinned by tests
-but not fixed, since a real fix means reordering the engine's "run step actions, then persist"
-sequence throughout — out of scope for the sub-saga feature itself.
+including two races found while building it, not in live traffic: a child that reports back — or
+throws — from the very step that started it can race ahead of the parent's own not-yet-persisted
+transition. Both are pinned by tests but not fixed, since a real fix means reordering the engine's
+"run step actions, then persist" sequence throughout — out of scope for the sub-saga feature itself.
+Under the default `SagaOutboxMode.Deferred` they reproduce deterministically on the in-memory
+transport's synchronous dispatch and remain a narrow hazard on a real one.
+`SagaOutboxOptions.Mode = SagaOutboxMode.All` closes both: it holds the parent's `StartChildAsync`
+publish until the parent's own persist has committed, so the child cannot start, let alone report
+back, before that transition is recorded (see [`configuration.md`](configuration.md#sagaoutboxoptions)).

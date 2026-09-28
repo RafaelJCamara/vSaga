@@ -1,15 +1,17 @@
 # VSaga.Persistence.MongoDB
 
 MongoDB persistence for vSaga: saga snapshot storage, the event log, timeouts and the transactional
-outbox on the native `MongoDB.Driver` (Apache-2.0). Each snapshot and the outbox rows staged with it
-commit in one short multi-document transaction; the event log's appends commit on their own, at
-majority write concern, because the engine's redelivery dedupe rests on them.
+outbox on the native `MongoDB.Driver` (Apache-2.0). A snapshot and the outbox rows staged with it
+commit together in one short multi-document transaction (a snapshot with nothing staged, the common
+case, is a bare single-document write); the event log's appends commit on their own, at majority write
+concern, because the engine's redelivery dedupe rests on them.
 
 **A replica set is a hard prerequisite** — a single-member set is enough — and there is no
 non-transactional escape hatch: an outbox row that commits without its snapshot would be republished
 after a crash for a transition that never happened. The provider's health check reports Unhealthy,
 naming the prerequisite, on a standalone `mongod` or a `mongos`, until its indexes exist, and when the
-connection string explicitly asks for a read preference or write concern the provider overrides.
+connection string explicitly asks for a read preference, read concern or write concern the provider
+overrides.
 
 ## Install
 

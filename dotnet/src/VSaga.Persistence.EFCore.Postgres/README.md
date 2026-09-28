@@ -1,8 +1,9 @@
 # VSaga.Persistence.EFCore.Postgres
 
-PostgreSQL provider wiring for `VSaga.Persistence.EFCore` — migrations and connection setup for running
-vSaga sagas against Postgres. Kept as a separate package from `VSaga.Persistence.EFCore` specifically so
-that package stays provider-agnostic.
+PostgreSQL provider wiring for `VSaga.Persistence.EFCore` — the migrations for running vSaga sagas
+against Postgres, plus the `Npgsql.EntityFrameworkCore.PostgreSQL` dependency that supplies `UseNpgsql`.
+The connection setup itself is yours, as in Usage below. Kept as a separate package from
+`VSaga.Persistence.EFCore` specifically so that package stays provider-agnostic.
 
 ## Install
 

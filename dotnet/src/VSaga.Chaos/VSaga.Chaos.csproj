@@ -3,7 +3,7 @@
   <!-- Package-specific description for nuget.org search results, overriding Directory.Build.props's
        shared fallback (MSBuild evaluates that file first, so this later value wins). -->
   <PropertyGroup>
-    <Description>Fault-injection package for vSaga: chaos-engineering middleware that drops, delays, and corrupts saga messages in test and staging environments.</Description>
+    <Description>Fault-injection package for vSaga: chaos-engineering middleware that drops, delays, and duplicates saga messages in test and staging environments.</Description>
   </PropertyGroup>
 
   <ItemGroup>

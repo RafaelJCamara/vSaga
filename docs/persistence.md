@@ -10,12 +10,15 @@ configuration in [Redis → Durability policy](#durability-policy). In-memory re
 
 All four implement the same set of store contracts (`VSaga.Abstractions.Persistence`):
 `ISagaSnapshotStore<TState>`, `ISagaSummaryReader`, `ISagaEventLogStore`, `ISagaTimeoutStore`,
-`ISagaOutboxStore`, `ISagaAdminStore`, and `IServiceTopologyStore`. The hosts pick one with the
-[`Persistence:Provider`](configuration.md#persistenceprovider--picking-the-store) switch.
+`ISagaOutboxStore`, `ISagaAdminStore`, and `IServiceTopologyStore`. The hosts pick one of the three
+durable providers with the [`Persistence:Provider`](configuration.md#persistenceprovider--picking-the-store)
+switch (`Postgres`, `Redis` or `MongoDb`); in-memory is not one of its values.
 
 All four are held to the same written contracts by the cross-provider `VSaga.Persistence.Conformance`
-suite, which a third-party provider can run against itself. The eight divergences and three shared
-defects the first two once had are catalogued, with their fixes, in
+suite, which a third-party provider can run against itself; its
+[README](../dotnet/tests/VSaga.Persistence.Conformance/README.md) covers the `IProviderFixture` to
+implement and the xUnit v2 requirement. The eight divergences and three shared defects the first two
+once had are catalogued, with their fixes, in
 [`design/persistence-contracts.md`](design/persistence-contracts.md) §1 and §3; all are fixed.
 
 ## EF Core / Postgres
@@ -55,13 +58,14 @@ using (var scope = app.Services.CreateScope())
 }
 ```
 
-(This is exactly what `VSaga.Dashboard.Api`'s own `Program.cs` does — see there for the non-fatal
-try/catch around it, useful if the app might start before Postgres is reachable.) See
-`dotnet/src/VSaga.Persistence.EFCore.Postgres/Migrations/` for the migration history: identity scoping
-to `(SagaType, CorrelationId)`, the Saga Map's service-map fields, sub-saga parent-linkage columns, the
-outbox table (plus its own follow-up index migration), the business-key column with its partial unique
-index, and the `SagaInstances.UpdatedAtUtc` index the dashboard's change poller needs (eight migrations
-in total).
+(This is what `VSaga.Dashboard.Api`'s own `Program.cs` does — see there for the non-fatal try/catch
+around it, useful if the app might start before Postgres is reachable, and for its
+`GetService<VSagaDbContext>()` guard, which skips the step when `Persistence:Provider` selects Redis or
+MongoDB.) See `dotnet/src/VSaga.Persistence.EFCore.Postgres/Migrations/` for the migration history:
+identity scoping to `(SagaType, CorrelationId)`, the Saga Map's service-map fields, sub-saga
+parent-linkage columns, the outbox table (plus its own follow-up index migration), the business-key
+column with its partial unique index, and the `SagaInstances.UpdatedAtUtc` index the dashboard's change
+poller needs (eight migrations in total).
 
 **The five tables** `VSagaDbContext` maps, for anyone querying the database directly:
 
@@ -93,11 +97,12 @@ act on every row.
 
 > **This applies to Postgres and nothing else.** The choice is an exact string comparison against
 > `"Npgsql.EntityFrameworkCore.PostgreSQL"` (`EfCoreProviderNames.Npgsql`, tested by
-> `EfCoreSagaTimeoutStore.ClaimDueAsync` and `EfCoreSagaOutboxStore.ClaimPendingAsync`). **Every** other provider — including `UseSqlServer`,
+> `EfCoreSagaTimeoutStore.ClaimDueAsync` and `EfCoreSagaOutboxStore.ClaimPendingAsync`). **Every** other EF Core provider — including `UseSqlServer`,
 > suggested above — silently takes a plain load-then-update fallback that is correct for exactly one
-> dispatcher instance. Two replicas on a non-Postgres provider will fire the same timeout twice and
+> dispatcher instance. Two replicas on any other EF Core provider will fire the same timeout twice and
 > publish the same outbox row twice, with no error anywhere. See
-> [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md).
+> [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md). (The Redis and
+> MongoDB providers claim atomically and are not affected.)
 
 **Claiming marks the row terminal, so redelivery is at-most-once.** A claim marks a timeout `Fired` and
 an outbox row `Dispatched` as part of the claim itself. If the dispatcher then fails to act on it, the
@@ -150,8 +155,8 @@ wrapped.
 **What it is not.** Not a cache: no key the provider owns ever carries a TTL, and `maxmemory-policy` must
 be `noeviction` — pointing it at a team's existing shared cache Redis is unsupported, and since "we
 already run Redis" usually means a cache tuned for eviction, that is the prerequisite most likely to be
-violated. Not a Cluster provider: Cluster mode is refused (see the health check below). Not a migration
-path: `Persistence:Provider` is a greenfield choice.
+violated. Not a Cluster provider: Cluster mode is reported Unhealthy (see the health check below). Not a
+migration path: `Persistence:Provider` is a greenfield choice.
 
 ### Where Redis is better, and where it is worse
 
@@ -189,7 +194,7 @@ tier is the decision:
 | `maxmemory-policy` | `noeviction` | `noeviction` |
 | replication | optional, async | ≥ 1 replica **and** `min-replicas-to-write 1`, `min-replicas-max-lag 10` |
 | instance | dedicated | dedicated |
-| Cluster | refused | refused |
+| Cluster | unsupported (Unhealthy) | unsupported (Unhealthy) |
 | **loss on `kill -9`** | **up to 1 s of acknowledged writes** | none locally |
 | **loss on failover** | **unbounded by replication lag** | bounded: writes are *rejected* (`NOREPLICAS`) rather than silently at risk |
 | write latency | Redis-class | Postgres-with-`synchronous_commit=on`-class |
@@ -232,7 +237,7 @@ neighbouring operator is a live change — and reports **Unhealthy**, naming the
 - Cluster mode (`cluster_enabled`), or a connection to a replica rather than the primary;
 - `used_memory / maxmemory` above `WriteMemoryThreshold` (default 90 %);
 - any torn write (below);
-- the key space's schema marker (`{ns}:meta` `sv`) missing or of another version;
+- the key space's schema marker (`{vsaga:<Namespace>}:meta` `sv`) missing or of another version;
 - **`CONFIG GET` being disabled**, as it is on several managed tiers — reported as *unverifiable*, never
   as healthy;
 - server-side Lua unavailable.
@@ -241,8 +246,10 @@ The healthy description names the server, its version and the tier it is running
 `redis 7.4.11, durability tier A (appendfsync everysec, min-replicas-to-write 0, 0 replica(s)), 0.7 %
 of maxmemory used`. Bootstrap is a retrying hosted service (`RedisPersistenceBootstrapper`), never
 fail-fast: the host starts without Redis, the stores fail until it is reachable, and the health check
-stays Unhealthy until a probe passes — which is what `docker-compose.redis.yml`'s
-`depends_on: service_healthy` gates on.
+stays Unhealthy until a probe passes. Under `docker-compose.redis.yml` that is what gates
+`order-processing`: its `depends_on: dashboard-api: service_healthy` (from `docker-compose.yml`) waits
+on dashboard-api's `/health`, where this check runs as `persistence`; the overlay's own
+`depends_on: redis: service_healthy` waits only for `redis-cli ping`.
 
 ### Atomicity and the torn-write sentinel
 
@@ -255,8 +262,8 @@ classes are removed by construction — every key is computed in C#, no `cjson`,
 a pre-flight memory gate refuses a persist before any write when the last probe put the server above
 `WriteMemoryThreshold` (`RedisMemoryPressureException`, an infrastructure failure the engine redelivers).
 The residual — an abort at 100 % memory — is made **loud**: the script writes the instance to
-`{ns}:torn` first and deletes it last, and the health check goes Unhealthy naming every instance left
-there. Repair the instance, then `HDEL` its field.
+`{vsaga:<Namespace>}:torn` first and deletes it last, and the health check goes Unhealthy with the
+torn-write count, naming the first ten instances left there. Repair the instance, then `HDEL` its field.
 
 Script-cache discipline: every script runs as `EVALSHA` and, on `NOSCRIPT` (a restart, `SCRIPT FLUSH`,
 a replica taking over), retries once as `EVAL` inside the provider — a `NOSCRIPT` that escaped would
@@ -277,6 +284,7 @@ fixed-width), and any other user-supplied component that is not last in its key 
 | `dedupe:{corr}\|{type}` | SET | inbound message ids only — the O(1) `IsDuplicateAsync` |
 | `to:row:{id}`, `to:due`, `to:for:…` | HASH, ZSET, SET | a timeout row, the due-ordered claim set (Pending rows only), the per-scope cancel lookup |
 | `ob:row:{messageId}`, `ob:pending` | HASH, ZSET | an outbox row, the created-ordered claim set |
+| `to:seq`, `ob:seq` | STRING | the `INCR` counters behind `SagaTimeout.Id` and `SagaOutboxMessage.Id` |
 | `ix:updated`, `ix:status:{s}`, `ix:type:{type}`, `ix:kind:{k}`, `ix:parent:{corr}\|{type}` | ZSET | the summary indexes: score = updated (or created) microseconds, member = `{corr}\|{type}` |
 | `ix:corr:{corr}`, `ix:types`, `ix:typecount` | SET, HASH, HASH | `FindByCorrelationIdAsync`, `GetSagaTypesAsync` |
 | `topo` | HASH | the service topology |
@@ -299,14 +307,15 @@ direction of the walk; this is per-provider, as the contract allows).
 
 Core Redis has no substring index. `Search` is a case-folded scan of the candidate members — contract-
 complete (case-insensitive, both fields, independently, no minimum term length) — bounded by
-`MaxSearchScanMembers` (default 100 000). Above the bound `ListAsync` **throws**
-`RedisSearchScanLimitExceededException` rather than silently truncating a page, because the dashboard's
-change poller reads a short page as "drained" and a false positive there is a permanently dropped
-update. No other provider throws here; narrow the search with a type, status or kind filter, or raise
-the bound. Without a search, a list sorted by `UpdatedAt` over at most one filter — the change poller's
-shape — is answered by rank from one sorted set, O(log n + page); the Status sort walks the seven status
-buckets in enum order; anything else materialises the candidates server-side (`ZINTER`, read-only) and
-pages client-side.
+`MaxSearchScanMembers` (default 100 000) per candidate set. Under the Status sort each of the seven
+status buckets is a candidate set of its own, so a Status-sorted search can scan up to seven times the
+bound. Above the bound `ListAsync` **throws** `RedisSearchScanLimitExceededException` rather than
+silently truncating a page, because the dashboard's change poller reads a short page as "drained" and a
+false positive there is a permanently dropped update. No other provider throws here; narrow the search
+with a type, status or kind filter, or raise the bound. Without a search, a list sorted by `UpdatedAt`
+over at most one filter — the change poller's shape — is answered by rank from one sorted set,
+O(log n + offset + page); the Status sort walks the seven status buckets in enum order; anything else
+materialises the candidates server-side (`ZINTER`, read-only) and pages client-side.
 
 Head-of-line blocking is the cost: Redis is single-threaded, so a deep page, a broad search or a
 `LRANGE` over a long timeline stalls every other command, including live `UpdateAsync`s — where Postgres
@@ -346,7 +355,7 @@ provider's user to its own commands.
 | --- | --- | --- |
 | Self-hosted Redis ≥ 7.0, single primary (± replicas) | **Supported** | the live-verified configuration (7.4) |
 | Self-hosted Valkey ≥ 7.2 | **Supported** | core commands and Lua only; no module dependency |
-| Redis Cluster (any vendor) | **Unsupported, refused at bootstrap** | the persist script's atomic unit needs one shard |
+| Redis Cluster (any vendor) | **Unsupported**, reported Unhealthy by the probe | the persist script's atomic unit needs one shard |
 | Redis Cloud / Azure Managed Redis / ElastiCache / MemoryDB / Memorystore, non-cluster | Untested | should work where `INFO`, `CONFIG GET`, `EVAL` are allowed; where `CONFIG GET` is disabled the health check reports the guarantees as *unverifiable* and stays Unhealthy |
 | Any shared or evicting instance | **Unsupported** | `maxmemory-policy` other than `noeviction` deletes snapshots, timeouts and outbox rows silently |
 
@@ -381,14 +390,15 @@ services.AddHealthChecks().AddCheck<MongoPersistenceHealthCheck>("persistence");
 
 Options are in [`configuration.md`](configuration.md#vsagamongooptions-vsagapersistencemongodb). The
 second parameter hands you the driver's `MongoClientSettings` for TLS, pool sizing, timeouts and the
-`ClusterConfigurator` hook (the driver exposes no `ActivitySource`, so provider-level tracing goes
-through that hook), on the same reasoning EF Core's `DbContextOptionsBuilder` is exposed rather than
-wrapped.
+`ClusterConfigurator` hook (driver 3.6, which this repo resolves, exposes no `ActivitySource`, so
+provider-level tracing goes through that hook; 3.7.0 and later, inside the package's `[3.6.0,4.0.0)`
+range, add built-in OpenTelemetry tracing of their own), on the same reasoning EF Core's
+`DbContextOptionsBuilder` is exposed rather than wrapped.
 
 **What it is not.** Not a standalone-`mongod` provider, and not a sharded-cluster one in this version:
-the health check refuses both (below). Not a migration path: `Persistence:Provider` is a greenfield
-choice. Not a document-modelling exercise: `TState` stays a `System.Text.Json` string in `dataJson`,
-byte-identical to EF Core's `DataJson`
+the health check reports both Unhealthy (below). Not a migration path: `Persistence:Provider` is a
+greenfield choice. Not a document-modelling exercise: `TState` stays a `System.Text.Json` string in
+`dataJson`, byte-identical to EF Core's `DataJson`
 ([`adr/0005-saga-state-storage-model.md`](adr/0005-saga-state-storage-model.md)); native BSON storage
 is a named follow-up with a fidelity test suite as its entry gate.
 
@@ -452,7 +462,7 @@ naming the prerequisite, on any of:
 - a connection-string contradiction (above);
 - the probe itself failing to reach the server.
 
-The healthy description names the server, topology and state: `MongoDB 8.0.16, replica set rs0
+The healthy description names the server, topology and state: `MongoDB 8.0.32, replica set rs0
 (primary), indexes in place, 0 stranded outbox row(s)`. The stranded count — Pending outbox rows older
 than `StrandedOutboxThreshold` — is reported in the check's data, not failed on: it means the outbox
 dispatcher is not draining, not that the store is broken. Bootstrap is a retrying hosted service
@@ -461,13 +471,17 @@ until it is reachable, index creation runs on every tick (idempotent when the de
 error when it does not — the marker that a layout change is due), and the schema marker is written only
 once every index exists. Creating the partial indexes is also the capability check: a server without
 them fails at bootstrap rather than silently later. The health check stays Unhealthy until a probe
-passes, which is what `docker-compose.mongo.yml`'s `depends_on: service_healthy` gates on.
+passes. Under `docker-compose.mongo.yml` that is what gates `order-processing`: its
+`depends_on: dashboard-api: service_healthy` (from `docker-compose.yml`) waits on dashboard-api's
+`/health`, where this check runs as `persistence`; the overlay's own `depends_on: mongo: service_healthy`
+waits only for the member to report itself PRIMARY.
 
 ### The collections and indexes
 
-Eight collections in one database (`DatabaseName`, default `vsaga`; **one database per service** — two
-services sharing one would share an outbox and a timeout schedule). Every `_id` is a scalar string or
-number, never a subdocument: a composite subdocument `_id` compares by field order and byte equality, so
+Eight collections in one database (`DatabaseName`; when unset, the connection string's own database
+path, else `vsaga`; **one database per service** — two services sharing one would share an outbox and a
+timeout schedule). Every `_id` is a scalar (a string, a number or, on `sagaEventLog`, an `ObjectId`),
+never a subdocument: a composite subdocument `_id` compares by field order and byte equality, so
 a reordered class map would make every lookup miss and every insert create a second document instead of
 colliding — the one schema change that could never be migrated in place.
 
@@ -490,7 +504,8 @@ change poller — whose watermark is the last timestamp it pushed — would sile
 it. Both halves are written from one mapping and only the ticks are read back, so the provider declares a
 one-tick `TimestampResolution`. Enums are stored numerically, because the dashboard's Status sort is over
 `SagaStatus`'s declared order. Correlation ids are stored as their lower-case text (no `Guid` is ever
-handed to the driver, and no serializer is registered process-wide). Every document carries `sv: 1`.
+handed to the driver, and no serializer is registered process-wide). Every document except the
+`sagaSequences` and `sagaCounters` counters carries `sv: 1`.
 
 The indexes, by name — the health check lists these and reports Unhealthy until every one exists:
 
@@ -508,8 +523,8 @@ The indexes, by name — the health check lists these and reports Unhealthy unti
 | | `ix_timeout_cancel` | `{sagaType, correlationId, forState, status}` |
 | `sagaOutboxMessages` | `ix_outbox_claim` | `{status, createdAtTicks, id}`, partial on `status: Pending` |
 
-No search index, by design (below). Nine secondary indexes on `sagaInstances` against EF Core's six,
-three of them containing `updatedAtTicks`, which changes on every persist — extra index maintenance
+No search index, by design (below). Eight secondary indexes on `sagaInstances` against EF Core's six,
+five of them containing `updatedAtTicks`, which changes on every persist — extra index maintenance
 inside the transaction window is the accepted cost.
 
 **Schema evolution.** There are no migrations; there is the `sv` marker, explicit index names, and this
@@ -517,9 +532,9 @@ procedure: stop every host, change the documents (a copy-collection aggregation,
 drop and recreate the affected indexes by name, bump the marker. **Dropping `ux_sagaType_businessKey`
 disables the business-key race adjudicator for the duration of the rebuild** — that is a correctness
 window, not a footnote, which is why the procedure starts with stopping the hosts. `HasMaxLength`
-constraints also disappear here: a value Postgres rejects succeeds silently, and an unbounded string can
-exceed WiredTiger's 1024-byte index-key limit on `_id`, `ux_sagaType_businessKey` or `ix_parent` as an
-insert-time error; at EF Core's caps the worst case is about 600 bytes.
+constraints also disappear here: a value Postgres rejects succeeds silently, and MongoDB has had no
+index-key size limit since 4.2 (the old 1024-byte cap), so an oversized `_id`, business key or parent
+pointer is indexed rather than rejected. Only the 16 MB document cap bounds it.
 
 ### Claims and appends: the round-trip costs
 
@@ -547,9 +562,10 @@ from.
 `ListAsync` is one `countDocuments` and one `find` with skip/limit, so `TotalCount` is exact over the
 same filtered set the page comes from. Every sort arm ends in a total order — the requested column, then
 (for a Status sort) `UpdatedAt` descending as EF Core does, then the row's own `(sagaType, correlationId)`
-— with the identity tiebreak following the lead key's direction rather than staying ascending, because
-MongoDB serves a sort from an index only when the pattern equals the index or its exact inverse; the
-contract asks for a per-provider deterministic order, not EF Core's. `Search` is an `$or` of two
+— with the identity tiebreak following the direction of the key before it (the sort column's, or
+`UpdatedAt`'s descending on a Status sort) rather than staying ascending, because MongoDB serves a sort
+from an index only when the pattern equals the index or its exact inverse; the contract asks for a
+per-provider deterministic order, not EF Core's. `Search` is an `$or` of two
 non-anchored `$regex` predicates over `sagaTypeLower` and the lower-cased correlation-id text — two
 **independent** matches, as the contract states, never one concatenated field that would match a term
 straddling the two — with the term regex-escaped and lower-cased. It is unindexed on purpose: a
@@ -560,17 +576,17 @@ never blocks the saga hot path, and there is no scan bound and no HTTP 400.
 
 ### Supported servers
 
-Capability is verified at bootstrap by creating the indexes and probing the topology, not by parsing a
-version string.
+Capability is verified at bootstrap by creating the indexes and probing the topology, not inferred from
+a version string; the version is parsed only to enforce the 6.0 floor.
 
 | Server | Status | Reason |
 | --- | --- | --- |
 | Self-hosted MongoDB ≥ 6.0, replica set (single-member is enough) | **Supported** | 8.0 is the live-verified configuration; 6.0 is the oldest the probe accepts |
-| MongoDB Atlas, replica-set (dedicated or shared) tier | Untested | should work; note the driver's default 100-connection pool per client per host against Atlas M0's 100-connection cap — two vSaga services with defaults saturate it, so size the pool through `configureClient` |
-| Standalone `mongod` | **Refused at bootstrap** | no multi-document transactions |
-| Sharded cluster (`mongos`) | **Refused at bootstrap** | untested in this version: no shard key designed, cross-shard transaction cost unmeasured |
+| MongoDB Atlas, replica-set (dedicated or shared) tier | Untested | should work. The driver's default pool is 100 connections per client per host and Atlas caps connections per tier (500 on a Free/M0 cluster), so size the pool through `configureClient` when several vSaga services share a small tier |
+| Standalone `mongod` | **Unsupported**, reported Unhealthy by the probe | no multi-document transactions |
+| Sharded cluster (`mongos`) | **Unsupported**, reported Unhealthy by the probe | untested in this version: no shard key designed, cross-shard transaction cost unmeasured |
 | Primary-secondary-arbiter (PSA) | **Unsupported** | `w:majority` hangs when the single data-bearing secondary is down |
-| Amazon DocumentDB | **Unsupported** | no partial indexes, so `ux_sagaType_businessKey` and `ix_parent` cannot be created — bootstrap fails and the health check stays Unhealthy |
+| Amazon DocumentDB | **Unsupported** | its partial indexes (5.0 instance-based clusters only) accept no `$type` filter, so `ux_sagaType_businessKey`, `ix_parent` and `ix_instance_messageId_entryType` cannot be created — bootstrap fails and the health check stays Unhealthy |
 | Azure Cosmos DB for MongoDB (RU) | **Unsupported** | lacks the multi-document transaction scope the persist relies on |
 
 ### The compose overlay
@@ -601,22 +617,23 @@ is in [`history/mongodb-persistence-provider.md`](history/mongodb-persistence-pr
 
 **Measured storage**, from `collStats` after 153 sagas: a snapshot document averages 821 bytes, a
 timeline entry 436 bytes, and the sample's completed sagas write 10–15 entries each, so a completed
-saga costs **≈ 6–8 KB of data plus roughly the same again in indexes** (nine on `sagaInstances`, the
-unique timeline index and the dedupe index on `sagaEventLog`) before WiredTiger's compression, which
-took the 900 KB of data to 580 KB on disk. Nothing the engine does deletes a saga, and no retention
-shape that keeps compensation and redelivery dedupe correct exists; a TTL index on the event log or a
-naive one on the outbox (which would delete Pending rows) is out of scope by design.
+saga costs **≈ 6–8 KB of data plus roughly the same again in indexes** (nine on `sagaInstances`
+and three on `sagaEventLog`, counting `_id` on both) before WiredTiger's compression, which took the
+900 KB of data to 580 KB on disk. Nothing the engine does deletes a saga, and no retention shape that
+keeps compensation and redelivery dedupe correct exists; a TTL index on the event log or a naive one on
+the outbox (which would delete Pending rows) is out of scope by design.
 
 ## In-memory
 
-`VSaga.Persistence.InMemory` (`AddVSagaInMemoryPersistence()`) backs six store contracts with a single
-shared `InMemorySagaStore` singleton (`ISagaSnapshotStore<>` is separate — an open-generic
-`InMemorySagaSnapshotStore<>`, `ServiceCollectionExtensions.cs:25`) — intended for local development and as the foundation of
+`VSaga.Persistence.InMemory` (`AddVSagaInMemoryPersistence()`) backs all seven store contracts with a
+single shared `InMemorySagaStore` singleton (six resolve to it directly; `ISagaSnapshotStore<>` is an
+open-generic `InMemorySagaSnapshotStore<>` that delegates to it, `ServiceCollectionExtensions.cs:25`)
+— intended for local development and as the foundation of
 `VSaga.Testing`'s `SagaTestHarness` (see [`testing.md`](testing.md)), **not for production use**: state
 does not survive a process restart, and there is no concurrency-safe claim semantics beyond a single
 process's own in-memory locking. Its `EnqueueAsync` also commits immediately rather than staging, so the
 outbox's crash-atomicity guarantee does not hold — the provider documents this itself at
-`InMemorySagaStore.cs:332-337`.
+`InMemorySagaStore.cs:380-385`.
 
 ```csharp
 services.AddVSagaInMemoryPersistence();

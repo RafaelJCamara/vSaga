@@ -15,13 +15,13 @@
 
 ## Context
 
-vSaga ships two persistence providers today (three since 2026-09-26, when the Redis provider of ADR 0002
-landed; the count below is as of this decision — [`docs/persistence.md`](../persistence.md)), both
-implementing the same seven contracts in `dotnet/src/VSaga.Abstractions/Persistence/`:
+vSaga ships two persistence providers today (four since 2026-09-26, when ADR 0002's Redis provider and
+then this one landed; the count below is as of this decision — [`docs/persistence.md`](../persistence.md)),
+both implementing the same seven contracts in `dotnet/src/VSaga.Abstractions/Persistence/`:
 `ISagaSnapshotStore<TState>`, `ISagaEventLogStore`, `ISagaOutboxStore`, `ISagaTimeoutStore`,
 `ISagaAdminStore`, `ISagaSummaryReader`, and `IServiceTopologyStore`. The reference implementation is EF
 Core over Postgres (`dotnet/src/VSaga.Persistence.EFCore/`); the other is a dev/test in-memory store
-that documents its own residual outbox gap (`InMemorySagaStore.cs:332-337`,
+that documents its own residual outbox gap (`InMemorySagaStore.cs:380-385`,
 `docs/design/production-readiness.md` §4.4).
 
 We want a third: MongoDB, for teams already standardised on it who would otherwise have to run Postgres
@@ -33,25 +33,25 @@ This is the part that makes the decision non-obvious. Seven properties, most of 
 implementation comments rather than in the contracts themselves:
 
 1. **Outbox rows and the snapshot commit together.** `ISagaOutboxStore.EnqueueAsync` deliberately does
-   not commit; the snapshot store's write is what commits both (`ISagaOutboxStore.cs:41-49`). An
+   not commit; the snapshot store's write is what commits both (`ISagaOutboxStore.cs:42-62`). An
    implementation that commits early "would reopen exactly the dual-write window the outbox exists to
-   close" — and `SagaOrchestrator.cs:734-745` records a **live repro** of that bug on the in-memory
+   close" — and `SagaOrchestrator.cs:764-775` records a **live repro** of that bug on the in-memory
    provider.
 2. **Event-log appends are durable *before and independently of* the persist.** The redelivery safety net
    republishes under the same MessageId and relies on a durable log entry having already landed, so the
-   dedupe check recognises the redelivered copy (`SagaOrchestrator.cs:85-93` → `:398`).
+   dedupe check recognises the redelivered copy (`SagaOrchestrator.cs:90-98` → `:425`).
 3. **Optimistic concurrency mutates `state.Version` in place**, before serialisation, because
-   `HandleTimeoutAsync` persists the same live object twice (`SagaOrchestrator.cs:240`, `:289` → `:339`)
+   `HandleTimeoutAsync` persists the same live object twice (`SagaOrchestrator.cs:267`, `:316` → `:366`)
    and `FindAsync` reads the version back out of the serialised blob
-   (`EfCoreSagaSnapshotStore.cs:58-61`).
+   (`EfCoreSagaSnapshotStore.cs:66-69`).
 4. **Event-log reads are ordered**, because `GetVisitedStatesAsync` derives the entire compensation set
-   from timeline order (`SagaOrchestrator.cs:902-911`) — microseconds after appending to it (`:585` →
-   `:589`).
+   from timeline order (`SagaOrchestrator.cs:940-949`) — microseconds after appending to it (`:612` →
+   `:616`).
 5. **A partial unique index on `(SagaType, BusinessKey)`** adjudicates the concurrent-double-initiate
    race *before* either side's step runs (`VSagaDbContext.cs:126-128`,
    `docs/design/production-readiness.md` §5.2).
 6. **Atomic, ordered, non-blocking claim** for timeouts and outbox rows — on Postgres, an
-   `UPDATE … FOR UPDATE SKIP LOCKED … RETURNING` (`EfCoreSagaTimeoutStore.cs:87-99`).
+   `UPDATE … FOR UPDATE SKIP LOCKED … RETURNING` (`EfCoreSagaTimeoutStore.cs:98-124`).
 7. **A stable, total-ordered, `UpdatedSince`-filterable list**, because the dashboard's change poller
    pages through it once a second and a reshuffled tie group silently drops an update
    (`SagaChangePollingService.cs`).
@@ -64,8 +64,10 @@ shapes the whole decision.
 The copy-paste strategy that produced the second provider has already produced eight verified divergences
 between the two — unordered claim results in-memory, a missing `Version` patch in
 `InMemorySagaStore.ResetStateAsync`, a case-**sensitive** `Search` in EF against a contract that says
-otherwise, and more (design doc §3.1). None were caught, because **there is no shared conformance
-suite**. A third hand-written provider would compound a proven failure mode.
+otherwise, and more ([`persistence-contracts.md`](../design/persistence-contracts.md) §1.1). None were
+caught, because **there is no shared conformance suite**. A third hand-written provider would compound a
+proven failure mode. [2026-09-27: that suite now exists — `VSaga.Persistence.Conformance`, extracted
+under ADR 0003, which also fixed all eight divergences.]
 
 ---
 
@@ -79,11 +81,11 @@ suite**. A third hand-written provider would compound a proven failure mode.
 - **The repo's conventions are binding** — one logical change per commit with mutation testing, zero
   warnings, live verification for anything outbox- or timeout-related, overlay compose files rather than
   base-file edits, lockstep package versioning (`CONTRIBUTING.md`, `Directory.Build.props:21`).
-- **The dashboard's premise** is that it works against provider-agnostic contracts
-  (`docs/dashboard.md:6-8`). A provider that forces provider-specific code into `VSaga.Dashboard.Api`
-  falsifies that sentence.
+- **The dashboard's premise** is that it works against provider-agnostic contracts (the opening of
+  [`docs/dashboard.md`](../dashboard.md)). A provider that forces provider-specific code into
+  `VSaga.Dashboard.Api` falsifies that sentence.
 - **Operational honesty.** A new prerequisite and a new failure surface must not degrade the existing
-  stack's startup resilience (`Dashboard.Api/Program.cs:87-101`).
+  stack's startup resilience (`Dashboard.Api/Program.cs:126-141`).
 
 ---
 
@@ -96,9 +98,10 @@ suite**. A third hand-written provider would compound a proven failure mode.
 *Cons.* Structurally disqualified. `VSaga.Persistence.EFCore` references
 `Microsoft.EntityFrameworkCore.Relational`; the model uses `ToTable`/`HasMaxLength` throughout plus
 `HasFilter("\"BusinessKey\" IS NOT NULL")` (`VSagaDbContext.cs:128`); the claim path uses
-`FromSqlInterpolated` (`EfCoreSagaTimeoutStore.cs:87`); and the entire
+`FromSqlInterpolated` (`EfCoreSagaTimeoutStore.cs:122`); and the entire
 `VSaga.Persistence.EFCore.Postgres` migrations assembly has no non-relational equivalent.
-`docs/persistence.md:10-15` already records this constraint in the abstract.
+[`docs/persistence.md`](../persistence.md#ef-core--postgres) already records this constraint in the
+abstract.
 
 **Rejected.**
 
@@ -113,7 +116,7 @@ so every redelivered message is reprocessed non-idempotently. It would also hold
 across arbitrary user step I/O (`.CallHttp` is a shipped DSL feature), blowing the 60 s
 `transactionLifetimeLimitSeconds`; the 5 ms default `maxTransactionLockRequestTimeoutMillis` would turn
 same-instance contention into an abort of the *entire message*; and the dispatchers dispose their claim
-scope *before* the claimed work runs (`SagaTimeoutDispatcherHostedService.cs:63-68`), so a Scoped session
+scope *before* the claimed work runs (`SagaTimeoutDispatcherHostedService.cs:72-77`), so a Scoped session
 is structurally wrong there anyway.
 
 **Rejected.**
@@ -146,7 +149,7 @@ snapshot documents, the claim index becomes multikey over an unbounded array, an
 atomically claim N array elements across N documents. The snapshot becomes the hottest and largest
 document in the system, sharing one 16 MB budget with every pending message body. And it is a semantic
 mismatch: an outbox row's `CorrelationId` is the **envelope's**, not the publishing saga's — a queued
-`StartChildAsync` carries a fresh id and `NotifyParentAsync` the parent's (`SagaOrchestrator.cs:803-806`
+`StartChildAsync` carries a fresh id and `NotifyParentAsync` the parent's (`SagaOrchestrator.cs:833-836`
 is explicit).
 
 **Rejected**, and recorded here because it is the genuinely interesting alternative: the replica-set cost
@@ -184,11 +187,11 @@ AddVSagaMongoDb(Action<VSagaMongoOptions> configure,
 ```
 
 and selected as a **replacement for** the EF provider through a new `Persistence:Provider` configuration
-switch, mirroring the `Transport:Provider` switch at `Dashboard.Api/Program.cs:56-71`. The second
-parameter follows the precedent `docs/configuration.md:190-201` records for EF ("there is no
-`VSagaEfCoreOptions` class, because EF Core already has one") and is the only way to reach connection
-pooling, TLS material, and the `ClusterConfigurator` hook that provider-level tracing requires — the
-MongoDB .NET driver exposes no `ActivitySource` of its own.
+switch, mirroring the `Transport:Provider` switch at `Dashboard.Api/Program.cs:82-97`. The second
+parameter follows the precedent [`docs/configuration.md`](../configuration.md#persistence) records for
+EF ("there is no `VSagaEfCoreOptions` class, because EF Core already has one") and is the only way to
+reach connection pooling, TLS material, and the `ClusterConfigurator` hook that provider-level tracing
+requires — the MongoDB .NET driver exposes no `ActivitySource` of its own.
 
 **Atomicity** is a Scoped in-memory staging buffer plus one short multi-document transaction opened
 inside the snapshot store's own write, flushed **non-destructively** (peek → commit → clear, restore on
@@ -196,7 +199,7 @@ throw). Event-log appends, sequence allocation, timeout schedule/cancel, `MarkDi
 read stay outside any transaction.
 
 **A replica set or mongos is a hard prerequisite, with no non-transactional escape hatch.** The tempting
-precedent — `EfCoreSagaTimeoutStore.cs:39-49`'s non-Postgres fallback — is not comparable: that fallback
+precedent — `EfCoreSagaTimeoutStore.cs:37-53`'s non-Postgres fallback — is not comparable: that fallback
 is provider-*detected* and only ever reached by SQLite in tests, not an operator-settable flag. And parity
 with the in-memory provider's documented gap is false in the dimension that matters: in-memory's phantom
 outbox rows live in a `ConcurrentDictionary`, so a crash destroys them; Mongo's would be **durable**, and
@@ -228,7 +231,8 @@ live verification passes.
 - A third provider whose acceptance criteria exist in **executable** form, green on two providers before
   the third is written — so a Mongo failure is unambiguous rather than a contract argument.
 - Seven previously-undocumented contract clauses become written contract, and six existing cross-provider
-  divergences are fixed as a side effect. Two of those are live bugs today.
+  divergences are fixed as a side effect. Two of those are live bugs today. [2026-09-27: all fixed
+  2026-09-26 under ADR 0003.]
 - `ListAsync` gains a stable **total** order on every provider, closing a tie-group paging hazard that
   exists on Postgres too, just narrower.
 - The outbox/event-log transactional asymmetry becomes enforced by **dependency shape** rather than by
@@ -242,7 +246,7 @@ live verification passes.
   [`../design/redis-persistence.md`](../design/redis-persistence.md) §8.1 for why. The MongoDB build
   followed that precedent (design doc §8.2, deviation 1): the switch that picks the provider registers
   its check, and no check is moved into a persistence package.*
-- `docs/dashboard.md:6-8`'s provider-agnostic premise stays true.
+- [`docs/dashboard.md`](../dashboard.md)'s provider-agnostic premise stays true.
 
 ### Negative
 
@@ -255,14 +259,18 @@ live verification passes.
   per-message oplog volume roughly doubles.
 - Claim loops cost up to `batchSize` round trips per poll where Postgres costs one statement.
 - Nine secondary indexes on `sagaInstances` against EF's six, three containing a field that changes on
-  every persist — extra index maintenance inside the transaction window.
+  every persist — extra index maintenance inside the transaction window. [2026-09-27: as built, eight,
+  five of them containing `updatedAtTicks` (`MongoIndexes.cs:35`, `:82-86`).]
 - A new unbounded, correctness-bearing collection (`sagaSequences`, one document per saga instance ever
   created) that must never be pruned independently of its timeline.
 - A hard 16 MB document cap on `dataJson`, `payloadJson` and the outbox `body`, with a lossy (loud) guard
   on `payloadJson` — which records the full inbound body *before* the step runs, so an oversized message
   that Postgres accepts would otherwise make the saga permanently unstartable.
 - `HasMaxLength` constraints disappear: a value Postgres rejects silently succeeds on Mongo, and
-  unbounded strings can exceed WiredTiger's 1024-byte index-key limit on a hot path.
+  unbounded strings can exceed WiredTiger's 1024-byte index-key limit on a hot path. [2026-09-27: not
+  on any supported server — MongoDB dropped that limit in 4.2 and the provider's probe fails anything
+  below 6.0, so an oversized value is indexed rather than rejected and only the 16 MB document cap
+  bounds it ([`docs/persistence.md`](../persistence.md#the-collections-and-indexes)).]
 - **Stage 0 changes two shipped providers' observable behaviour and a published abstractions package
   before any Mongo code exists.**
 - `dotnet pack` grows by one package, and `MongoDB.Driver`'s transitive graph becomes a

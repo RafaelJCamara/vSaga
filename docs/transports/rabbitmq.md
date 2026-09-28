@@ -26,12 +26,12 @@ judged against this one's shape.
   parallelism; a sequential consumer is what you still have. (This matters when tuning chaos-injected
   delay against this adapter — see [`../chaos.md`](../chaos.md#running-it-against-the-sample).)
 - **Unroutable-publish detection.** Publisher confirms plus `mandatory: true` are both enabled, so a
-  broker-side nack or an unroutable message throws `MessageTransportPublishException.IsUnroutable`
-  instead of vanishing silently. The most common way to hit this: publishing a message type nothing has
-  called `SubscribeAsync` for yet — see the callout in
-  [`getting-started.md`](../getting-started.md#run-it) if you're moving a saga from the in-memory
-  transport to this one for the first time. The exception message names the unbound routing key/queue as
-  the likely cause.
+  broker-side nack or an unroutable message throws `MessageTransportPublishException` instead of
+  vanishing silently (`IsUnroutable` is `true` for an unroutable return, `false` for a nack). The most
+  common way to hit this: publishing a message type nothing has called `SubscribeAsync` for yet — see
+  the callout in [`getting-started.md`](../getting-started.md#run-it) if you're moving a saga from the
+  in-memory transport to this one for the first time. For an unroutable return, the exception message
+  names the unbound routing key/queue as the likely cause; a nack carries no such hint.
 - **Automatic recovery.** `AutomaticRecoveryEnabled`/`TopologyRecoveryEnabled` are both on
   (`RabbitMqConnectionManager`) — a connection blip recovers without operator intervention, though a
   message delivered-but-unacked immediately before a recovery can hit the documented RabbitMQ.Client

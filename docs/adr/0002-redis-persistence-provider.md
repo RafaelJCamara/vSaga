@@ -1,12 +1,14 @@
 # ADR 0002: Redis as a persistence provider
 
-**Status:** **Accepted** — 2026-09-26, by the maintainer. **Implemented** 2026-09-26: `VSaga.Persistence.Redis` ships, passes the full conformance suite against Redis 7.4 plus the provider's own script-flush, torn-write, misconfiguration and same-instant-drain cases, is selectable through the `Persistence:Provider` switch in both hosts, and was live-verified under `docker-compose.redis.yml` including a `kill -9` and unaided AOF restart — the record is in [`../persistence.md`](../persistence.md#redis) and [`../history/redis-persistence-provider.md`](../history/redis-persistence-provider.md). The blocking questions were decided as the plan recommended (Q1 two tiers, Q2 single primary with Redis ≥ 7.0 and Valkey, Cluster refused; Q4 probe and report Unhealthy including on an unverifiable server; Q5 bounded scan that throws), with the deviations §8.1 of the plan now records. Accepting the ADR settled the *what*: a `VSaga.Persistence.Redis` provider on `StackExchange.Redis` with core data types and server-side Lua, positioned as the plan's §1 states — a durable single-node provider with a stated loss window, never a Postgres peer except under its opt-in tier. The plan's blocking questions Q1, Q2, Q4 and Q5 (tier claim, server and Cluster scope, configuration validation, the bounded-scan search) and the fault-injection tier of Q3 are decided in the plan, not here, and remain open until Stage 1 starts; the Stage 0 prerequisite landed in full on 2026-09-26 (ADR 0003).
+**Status:** **Accepted** — 2026-09-26, by the maintainer. **Implemented** 2026-09-26: `VSaga.Persistence.Redis` ships, passes the full conformance suite against Redis 7.4 plus the provider's own script-flush, torn-write, misconfiguration and same-instant-drain cases, is selectable through the `Persistence:Provider` switch in both hosts, and was live-verified under `docker-compose.redis.yml` including a `kill -9` and unaided AOF restart — the record is in [`../persistence.md`](../persistence.md#redis) and [`../history/redis-persistence-provider.md`](../history/redis-persistence-provider.md). The blocking questions were decided as the plan recommended (Q1 two tiers, Q2 single primary with Redis ≥ 7.0 and Valkey, Cluster refused; Q4 probe and report Unhealthy including on an unverifiable server; Q5 bounded scan that throws), with the deviations §8.1 of the plan now records. Accepting the ADR settled the *what*: a `VSaga.Persistence.Redis` provider on `StackExchange.Redis` with core data types and server-side Lua, positioned as the plan's §1 states — a durable single-node provider with a stated loss window, never a Postgres peer except under its opt-in tier. The plan's blocking questions Q1, Q2, Q4 and Q5 (tier claim, server and Cluster scope, configuration validation, the bounded-scan search) and the fault-injection tier of Q3 are decided in the plan, not here — all on 2026-09-26, at Stage 1, with Q3's tier narrower than asked (the plan's §8.1); the Stage 0 prerequisite landed in full on 2026-09-26 (ADR 0003).
 **Date:** 2026-09-25
 **Relates to:** [`0003-persistence-contract-clauses.md`](0003-persistence-contract-clauses.md) — the
 accepted groundwork this depends on, owned by neither provider plan. Also
 [`0001-mongodb-persistence-provider.md`](0001-mongodb-persistence-provider.md), with which it still
 shares two unowned seams (the `Persistence:Provider` switch and health-check ownership); neither depends
-on the other landing first.
+on the other landing first. [2026-09-27: both seams have since landed — the switch and the
+host-registered `"persistence"` health check came with this provider, and the MongoDB provider added its
+case to both (`Dashboard.Api/Program.cs:46-71`, `:106-118`).]
 **Implementation plan:** [`../design/redis-persistence.md`](../design/redis-persistence.md)
 
 ---
@@ -25,9 +27,9 @@ providers in two ways that dominate every other consideration.
 ### 1. Redis has no secondary index
 
 `ISagaSummaryReader.ListAsync` requires a case-insensitive substring search over `SagaType` **and** the
-correlation id's string form, *independently* (`SagaSummary.cs:34`), combined with equality filters, a
+correlation id's string form, *independently* (`SagaSummary.cs:34-38`), combined with equality filters, a
 sort with a stable tiebreak, offset paging, and an exact `TotalCount` over the filtered set
-(`EfCoreSagaSummaryReader.cs:10-53`). The Angular dashboard ships a live search box bound to it
+(`EfCoreSagaSummaryReader.cs:10-75`). The Angular dashboard ships a live search box bound to it
 (`dashboard-web/src/app/pages/saga-list/saga-list.html:23-26`), so degrading it is a visible
 feature loss in a shipped UI, not a hypothetical.
 
@@ -46,10 +48,10 @@ got an OK for.
 For vSaga this is not a generic durability caveat, it is a specific correctness failure. The engine's
 redelivery safety net republishes under the same MessageId and relies on the event-log entry for that
 message already being durable, so the dedupe check recognises the redelivered copy
-(`SagaOrchestrator.cs:78-93` → `:398`). If that append is lost, `IsDuplicateAsync` returns false and the
+(`SagaOrchestrator.cs:83-98` → `:425`). If that append is lost, `IsDuplicateAsync` returns false and the
 step re-runs. Its deferred publishes go through `MessageEnvelope.From`, which mints a fresh
 `Guid.NewGuid().ToString("N")` (`MessageEnvelope.cs:50`) — so the *receiving* saga's own dedupe check,
-keyed on message id (`ISagaEventLogStore.cs:20`), sees a genuinely new message and processes it.
+keyed on message id (`ISagaEventLogStore.cs:28-32`), sees a genuinely new message and processes it.
 
 **A `ReserveInventory` or `ChargeCard` command executes twice, and nothing anywhere notices.**
 
@@ -61,7 +63,9 @@ obvious. For the three claim-and-reserve requirements Redis is the best fit of a
 - Atomic ordered claim (requirement 6) is a sorted set plus one Lua script: **one round trip**, ordered
   by construction. It matches Postgres's `SKIP LOCKED` statement, beats the MongoDB plan's
   `findOneAndUpdate` loop, and fixes by construction the unordered-claim divergence the in-memory
-  provider ships today (`InMemorySagaStore.cs:312-330`, `:378-396`).
+  provider ships today (`InMemorySagaStore.cs:312-330`, `:378-396`). [2026-09-27: no longer — ADR 0003's
+  fix F6 made both in-memory claims earliest-first, ties by id (`InMemorySagaStore.cs:350-378`,
+  `:431-454`).]
 - The business-key reservation (requirement 5) is `SET key value NX` — literally "reserve before the
   step runs", expressed more directly than a partial unique index.
 - `AppendAsync` is one `RPUSH` whose reply *is* the per-instance sequence number
@@ -79,9 +83,10 @@ obvious. For the three claim-and-reserve requirements Redis is the best fit of a
   live sagas with no error at any call site, a quantised sort score drops live updates, and a lost
   append duplicates a business command — all invisible.
 - **The repo's conventions are binding** — one logical change per commit with mutation testing, zero
-  warnings, live verification for outbox/timeout work, and `CONTRIBUTING.md:59-62`'s rule that
-  "compiled but never run" is not a pass.
-- **The dashboard's provider-agnostic premise** (`docs/dashboard.md:6-8`) must survive.
+  warnings, live verification for outbox/timeout work, and
+  [`CONTRIBUTING.md`](../../CONTRIBUTING.md#test)'s rule that "compiled but never run" is not a pass.
+- **The dashboard's provider-agnostic premise** (the opening of [`docs/dashboard.md`](../dashboard.md))
+  must survive.
 - **Do not fork the shared seams.** The contract groundwork (now ADR 0003), the `Persistence:Provider`
   switch and the health-check rename are common to any third provider and must be authored once.
 
@@ -121,7 +126,7 @@ Valkey — which would also forfeit option A's licensing answer.
 *Cons.* Every key in a Lua script must hash to one slot. The global indexes are single keys, so
 co-locating them with any saga means one constant hash tag for the whole keyspace — one slot, one shard,
 zero scaling. And outbox rows cannot be co-located with their saga *even in principle*: they are keyed by
-the **envelope's** correlation id (`SagaOrchestrator.cs:803-806`) and `StartChildAsync` mints a fresh one
+the **envelope's** correlation id (`SagaOrchestrator.cs:833-836`) and `StartChildAsync` mints a fresh one
 (`SagaContext.cs:108`). Hash-tagging them to the publishing saga restores atomicity but breaks
 `ClaimPendingAsync`, a global time-ordered claim across every instance, because no Redis command scans
 all slots atomically.
@@ -140,7 +145,7 @@ contracts it is best at — with Postgres keeping the snapshot, event log and re
 (`VSaga.Persistence.EFCore/ServiceCollectionExtensions.cs:18-26`), so two provider extensions resolve
 last-one-wins per interface, silently, by call order. More fundamentally, requirement 1's atomicity would
 then span two stores — the one thing the outbox contract structurally cannot tolerate
-(`ISagaOutboxStore.cs:41-49`).
+(`ISagaOutboxStore.cs:42-62`).
 
 **Deferred, not dismissed.** Worth revisiting if the contracts ever gain an explicit unit-of-work seam.
 This is the most interesting rejected option and the design doc records it as such (§11).
@@ -211,10 +216,12 @@ already delivers the `ClaimDueAsync` saga-type filter, so R-13 is fixed before t
 ### Positive
 
 - The best claim-and-reserve implementation in the codebase: one round trip, ordered by construction,
-  fixing a live in-memory divergence structurally rather than by test.
+  fixing a live in-memory divergence structurally rather than by test. [2026-09-27: no longer live —
+  ADR 0003's fix F6 ordered the in-memory claims too.]
 - `ListAsync` gains a genuinely **total** order for free — the index member string
   `{correlationId}|{sagaType}` is a deterministic lexicographic tiebreak, which both shipped providers
-  currently lack.
+  currently lack. [2026-09-27: they no longer do — ADR 0003's fix F1 ends every sort on both in a
+  `(SagaType, CorrelationId)` tiebreak (`EfCoreSagaSummaryReader.cs:74`, `InMemorySagaStore.cs:196`).]
 - `Search` ships **contract-complete** — case-insensitive, substring, both fields, independently — with
   no module and no degradation, because the member string carries both searchable fields.
 - Index drift is structurally impossible: every index write happens inside the same script as the
@@ -231,7 +238,8 @@ already delivers the `ClaimDueAsync` saga-type filter, so R-13 is fixed before t
   exists.
 - **RAM is the dataset ceiling** — roughly 20–25 KB per completed four-message saga, so ~20–25 GB per
   million retained sagas, growing monotonically with **no correctness-safe pruning mechanism**, because
-  the event log feeds both compensation and dedupe.
+  the event log feeds both compensation and dedupe. [2026-09-27: measured at ≈ 5–10 KB per completed
+  saga, 100 000–180 000 per GB — [`../persistence.md`](../persistence.md#capacity-model).]
 - **Eviction is a live hazard**: under any policy but `noeviction`, Redis deletes snapshots, timeout
   members and outbox rows with no error at any call site. And the usual reason a team already runs Redis
   is a cache tuned for eviction — so the most likely deployment is the unsupported one.
@@ -255,7 +263,9 @@ already delivers the `ClaimDueAsync` saga-type filter, so R-13 is fixed before t
   documents — EF and in-memory are the ones diverging.
 - Timestamps are stored twice: an integer-millisecond ZSET score plus exact `UtcTicks` in the owning
   hash, Ticks authoritative. Not fussiness — a ticks-valued double score has a 128-tick (12.8 µs) ULP,
-  which against a contractually strict-`>` watermark silently drops live updates.
+  which against a contractually strict-`>` watermark silently drops live updates. [2026-09-27: as built,
+  stored once — integer Unix microseconds serve as both the score and the hash field
+  (`RedisTimestamps.cs`); the plan's §8.1 records the deviation.]
 - `TState` stays a `System.Text.Json` string, as in every other provider.
 - `destination` round-trips as an absent hash field, giving null-vs-missing for free where Mongo needed
   an explicit rule.
@@ -297,10 +307,15 @@ Five, stated in full with options and recommendations in the design doc's §9:
 | **Q2** | Which servers are supported, and is Cluster in scope? | Single primary + replicas; Redis ≥ 7.0 and Valkey ≥ 7.2; Cluster refused at bootstrap |
 | **Q3** | ~~Prerequisite? Who owns it?~~ **RESOLVED** (ADR 0003, owned by neither plan). Still open: does it gain a fault-injection tier? | Yes — and for Redis it is not a gate on the argument, it *is* the argument |
 | **Q4** | Validate or override the operator's Redis configuration, and what when it cannot be seen? | Override what the client controls, probe the rest, `Unhealthy` on contradiction **or** on inability to probe |
-| **Q5** | Is `Search`'s bounded-scan-then-throw behaviour acceptable? | Throw, mapped to 400; `SagaEndpoints.cs:31`'s missing `pageSize` clamp becomes a hard prerequisite |
+| **Q5** | Is `Search`'s bounded-scan-then-throw behaviour acceptable? | Throw, mapped to 400; `SagaEndpoints.cs:31`'s missing `pageSize` clamp becomes a hard prerequisite [2026-09-27: the clamp landed first, as ADR 0003's fix F8 — `SagaEndpoints.cs:21`, `:98`] |
 
 Seven further non-blocking questions (Q6–Q12) are recorded there, including Q6's proposed `VSaga.Core`
 change. Q9 is mostly resolved by ADR 0003.
+
+[2026-09-27: all five blocking questions above were decided on 2026-09-26, at Stage 1, as recommended —
+Q3's fault-injection tier narrower than asked — and each carries its resolution in the design doc's §9.
+Of the non-blocking ones, the build also decided Q7 (server-side Tier B only) and Q12 (a documented
+manual gate, no separate test project).]
 
 ---
 
@@ -310,9 +325,12 @@ Not Redis-specific — **live in the shipped engine today, on Postgres.**
 `StageChildSagaFinishedAsync` builds its envelope with the *parent's* correlation id
 (`SagaOrchestrator.cs:939`) but enqueues the outbox row under `state.CorrelationId`, the *child's*
 (`:941`). `SagaOutboxDispatcherHostedService.cs:61` rebuilds the envelope from the **stored** id, which is
-exactly what the comment at `SagaOrchestrator.cs:803-806` warns against: "A row keyed on the publishing
+exactly what the comment at `SagaOrchestrator.cs:833-836` warns against: "A row keyed on the publishing
 saga instead would have the recovery poller republish the message under the wrong identity."
 
 So a recovered `ChildSagaFinished` is republished under the child's correlation id and the parent never
 receives it, hanging until its own state timeout rescues it. It should be fixed independently of whether
-either provider is ever built. Recorded in the design doc §3.
+either provider is ever built. Recorded in the design doc §3. [2026-09-27: fixed 2026-09-26 as bug B1 of
+ADR 0003's sequence (`09de8ea`): `StageChildSagaFinishedAsync` now enqueues the row under
+`envelope.CorrelationId`, the parent's (`SagaOrchestrator.cs:977-985`) — see
+[`../design/persistence-contracts.md`](../design/persistence-contracts.md) §4, B1.]

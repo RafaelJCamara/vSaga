@@ -19,7 +19,8 @@ public interface IMessageTransport
 
     Task PublishRawAsync(string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken cancellationToken = default);
 
-    Task SendRawAsync(string destination, string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken cancellationToken = default);
+    Task SendRawAsync(string destination, string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken cancellationToken = default) =>
+        PublishRawAsync(messageTypeName, body, envelope, cancellationToken);
 
     Task<IDisposable> SubscribeAsync(TransportSubscription subscription, Func<ReceivedMessage, CancellationToken, Task> handler, CancellationToken cancellationToken = default);
 }
@@ -29,16 +30,46 @@ public interface IMessageTransport
   `ISagaContext`). `Publish` broadcasts to whatever subscribes to the message type; `Send` addresses
   one named destination directly, bypassing topic routing.
 - **`PublishRawAsync`/`SendRawAsync`** — untyped counterparts, publishing pre-serialized JSON by
-  message-type name rather than CLR type. Used by callers that know a message's stored type name and
-  payload but aren't compiled against the assembly that defines it — the dashboard's manual-retry
-  endpoint (see [`dashboard.md`](../dashboard.md#manual-retry)) is the main one. `SendRawAsync`
-  defaults to falling back to a broadcast via `PublishRawAsync` for an adapter that predates the
-  method; every adapter shipped in this repo overrides it with a real addressed send.
+  message-type name rather than CLR type. Used by callers that hold a message's stored type name and
+  payload rather than a typed instance: the engine's own bounded redelivery after an infrastructure
+  failure (`SagaOrchestrator`, via `PublishRawAsync`), the transactional outbox's crash-recovery poller
+  (`SagaOutboxDispatcherHostedService` — `SendRawAsync` for a row stored with a destination,
+  `PublishRawAsync` otherwise), and the dashboard's manual-retry endpoint (see
+  [`dashboard.md`](../dashboard.md#manual-retry), via `PublishRawAsync`). Both methods skip the
+  outbound middleware pipeline (see [`../chaos.md`](../chaos.md#scope-what-chaos-can-and-cant-reach)).
+  `SendRawAsync` defaults to falling back to a broadcast via `PublishRawAsync` for an adapter that
+  predates the method; every adapter shipped in this repo overrides it with a real addressed send.
 - **`SubscribeAsync`** — registers a handler for a runtime-declared set of message types
   (`TransportSubscription`), returning a disposable that stops it. Async because a real broker adapter
   needs to declare exchanges/queues/bindings and start consuming *before returning* — topology must
   exist by the time the call completes, not lazily on first use (a gap the Brighter adapter had to work
   around; see [`brighter.md`](brighter.md)).
+
+## What travels with a message
+
+Every adapter carries the same three things per message, though not all in the same place:
+
+- **The message type name, correlation id and message id.** The type name is the CLR short name
+  (`OrderShipped`), which the receiving engine matches against its saga's declared message types to
+  pick the type the body deserializes to. The RabbitMQ and HTTP adapters send all three as the headers
+  `x-vsaga-message-type`, `x-vsaga-correlation-id` and `x-vsaga-message-id` (RabbitMQ also fills the
+  AMQP `correlation_id`/`message_id` properties), and the HTTP receive endpoint answers `400` to a POST
+  that lacks any of them or whose correlation id is not a GUID. The Wolverine, MassTransit and Brighter
+  adapters carry them wholly or partly in their bus's own envelope or a wrapper record instead; see
+  each adapter's page.
+- **`MessageEnvelope.Headers`**. Every adapter round-trips the `x-vsaga-`-prefixed keys and the W3C
+  trace pair (see [below](#what-every-adapter-guarantees)); the HTTP and Brighter adapters drop any
+  other key on receipt, so a custom header needs the `x-vsaga-` prefix to survive every adapter.
+  `MessageEnvelope.From` stamps `x-vsaga-source-service`
+  (the publisher; a saga publishes under its saga type) and, for a publish made while handling an
+  inbound message, `x-vsaga-causation-id` (that message's id, which the Saga Map stitches edges with).
+  `StartChildAsync` adds `x-vsaga-parent-saga-type`/`x-vsaga-parent-correlation-id` to a child's
+  initiating message. These four are the "four vSaga headers" the adapter pages refer to. Two more
+  travel the same way: `x-vsaga-delivery-attempt`, which the engine adds when it redelivers after an
+  infrastructure failure, and the unprefixed W3C `traceparent`/`tracestate` (see
+  [`../observability.md`](../observability.md#traces)).
+- **The body**: the message serialized by `System.Text.Json` with default options, so property names
+  stay PascalCase. The Wolverine and MassTransit adapters wrap those bytes in a record of their own.
 
 ## The two decorators every adapter is wrapped in
 
@@ -47,12 +78,14 @@ code, but they are **not** the same seam. Anyone writing a third-party adapter h
 
 - **`MiddlewarePipelineTransport`** (`VSaga.Transport.Common`) is the
   `IOutboundMessageMiddleware`/`IInboundMessageMiddleware` seam, and the only one `VSaga.Chaos` plugs
-  into. Every `AddVSaga*Transport` call in this repo applies it **unconditionally** — including the
-  in-memory adapter's, which until recently registered its bare transport directly and therefore
-  silently never ran chaos at all. Unconditional rather than "only when some middleware is
-  registered", because a pipeline over an empty middleware list is a pure pass-through, so there is
-  nothing to save by skipping it — and a registration whose resolved type depends on what else
-  happens to be in the container would change shape the moment a caller adds `AddVSagaChaos`.
+  into. Every transport registration call in this repo (`AddVSagaRabbitMq`, `AddVSagaWolverine`,
+  `AddVSagaMassTransit`, `AddVSagaBrighter`, `AddVSagaHttp`, `AddVSagaInMemoryTransport`) applies it
+  **unconditionally** — including the in-memory adapter's, which until recently registered its bare
+  transport directly and therefore silently never ran chaos at all. Unconditional rather than "only
+  when some middleware is registered", because a pipeline over an empty middleware list is a pure
+  pass-through, so there is nothing to save by skipping it — and a registration whose resolved type
+  depends on what else happens to be in the container would change shape the moment a caller adds
+  `AddVSagaChaos`.
 - **`TopologyRecordingTransport`** (`VSaga.Abstractions.Transport`) is a *sibling* decorator, not a
   middleware — topology recording does not go through the middleware pipeline at any point. It
   intercepts `SubscribeAsync` and records the consumer/message-type/queue triple that every

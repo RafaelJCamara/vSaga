@@ -1,8 +1,9 @@
 # VSaga.Http
 
 The `.CallHttp` step and transport-agnostic REST integration for vSaga sagas — call plain HTTP APIs
-from a saga step without a message broker. Any saga, on any `IMessageTransport`, gets `.CallHttp` by
-referencing this package; unrelated to `VSaga.Transport.Http` (the brokerless message transport).
+from a saga step without a message broker. Any orchestrated saga, on any `IMessageTransport`, gets
+`.CallHttp` by referencing this package (a choreographed step calls `ctx.CallHttpAsync` from an async
+`.Then(...)` instead); unrelated to `VSaga.Transport.Http` (the brokerless message transport).
 
 ## Install
 

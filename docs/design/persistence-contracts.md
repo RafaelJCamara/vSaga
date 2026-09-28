@@ -1,8 +1,8 @@
 # Design: persistence contracts and the conformance suite
 
 **Status: complete — all 21 commits landed; the record is in §6.2, and §9.1 keeps the four questions that outlive the sequence (Q2–Q5). Decisions accepted.** Recorded in
-[`../adr/0003-persistence-contract-clauses.md`](../adr/0003-persistence-contract-clauses.md); what
-remains is execution. Nothing here depends on a MongoDB or Redis provider ever being built.
+[`../adr/0003-persistence-contract-clauses.md`](../adr/0003-persistence-contract-clauses.md).
+Nothing here depends on a MongoDB or Redis provider ever being built.
 
 This was previously carried as "Stage 0" inside [`mongodb-persistence.md`](mongodb-persistence.md) §3.
 It was extracted because it is **not** a provider's work: it writes down contracts the engine already
@@ -387,7 +387,8 @@ That is 16 in-memory, 8 SQLite and 14 Postgres. Nothing outside this table fails
 
 ## 7. What this does not do
 
-- It does not add a provider. Both provider ADRs stay `Proposed`.
+- It does not add a provider. Both provider ADRs stay `Proposed`. [2026-09-27: both have since been
+  accepted and implemented, on 2026-09-26 — ADR 0001 (MongoDB) and ADR 0002 (Redis).]
 - It does not move `PostgresHealthCheck` or add a `Persistence:Provider` switch — shared seams that only
   matter once a second production provider exists.
 - It does not add a fault-injection tier (Redis-specific; see [`redis-persistence.md`](redis-persistence.md) §8).
@@ -438,6 +439,10 @@ Source Link stepping).
 **What would reopen it:** both Mongo *and* Redis shipping the same single-shot C# read-patch-CAS. The next step
 then is one static class in `VSaga.Abstractions` beside `VSagaDiagnostics` — still not a package. A
 package only becomes right if the shared surface grows past one cohesive type.
+
+[2026-09-27: that condition is now met — `MongoSagaSummaryReader.ResetStateAsync` and
+`RedisSagaSummaryReader.ResetStateAsync` each do a single-shot read, a `JsonNode` patch of the same four
+properties and a version-guarded write — and no shared class has been extracted yet.]
 
 Separately, and worth more than the package would have been: fold the byte-identical
 `NpgsqlProviderName` constant and its duplicated guard/fallback prose **inside**

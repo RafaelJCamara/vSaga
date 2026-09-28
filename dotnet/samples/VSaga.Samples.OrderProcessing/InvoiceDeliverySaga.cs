@@ -70,7 +70,7 @@ public sealed class InvoiceDeliverySaga : OrchestratedSagaDefinition<InvoiceDeli
                 .TransitionTo(Undeliverable)
                 .Finalize(SagaStatus.Failed);
 
-        // Same rule the README's "Timeout coverage for every awaiting state" section arrived at the
+        // Same rule docs/history/timeout-coverage-every-awaiting-state.md arrived at the
         // hard way: a state that waits on a reply gets a timeout, or a lost message parks the instance
         // Running forever. No Compensate() — nothing has been reserved or charged that a bounced or
         // silent invoice email would need to unwind.

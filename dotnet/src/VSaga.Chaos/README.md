@@ -1,8 +1,8 @@
 # VSaga.Chaos
 
-Fault-injection package for vSaga: chaos-engineering middleware that drops, delays, and corrupts saga
-messages in test and staging environments, to exercise a saga's own retry/timeout/compensation paths
-against real transport-level failures.
+Fault-injection package for vSaga: chaos-engineering middleware that drops, delays, and duplicates saga
+messages in test and staging environments, to exercise a saga's own timeout/compensation paths and
+duplicate-delivery handling against real transport-level failures.
 
 ## Install
 

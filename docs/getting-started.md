@@ -220,6 +220,7 @@ See [`testing.md`](testing.md) for the full harness API.
 - [`configuration.md`](configuration.md) — the outbox, transport options, and everything else
   configurable.
 - [`persistence.md`](persistence.md) and [`transports/index.md`](transports/index.md) — moving from
-  in-memory to EF Core/Postgres and a real broker.
-- [`dashboard.md`](dashboard.md) — the ops dashboard, once you have Postgres/RabbitMQ running — see
+  in-memory to a durable store (EF Core/Postgres, MongoDB or Redis) and a real broker.
+- [`dashboard.md`](dashboard.md) — the ops dashboard, once you have a durable store (Postgres, MongoDB
+  or Redis) and RabbitMQ (or the HTTP transport) running — see
   ["Run the demo"](../README.md#run-the-demo) for the fastest way to see it live.

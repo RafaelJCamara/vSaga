@@ -5,9 +5,10 @@ vSaga emits both OpenTelemetry traces/metrics and a fully persisted event log. T
 
 > **The event log is a correctness input, not an observability output.**
 > `SagaOrchestrator.GetVisitedStatesAsync` derives the entire compensation set from it, and
-> `IsDuplicateAsync` is the redelivery dedupe check (`ISagaEventLogStore.cs:5-11`). It therefore cannot
-> be sampled, truncated, or retention-pruned without changing which compensations run and re-admitting
-> messages that were already processed. Traces and metrics can be sampled freely; the event log cannot.
+> `IsDuplicateAsync` is the redelivery dedupe check (`ISagaEventLogStore.cs:4-11`, `:28-44`). It
+> therefore cannot be sampled, truncated, or retention-pruned without changing which compensations
+> run and re-admitting messages that were already processed. Traces and metrics can be sampled freely;
+> the event log cannot.
 
 ## The persisted event log
 
@@ -35,8 +36,9 @@ adapters do; see [`transports/index.md`](transports/index.md)).
 names (not `x-vsaga-`-prefixed) specifically for interoperability — an OTel collector, a broker
 plugin, or a non-vSaga consumer all expect the standard names. `VSagaDiagnostics.Inject`/
 `TryExtractActivityContext` hand-roll the W3C format directly (`traceparent` is a fixed 55-character
-string) rather than pulling in `OpenTelemetry.Api`, so `VSaga.Abstractions` stays free of any
-`PackageReference` at all.
+string) rather than pulling in `OpenTelemetry.Api`, so `VSaga.Abstractions` takes no runtime package
+dependency at all (the only `PackageReference`s it gets are the build-time MinVer and analyzer ones
+`Directory.Build.props` adds to every project, all `PrivateAssets="all"`).
 
 **A retried delivery keeps the same trace.** `SagaOrchestrator` already copies every inbound header
 forward on redelivery, so `traceparent` echoes automatically — a retry of the same logical delivery
@@ -47,9 +49,13 @@ operation, not a new one.
 `activity?.SetStatus(ActivityStatusCode.Error, ex.Message)`, so a trace backend can distinguish a
 successful hop from one that threw without cross-referencing the event log. That is all it does: the
 message becomes the status *description*, and there is no `Activity.AddException`/OTel `exception`
-event, so the exception type and stack trace are **not** on the span. They are on the `StepFailed`
-log entry instead (which also records the `traceId`/`spanId` for cross-referencing back) — that entry,
-not the span, is where to look for a stack.
+event, so the exception type and stack trace are **not** on the span. They are not on the `StepFailed`
+log entry either: its only error detail is that same `ex.Message` (as `ErrorMessage`), next to the
+`FromState`, the failed message's type, id and payload, and the `traceId`/`spanId` for
+cross-referencing back. Nothing vSaga records for a failed message-driven step carries the exception
+type or stack trace. A timeout step that throws is different: it gets no `saga.step` span and no
+`StepFailed` entry, but the exception propagates out of `HandleTimeoutAsync` to
+`SagaTimeoutDispatcherHostedService`, which logs it in full (type and stack included) at Error level.
 
 Source and span names, for writing queries: the `ActivitySource` is named `VSaga.Saga`
 (`VSagaDiagnostics.ActivitySourceName`, same string as the meter). The consumer span is named
@@ -58,12 +64,20 @@ Source and span names, for writing queries: the `ActivitySource` is named `VSaga
 Tag names (`VSagaDiagnostics`): `saga.type`, `saga.kind`, `saga.correlation_id`, `saga.from_state`,
 `saga.to_state`, `delivery.attempt`.
 
-**Persistence-provider spans are the provider's client's, not vSaga's.** Npgsql and StackExchange.Redis
-each ship instrumentation you enable on your own OpenTelemetry pipeline. The MongoDB .NET driver exposes
-no `ActivitySource` of its own: instrument it through `AddVSagaMongoDb`'s `configureClient` callback,
-whose `MongoClientSettings.ClusterConfigurator` is where a command-event subscriber (such as the
-community `MongoDB.Driver.Core.Extensions.DiagnosticSources` package) attaches. The persist's
-transaction and the event log's appends then appear as child spans of the `saga.step` span.
+**Persistence-provider spans are the provider's client's, not vSaga's.** Npgsql ships an
+`ActivitySource` you enable on your own OpenTelemetry pipeline. StackExchange.Redis has none of its
+own; its spans come from the OpenTelemetry contrib `OpenTelemetry.Instrumentation.StackExchangeRedis`
+package added to that same pipeline, which by default instruments the `IConnectionMultiplexer` it
+resolves from DI. vSaga registers none, so pass the multiplexer `RedisConnection.GetMultiplexerAsync`
+returns to that package's `AddConnection` instead. The MongoDB .NET driver 3.6, which this repo
+resolves, exposes no `ActivitySource` of its own either (3.7.0 and later, still inside the package's
+`[3.6.0,4.0.0)` range, add built-in tracing): instrument it through `AddVSagaMongoDb`'s
+`configureClient` callback, whose `MongoClientSettings.ClusterConfigurator` is where a command-event
+subscriber (such as the community `MongoDB.Driver.Core.Extensions.DiagnosticSources` package) attaches. The step's persist transaction
+and the event-log appends made while the step runs then appear as child spans of the `saga.step` span.
+The store calls that precede the step (the instance lookup and any business-key reservation, the
+`SagaStarted`/`MessageReceived` appends, the duplicate check, the visited-state read) run before that
+span starts, so they do not.
 
 ## Metrics
 
@@ -77,6 +91,10 @@ Meter name `VSaga.Saga` (`VSagaDiagnostics.Meter`):
 | `vsaga.saga.step.retries` | `Counter<long>` | Incremented per step-level retry attempt. |
 | `vsaga.saga.step.duration` | `Histogram<double>` (ms) | Duration of one step's execution. |
 | `vsaga.saga.duration` | `Histogram<double>` (ms) | Total saga duration as `now - state.CreatedAtUtc`, recorded on every path that reaches a terminal status — step success, step failure, timeout outcome, and redelivery-exhausted dead-lettering alike. |
+
+Every instrument carries exactly one tag, `saga.type`. `completed` and `failed` count only their own
+status: a saga finalized as `TimedOut`, `Compensated` or `Cancelled` increments neither, though
+`vsaga.saga.duration` still records it.
 
 **`started` counts first-step successes, not instance creations — so don't subtract to get in-flight.**
 `SagasStarted` is incremented only under `if (isNew)` in `PersistAndFinalizeStepSuccessAsync`, i.e.

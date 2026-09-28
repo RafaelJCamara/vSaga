@@ -32,7 +32,8 @@ For the three **claim-and-reserve** contracts it is the best fit of any provider
   (`EfCoreSagaTimeoutStore.cs:87-99`), beats the MongoDB plan's `findOneAndUpdate` loop
   ([`mongodb-persistence.md`](mongodb-persistence.md) §6.1), and fixes by construction the
   unordered-claim divergence the in-memory provider ships today (`InMemorySagaStore.cs:312-330`,
-  `:378-396`).
+  `:378-396`). [2026-09-27: since fixed in the in-memory provider too — `persistence-contracts.md` F6,
+  `2b80e4b`.]
 - The business-key reservation is `SET key value NX` — literally "reserve before the step runs", which
   is what `docs/design/production-readiness.md` §5.2 asks for, expressed more directly than either
   a partial unique index or a `ConcurrentDictionary` dance.
@@ -155,7 +156,9 @@ Taking ADR 0001's "Context" list as given:
 
 ## 3. A bug this planning found
 
-**Not Redis-specific. It is live in the shipped engine today, on Postgres.**
+**Not Redis-specific. It is live in the shipped engine today, on Postgres.** [2026-09-27: fixed since, as
+`persistence-contracts.md` bug B1 (`09de8ea`): the row is now keyed on the envelope's — the parent's —
+correlation id.]
 
 `EnqueueOutboxRowsAsync` keys each outbox row on `publish.Envelope.CorrelationId`, and the comment at
 `SagaOrchestrator.cs:803-806` says exactly why:
@@ -336,7 +339,8 @@ Mongo's. Redis is **not tighter**, and the plan must not claim it is.
 alone with **no snapshot read**, and the tie order within one millisecond is the members' lexicographic
 order — **total and deterministic**. That is exactly the stable total order Stage 0 requires and that
 both shipped providers currently lack (`EfCoreSagaSummaryReader.cs:44-53`,
-`InMemorySagaStore.cs:169-178` break ties by `UpdatedAtUtc` only).
+`InMemorySagaStore.cs:169-178` break ties by `UpdatedAtUtc` only). [2026-09-27: both now have one —
+`persistence-contracts.md` F1 (`b7965e9`) tiebreaks every sort arm on `(SagaType, CorrelationId)`.]
 
 **No trigram index in v1.** It was designed and dropped: a 36-character GUID yields 34 trigrams over an
 alphabet of `[0-9a-f-]`, so every trigram set holds ~0.7% of the keyspace and an intersection over a
@@ -792,6 +796,10 @@ archival is the only shape considered and is deferred with its own entry gate.
 already fixed** by the accepted groundwork, and with it the contract-shape objection that permanently
 blocked Cluster support (§4.6's other reasons stand on their own).
 
+[2026-09-27: as landed, only `ClaimDueAsync` gained `sagaTypes` — ADR 0003 decision 4 rejected it for
+`ClaimPendingAsync` — so R-13 is fixed, but the outbox claim stays global and the Cluster objection in
+§4.6 and §11 stands. ADR 0003 has twelve clauses, and clauses 7 and 10 are not doc-only.]
+
 **Still open:** only the conditional `Truncated` flag on `PagedResult` (Q5 option 2), which is needed
 solely if the bounded-scan-then-throw behaviour is rejected.
 
@@ -833,6 +841,11 @@ coupling is gone for that seam.
 
 Two smaller seams remain shared and unowned, because neither matters until a second production provider
 exists: the `Persistence:Provider` switch, and the `PostgresHealthCheck` move + rename.
+[2026-09-27: this provider landed first and authored the switch, in both hosts, and the `"persistence"`
+rename (Stage 8, `19c6303`). The `PostgresHealthCheck` move was decided against here (§8.1 deviation 4)
+and in the MongoDB plan (its §8.2 deviation 1), so the check stays in `Dashboard.Api`.
+`DashboardApiFactory` already removed the stores by interface type, so the fourth seam below never
+became a trap.]
 
 | Seam | Files |
 |---|---|

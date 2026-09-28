@@ -29,7 +29,7 @@ The Angular dashboard SPA in `dashboard-web/` is not part of the .NET solution; 
 the Angular CLI (the line ends by returning to the repo root, so it's safe to paste as-is):
 
 ```bash
-cd dashboard-web && npm install && npx ng build && cd ..
+cd dashboard-web && npm ci && npx ng build && cd ..
 ```
 
 ## Test
@@ -58,6 +58,12 @@ docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
 # and, for anything touching the Redis or MongoDB persistence provider, its own overlay (docs/persistence.md):
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
 docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
+# and, for anything touching the Wolverine, MassTransit, Brighter or HTTP transport adapter, its own
+# overlay (docs/transports/index.md; plain `docker compose up` runs the RabbitMQ adapter):
+docker compose -p vsaga-wolverine -f docker-compose.yml -f docker-compose.wolverine.yml up -d --build
+docker compose -p vsaga-masstransit -f docker-compose.yml -f docker-compose.masstransit.yml up -d --build
+docker compose -p vsaga-brighter -f docker-compose.yml -f docker-compose.brighter.yml up -d --build
+docker compose -p vsaga-http -f docker-compose.yml -f docker-compose.http.yml up -d --build
 ```
 
 Filter queries by `createdAtUtc`/`updatedAtUtc` after the container's own start timestamp — the named
@@ -92,11 +98,21 @@ underlying issue before committing, not after.
 ## Before opening a PR
 
 - `dotnet build dotnet/VSaga.slnx` is clean (zero warnings) and `dotnet test dotnet/VSaga.slnx` passes.
-- If you touched `dashboard-web`: `npx ng build && npx ng test --watch=false` pass from that
-  directory.
+- If you touched `dashboard-web`: `npm ci && npm audit --audit-level=low && npx ng build && npx ng test --watch=false`
+  pass from that directory. `npm audit` fails on any advisory rated `low` through `critical`, dev
+  dependencies included, exactly as CI's does.
 - If your change touches message flow, headers, correlation, or timing, you've live-verified it
   against `docker compose up` (and the chaos overlay, where relevant) — not just unit tests.
 - New reference behaviour is documented in `docs/`, not left only in a commit message or code comment.
 
-CI (`.github/workflows/ci.yml`) runs two independent jobs on every push/PR to `main`: `.NET build &
-test` and `Angular build & test` (`dashboard-web`). Both must pass.
+CI (`.github/workflows/ci.yml`) runs two independent jobs on every push/PR to `main`, and both must
+pass:
+
+- `.NET build & test`: `dotnet restore`, then `dotnet build` and `dotnet test` on `dotnet/VSaga.slnx`
+  with `--configuration Release` (the commands above build Debug), on the SDK `dotnet/global.json`
+  pins, with Testcontainers' Ryuk sidecar disabled (`TESTCONTAINERS_RYUK_DISABLED`).
+- `Angular build & test`: in `dashboard-web/` on Node 22, `npm ci`, then `npm audit --audit-level=low`,
+  then `npx ng build`, then `npx ng test --watch=false`. `npm ci` only reports known vulnerabilities;
+  the `npm audit` step fails the job on **any** advisory rated `low` through `critical`, in dev
+  dependencies too. Neither job is
+  path-filtered, so a newly published advisory can fail a PR that never touched `dashboard-web/`.

@@ -13,7 +13,8 @@ namespace VSaga.Core.Tests;
 
 /// <summary>
 /// Verifies the fix for the timeout/message race VSaga.Chaos's live verification surfaced (see
-/// README's "Chaos-engineering transport middleware" section): SagaTimeoutDispatcherHostedService's
+/// docs/history/chaos-engineering-middleware.md; the fix is recorded in
+/// docs/history/timeout-message-race-fix.md): SagaTimeoutDispatcherHostedService's
 /// periodic poll and SagaOrchestrator.HandleAsync's normal message-handling path can both read the
 /// same saga snapshot at the same version before either writes back, when a reply arrives just before
 /// its state's timeout is due. There's no reliable way to force that interleaving through real timing,

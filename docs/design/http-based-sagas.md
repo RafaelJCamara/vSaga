@@ -5,10 +5,14 @@
 fix, §5.4's `dotnet/tests/VSaga.Http.Tests` including the mutation-tested ordering proof) are all built, tested,
 and live-verified — §5.1 in isolation on the existing RabbitMQ stack per its own instruction, then §5.2/
 §5.3 together via a new `LoyaltyLookupSaga` calling a real, no-vSaga-awareness REST endpoint added to the
-sample. See the README's "Transport adapter: HTTP" and "Outbound REST calls from a saga step: `.CallHttp`"
-sections for both features' shipped shape and live-verification evidence — Phase 1's includes a genuine
-cross-process deadlock found only by live `docker compose` traffic (never by the unit suite), a fourth
-instance of "caught only by a live run," alongside the three in §3.
+sample. See [`docs/transports/http.md`](../transports/http.md) and
+[`docs/saga-dsl.md`](../saga-dsl.md#callhttp-from-vsagahttp) for both features' shipped shape, and
+[`docs/history/transport-adapter-http.md`](../history/transport-adapter-http.md) and
+[`docs/history/callhttp-outbound-rest-calls.md`](../history/callhttp-outbound-rest-calls.md) — formerly
+the README's "Transport adapter: HTTP" and "Outbound REST calls from a saga step: `.CallHttp`" sections —
+for the live-verification evidence. Phase 1's includes a genuine cross-process deadlock found only by
+live `docker compose` traffic (never by the unit suite), a fourth instance of "caught only by a live
+run," alongside the three in §3.
 
 Written to be picked up cold in a later session: every claim about the current codebase carries a
 `file:line` so it can be re-checked rather than trusted. Line numbers were accurate at commit
@@ -112,7 +116,7 @@ Concretely, per loser:
 upserts and `CancelAsync` filters on exact `ForState` — but both are absorbed by the state check at
 `HandleTimeoutAsync:194` and the claim at `:205`. Cosmetic, not a hang.)
 
-This is the same class as the two races already documented in the README's sub-saga sections, and the
+This is the same class as the two races already documented in `sub-saga-composition.md` §5, and the
 same reason `.Publish(…).Publish(…)` chains in this DSL are sequential by construction. The difference
 is severity of exposure: those races need an unlucky interleaving, whereas §5's `.CallHttp` addresses
 the same saga instance on **every single call**.
@@ -275,7 +279,9 @@ by `Publish_WithNoExplicitRouteForTheType_FallsBackToTheWildcardEndpoint` in
 
 Worth noting this is *higher* fidelity than the Wolverine and Brighter adapters, whose tests assert
 the verified *absence* of an unroutable signal. `README.md:127` currently presents unroutable-publish
-detection as a RabbitMQ-specific property and will need correcting.
+detection as a RabbitMQ-specific property and will need correcting. [2026-09-27: no longer applies —
+the README no longer covers unroutable-publish detection, and `docs/transports/index.md` lists
+RabbitMQ, MassTransit and HTTP as surfacing `IsUnroutable`.]
 
 ### 4.4 Dispatch
 
@@ -302,8 +308,9 @@ outbound `ShipOrder` call is waiting behind — a genuine cross-process circular
 `ShipOrder`'s own `RequestTimeout` expiring. Live traffic showed this on effectively every order that
 reached shipping. Fixed by bounding the inline path's gate acquisition (`InlineGateAcquireTimeout`, 5s
 default) and falling back to the same deferred (enqueue-to-pump) path a reply already uses on timeout —
-lossless, just delayed, and self-healing once the holder's own step finishes. See README.md's Transport
-adapter: HTTP section for the live evidence.
+lossless, just delayed, and self-healing once the holder's own step finishes. See
+[`docs/history/transport-adapter-http.md`](../history/transport-adapter-http.md) (formerly README.md's
+Transport adapter: HTTP section) for the live evidence.
 
 **Status note: "`InlineGateAcquireTimeout`, 5s default" reads as a configurable knob. It is not one.** It
 shipped as a fixed `private static readonly TimeSpan` on `HttpInboundDispatcher` and is deliberately
@@ -414,10 +421,11 @@ the riskiest item in the whole design and it should not be debugged alongside a 
 `ISagaContext.PublishAfterCommitAsync<TMessage>(…)` as a **C# default interface method** whose default
 body is `PublishAsync(…)`; `SagaContext` overrides it to queue; `SagaOrchestrator`
 `HandleStepSuccessAsync` drains **after** `PersistAsync` (`:471`), **sequentially** — never
-`Task.WhenAll`, per the `DbContext` scar documented in the README's fan-out section — reaching the
-queue through an internal cast exactly like the existing `ISagaContextLogSink` precedent
-(`dotnet/src/VSaga.Core/Runtime/SagaContext.cs:12,85`). `SagaContext` is the only implementer of
-`ISagaContext<>` in the repo, so the default body exists purely for external compatibility.
+`Task.WhenAll`, per the `DbContext` scar documented in `docs/history/parallel-fan-out-and-join.md`
+(formerly the README's fan-out section) — reaching the queue through an internal cast exactly like the
+existing `ISagaContextLogSink` precedent (`dotnet/src/VSaga.Core/Runtime/SagaContext.cs:12,85`).
+`SagaContext` is the only implementer of `ISagaContext<>` in the repo, so the default body exists purely
+for external compatibility.
 
 **Opt-in, not default-for-all.** Default-for-all is superficially better — it would retire both
 documented Slice 2a/2b races outright and make `InMemoryMessageTransport` behave like a broker — but
@@ -590,23 +598,23 @@ State these in the README when the work ships, rather than discovering them live
    timeout. Recommendation: accept it (redeliveries are rare) and document it, rather than having
    participants cache replies.
 
-   **Status: still undocumented — this section's own "state these in the README when the work ships"
-   instruction was not carried out for this item.** The *accept it* half happened (the behaviour is
-   unchanged, and still correct: `ParticipantService.HandleAsync` acks a repeated `MessageId` without
-   invoking the handler, so no reply is published, so the HTTP adapter's sync-reply collector finds
-   nothing unroutable to return). The *document it* half did not: nothing in
-   [`docs/transports/http.md`](../transports/http.md),
-   [`docs/transports/index.md`](../transports/index.md), or `ParticipantService.cs` itself mentions that
-   the dedupe's meaning changes on the HTTP track. Items 1, 4 and 6 of this list did get documented;
-   this one is the outstanding one. It belongs in `docs/transports/http.md`'s "Known, deliberate
-   limitations", not here.
+   **Status: documented.** The *accept it* half happened (the behaviour is unchanged, and still correct:
+   `ParticipantService.HandleAsync` acks a repeated `MessageId` without invoking the handler, so no reply
+   is published, so the HTTP adapter's sync-reply collector finds nothing unroutable to return). The
+   *document it* half landed in [`docs/transports/http.md`](../transports/http.md)'s "Known, deliberate
+   limitations" ("A redelivered request is acknowledged, not answered") rather than the README; items 1,
+   4 and 6 of this list are documented in that file too.
 3. **Async webhook delivery is deferred, not rejected.** Participant returns `202`, then POSTs its
    reply back later as its own inbound request. The §4.2 wire format already leaves room — `202` is a
    defined response — but nothing implements the return leg. The natural third phase, and the one that
    would restore true parallel fan-out (item 1).
 4. **Durable HTTP inbox/outbox — open.** §4.4's channel plus the saga's state timeout is the story for
    now. A durable inbox would change the honest claim from "best-effort, timeout-covered" to
-   at-least-once. Not scoped here.
+   at-least-once. Not scoped here. [2026-09-27: an engine-wide transactional outbox has since shipped
+   (`production-readiness.md` §4): its recovery poller republishes Pending rows through whichever
+   transport is registered, HTTP included — every `PublishAfterCommitAsync` by default, and
+   `ctx.PublishAsync`/`SendAsync` too under `SagaOutboxMode.All`. No durable inbox exists for §4.4's
+   in-process channel.]
 5. **Making after-commit publish the default — open, argued against in §5.1.** Revisit only with its
    own live chaos-verification pass. If it were ever done, it would retire both documented Slice
    2a/2b races, which is the one genuine argument for it.
@@ -614,6 +622,7 @@ State these in the README when the work ships, rather than discovering them live
    `RouteHandlerBuilder`; callers chain `.RequireAuthorization()`.
 7. **Mixed sagas — a saga that also drives RabbitMQ participants alongside `.CallHttp` — are a separate
    design**, not this document's "natural third phase" (item 3, async webhook delivery, is still that
-   slot). See [`docs/mixed-sagas.md`](mixed-sagas.md): it needs its own engine change (draining
-   `PublishAfterCommitAsync` on the timeout path, currently missing) and its own DSL addition
+   slot). See [`docs/design/mixed-sagas.md`](mixed-sagas.md): it needs its own engine change (draining
+   `PublishAfterCommitAsync` on the timeout path, missing when this was written) and its own DSL addition
    (`ctx.CallHttpAsync`, for compensation delegates and timeout steps, where `.CallHttp` cannot reach).
+   [2026-09-27: both have since shipped — see that plan's Status line.]

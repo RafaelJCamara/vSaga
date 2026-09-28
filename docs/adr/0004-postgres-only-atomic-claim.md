@@ -8,7 +8,8 @@ clause 10's saga-type filter touches the same claim path.
 > **Retroactive.** This records reasoning that until now existed **only in code comments**. It changes
 > nothing. It exists because the one reference doc that describes this behaviour
 > (`docs/persistence.md:62-66`) describes it *wrongly*, in a way that can cost a production user
-> duplicate side effects — see Consequences.
+> duplicate side effects — see Consequences. [2026-09-27: since corrected — `docs/persistence.md`'s
+> "Concurrency-safe claiming — Postgres only" paragraph now states the gate and links here.]
 
 ---
 
@@ -21,9 +22,9 @@ same row and fire the same timeout or publish the same message twice.
 
 The EF Core provider implements this **twice**, once per store, with the same shape:
 
-- `EfCoreSagaTimeoutStore.cs:87-99` and `EfCoreSagaOutboxStore.cs:117-129` issue an atomic
+- `EfCoreSagaTimeoutStore.cs:98-124` and `EfCoreSagaOutboxStore.cs:116-128` issue an atomic
   `UPDATE … WHERE "Id" IN (SELECT … ORDER BY … LIMIT … FOR UPDATE SKIP LOCKED) RETURNING …`.
-- `EfCoreSagaTimeoutStore.cs:51-73` and `EfCoreSagaOutboxStore.cs:81-107` are a plain
+- `EfCoreSagaTimeoutStore.cs:56-81` and `EfCoreSagaOutboxStore.cs:80-102` are a plain
   load-then-update fallback, explicitly documented as "not safe for multiple concurrent dispatcher
   instances".
 
@@ -36,7 +37,9 @@ string.Equals(db.Database.ProviderName, NpgsqlProviderName, StringComparison.Ord
 ```
 
 (`EfCoreSagaTimeoutStore.cs:37`, `:46-49`; duplicated verbatim at `EfCoreSagaOutboxStore.cs:67`,
-`:76-79`.)
+`:76-79`. [2026-09-27: the plan's commit 21 (`7174928`) folded the two constants into
+`EfCoreProviderNames.Npgsql` (`EfCoreProviderNames.cs:14`); the guards are now
+`EfCoreSagaTimeoutStore.cs:51-53` and `EfCoreSagaOutboxStore.cs:76-78`.])
 
 ---
 
@@ -45,7 +48,7 @@ string.Equals(db.Database.ProviderName, NpgsqlProviderName, StringComparison.Ord
 **The atomic claim is provided for Postgres only. Every other EF Core provider silently takes the
 load-then-update fallback, which is correct for exactly one dispatcher instance and no more.**
 
-This was deliberate, and the rationale is recorded at `EfCoreSagaTimeoutStore.cs:39-45`: the fallback
+This was deliberate, and the rationale is recorded at `EfCoreSagaTimeoutStore.cs:37-43`: the fallback
 "exists for provider portability, not as a v1 shortcut". `VSaga.Persistence.EFCore` depends only on
 `Microsoft.EntityFrameworkCore`, `.Relational` and DI.Abstractions
 (`VSaga.Persistence.EFCore.csproj:14-16`) so that it stays usable with any relational provider;
@@ -62,11 +65,11 @@ identical choice. The word "outbox" carries the opposite default assumption in m
 why it belongs in a record.
 
 **Every `DateTimeOffset` is physically a UTC `DateTime`.** A global convention
-(`VSagaDbContext.cs:17-20`) applies `DateTimeOffsetToUtcDateTimeConverter` (`:11-13`) to every
-`DateTimeOffset` property. On Postgres the stored column therefore truncates to microsecond resolution
-while the serialized state blob keeps full 100-nanosecond ticks — so a projected timestamp and the same
-value inside `DataJson` are not bit-identical, and any comparison between them must be at storage
-resolution.
+(`VSagaDbContext.cs:17-20`) applies `DateTimeOffsetToUtcDateTimeConverter`
+(`DateTimeOffsetToUtcDateTimeConverter.cs:11-13`) to every `DateTimeOffset` property. On Postgres the
+stored column therefore truncates to microsecond resolution while the serialized state blob keeps full
+100-nanosecond ticks — so a projected timestamp and the same value inside `DataJson` are not
+bit-identical, and any comparison between them must be at storage resolution.
 
 ---
 
@@ -79,18 +82,23 @@ resolution.
 tests"*. The gate is an exact match on the Npgsql provider name, so **every** non-Npgsql provider takes
 the fallback — including `UseSqlServer`, which the same document recommends three lines earlier at
 `:19`. Two replicas on SQL Server will double-claim timeouts and double-publish outbox rows, silently,
-with no error anywhere.
+with no error anywhere. [2026-09-27: the documentation half is no longer live — `docs/persistence.md`
+now says the atomic claim is Postgres-only and names `UseSqlServer` among the providers that take the
+fallback. The fallback itself is still silent at runtime; see **Required** below.]
 
 This is worse than a documentation gap because SQL Server *does* have an equivalent construct
 (`UPDLOCK, READPAST`), so a reader has no reason to suspect the fallback applies to them.
 
 **Required:** correct `docs/persistence.md`, and emit a startup warning when
 `db.Database.ProviderName` is not Npgsql, naming the concurrency limitation. A silent unsafe default on
-a documented-as-supported provider is not acceptable once it is known.
+a documented-as-supported provider is not acceptable once it is known. [2026-09-27: the documentation
+correction is done; no startup warning has been added yet, so a non-Npgsql provider still takes the
+fallback silently.]
 
 **The same gate is written twice**, byte-identically, in two files that must never disagree — folded
 into one internal constant by
-[`../design/persistence-contracts.md`](../design/persistence-contracts.md) commit 21.
+[`../design/persistence-contracts.md`](../design/persistence-contracts.md) commit 21. [2026-09-27: done
+in `7174928` — `EfCoreProviderNames.Npgsql`, which both guards now compare against.]
 
 ### Positive
 

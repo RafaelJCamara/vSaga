@@ -1,8 +1,8 @@
 # Transport adapter: MassTransit
 
-`VSaga.Transport.MassTransit`, pinned to **MassTransit 8.5.8** (Apache-2.0; v9 is transitioning to a
-commercial license, so `Directory.Packages.props` bounds the version range below `9.0.0` so a
-consumer's own restore can never silently float onto it). Built entirely on
+`VSaga.Transport.MassTransit`, built against **MassTransit 8.5.8** (Apache-2.0; v9 is commercially
+licensed, so `Directory.Packages.props` bounds the version range to `[8.5.8,9.0.0)` so a consumer's
+own restore can never silently float onto it). Built entirely on
 `IBus`/`IPublishEndpoint`/`ISendEndpointProvider`/`IConsumer<T>` — never MassTransit's Courier
 (routing slips) or its own saga persistence (Automatonymous). Full build history and live-verification
 detail: [`../history/transport-adapter-masstransit.md`](../history/transport-adapter-masstransit.md).

@@ -156,8 +156,9 @@ which `ci.yml` has. Secrets needed: `NUGET_API_KEY`, `NPM_TOKEN`.
 > contains only `ci.yml` — no `release.yml`, no `dotnet pack` or `npm publish` step anywhere in CI, and
 > neither `NUGET_API_KEY` nor `NPM_TOKEN` is referenced by any workflow. The *metadata* half of packaging
 > landed in full (§8 items 1–3: MinVer with `MinVerTagPrefix=v`, the two 0.0.0 pack guards,
-> `fetch-depth: 0` on all three CI jobs, npm `publishConfig`/metadata), so a local `dotnet pack` against a
-> tag works — but the automation and the actual publish do not exist, which
+> `fetch-depth: 0` on all three CI jobs [2026-09-27: two now — the TypeScript job went with the SDK],
+> npm `publishConfig`/metadata), so a local `dotnet pack` against a tag works — but the automation and
+> the actual publish do not exist, which
 > `dotnet/Directory.Build.props`'s own MinVer comment ("no automated release workflow exists yet, so
 > tagging and publishing are manual") and `docs/getting-started.md`'s "vSaga has not yet cut a tagged
 > release" note both acknowledge. The deferral reads as deliberate; what hides it is structural.

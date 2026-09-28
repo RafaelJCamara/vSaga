@@ -10,15 +10,17 @@
 # stack would come up green while proving nothing. So this overlay turns order-processing into the
 # "Sagas" role (the engine + the order-submitting front door) and adds a second, brand-new service,
 # order-processing-participants, running the same image as the "Participants" role (the downstream
-# services). Both roles need AddVSagaEfCore + AddVSagaTopologyRecording — Program.cs already calls both
-# unconditionally for every role — or the participants' nodes in the map degrade to "unresolved:{...}".
+# services). Both roles need AddVSagaEfCore + AddVSagaTopologyRecording — Program.cs calls both for
+# every role (AddVSagaEfCore under the default Persistence:Provider=Postgres, which this overlay leaves
+# unset) — or the participants' nodes in the map degrade to "unresolved:{...}".
 #
-# rabbitmq stays up even though nothing on this track ever connects to it: dashboard-api's own
-# depends_on/health check is unconditionally RabbitMQ-backed (see its own fix below), and the point of
-# this pass is to prove the broker is out of the *message* path by traffic (no vsaga.saga.* queues, zero
-# throughput in its management UI) while orders still flow end to end — not by removing it from the
-# compose file, which would prove nothing either way. Compose can override a depends_on entry but not
-# delete a key, so order-processing keeps its rabbitmq dependency from the base file regardless.
+# rabbitmq stays up even though nothing on this track ever connects to it: the base file's depends_on
+# entries for dashboard-api and order-processing both name it, and this overlay leaves them alone.
+# (dashboard-api's "rabbitmq" health check doesn't probe it here: with Transport__Provider=Http set
+# below, no RabbitMQ connection is registered and the check reports "No message broker configured.")
+# The point of this pass is to prove the broker is out of the *message* path by traffic (no
+# vsaga.saga.* queues, zero throughput in its management UI) while orders still flow end to end — not
+# by removing it from the compose file, which would prove nothing either way.
 #
 # Ports use the "!override" merge tag rather than plain sequences, same reason as every other overlay:
 # Compose's default list-merge would otherwise leave this track also trying to bind the base file's
@@ -35,7 +37,7 @@ services:
       Transport__Provider: "Http"
       # Manual retry's PublishRawAsync (SagaEndpoints.RetrySagaAsync) never knows the message type ahead
       # of time -- one wildcard route ("*" in Routes) to the saga host covers every possible redrive
-      # rather than a route per command the way order-processing's own Routes above enumerate.
+      # rather than a route per command the way order-processing's own Routes below enumerate.
       Http__ServiceName: "dashboard-api"
       Http__Endpoints__sagas: "http://order-processing:8080"
       "Http__Routes__*__0": "sagas"
@@ -47,10 +49,11 @@ services:
       Transport__Provider: "Http"
       HttpSagas__ServiceName: "order-processing"
       HttpSagas__Endpoints__participants: "http://order-processing-participants:8080"
-      # Every message type OrderSaga and its two sub-sagas (InvoiceDeliverySaga, InvoiceArchivalSaga)
-      # publish toward the participants role. DeliverInvoice/ArchiveInvoice need no entry here: both are
-      # published via ctx.StartChildAsync to a saga type registered in this same process, so they
-      # resolve as local subscribers (§3.3a) and never touch HTTP at all.
+      # Every message type OrderSaga and the two invoice sub-sagas (InvoiceDeliverySaga, started by
+      # PostShipmentChoreography; InvoiceArchivalSaga, started by InvoiceFollowUpSaga) publish toward the
+      # participants role. DeliverInvoice/ArchiveInvoice need no entry here: both are published via
+      # ctx.StartChildAsync to a saga type registered in this same process, so they resolve as local
+      # subscribers (§3.3a) and never touch HTTP at all.
       HttpSagas__Routes__ReserveInventory__0: "participants"
       HttpSagas__Routes__ReleaseInventory__0: "participants"
       HttpSagas__Routes__ChargePayment__0: "participants"

@@ -11,7 +11,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- GenerateDocumentationFile=true activates CS1591 ("missing XML comment on publicly visible
          member") for every undocumented public member, which TreatWarningsAsErrors above turns into
-         a build error across all 16 projects. Suppressed here, in the same edit as the flip. -->
+         a build error across every project in VSaga.slnx. Suppressed here, in the same edit as the flip. -->
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <IsPackable>true</IsPackable>
     <RootNamespace>$(MSBuildProjectName)</RootNamespace>
@@ -92,7 +92,7 @@
     <Error Text="The -p:MinVerVersionOverride=$(MinVerVersionOverride) value passed to $(MSBuildProjectName) has a major.minor.patch of 0.0.0, which this guard also rejects (a 0.0.0 base isn't a meaningful package version even for local testing). Pick a non-zero base instead, e.g. -p:MinVerVersionOverride=1.0.0-local." />
   </Target>
 
-  <!-- Static code analysis: built-in .NET analyzers + SonarQube/Meziantu/AsyncFixer, enforced via .editorconfig -->
+  <!-- Static code analysis: built-in .NET analyzers + SonarQube/Meziantou/AsyncFixer, enforced via .editorconfig -->
   <PropertyGroup>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>

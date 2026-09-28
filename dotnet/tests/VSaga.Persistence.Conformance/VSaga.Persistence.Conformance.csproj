@@ -4,8 +4,9 @@
        which this project deliberately lacks: it is not a test project but a library of abstract test
        classes, packed and published like every other VSaga.* package so that a third-party persistence
        provider can derive from it and verify itself against the same suite the shipped providers run.
-       Each provider's own test project (VSaga.Persistence.EFCore.Tests, VSaga.Persistence.InMemory.Tests)
-       supplies the concrete classes and an IProviderFixture; `dotnet test` runs them there, never here. -->
+       Each provider's own test project (VSaga.Persistence.EFCore.Tests, VSaga.Persistence.InMemory.Tests,
+       VSaga.Persistence.MongoDB.Tests, VSaga.Persistence.Redis.Tests) supplies the concrete classes and an
+       IProviderFixture; `dotnet test` runs them there, never here. -->
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <IsTestProject>false</IsTestProject>

@@ -3,7 +3,7 @@
 `RabbitMQ.Client`-based `IMessageTransport` for vSaga — the reference broker adapter, built directly on
 `RabbitMQ.Client` with no MassTransit/Wolverine/Brighter dependency. One durable topic exchange, publisher
 confirms + `mandatory: true` for unroutable-publish detection, automatic connection recovery, and a
-dead-letter exchange/queue pair per consumer.
+shared dead-letter exchange (`vsaga.dlx` by default) with a `.poison` dead-letter queue per consumer.
 
 ## Install
 

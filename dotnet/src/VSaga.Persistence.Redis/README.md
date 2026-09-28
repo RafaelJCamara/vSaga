@@ -8,8 +8,9 @@ core Redis 7.0+ works, **Valkey included**. Built on `StackExchange.Redis` (MIT)
 loss window, not a Postgres peer: at its default configuration (`appendfsync everysec`) a hard kill
 loses up to one second of acknowledged writes, which for vSaga means a redelivered message can be
 reprocessed rather than deduped. It reaches production tier only under the Tier B configuration
-(`appendfsync always` plus `min-replicas-to-write 1`). Redis Cluster is unsupported, and a shared or
-evicting instance is refused by the provider's health check.
+(`appendfsync always` plus `min-replicas-to-write 1`). Redis Cluster and any evicting instance are
+refused by the provider's health check; a shared instance is unsupported too, though the check cannot
+detect one.
 
 ## Install
 
