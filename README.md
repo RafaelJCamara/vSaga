@@ -104,7 +104,19 @@ cd dashboard-web && npm install && npx ng serve     # http://localhost:4200
 | Dashboard UI | http://localhost:4200 | `ng serve`; must match `Dashboard__WebOrigin` |
 | Dashboard API | http://localhost:5080 | API key `dev-local-only-change-me` — see [`docs/dashboard.md`](docs/dashboard.md#authentication) |
 | RabbitMQ management | http://localhost:15672 | `guest` / `guest` |
+| RabbitMQ (AMQP) | `localhost:5672` | `guest` / `guest`, i.e. `amqp://guest:guest@localhost:5672/` |
 | Postgres | `localhost:5433` | `postgres`/`postgres`, database `vsaga` (port 5433, not 5432, to avoid clashing with a local Postgres) |
+| MongoDB | `localhost:27018` | MongoDB overlay only. No auth, database `vsaga`, replica set `rs0`. Connect with `mongodb://localhost:27018/?directConnection=true`: the member advertises itself as `mongo:27017`, which only the compose network resolves |
+| Redis | `localhost:6479` | Redis overlay only. No auth, namespace `vsaga`, so every key starts with `{vsaga:vsaga}:` |
+
+The MongoDB and Redis overlays also move the plain stack's services to their own ports, so they can
+run alongside it:
+
+| Service | MongoDB overlay (`-p vsaga-mongo`) | Redis overlay (`-p vsaga-redis`) |
+| --- | --- | --- |
+| Dashboard API | `localhost:5580` | `localhost:5680` |
+| RabbitMQ (AMQP / management) | `localhost:6172` / `16172` | `localhost:6272` / `16272` |
+| Postgres (running, unused by that overlay) | `localhost:5448` | `localhost:5447` |
 
 The sample submits orders on a loop as soon as it starts, so the saga list fills on its own — nothing
 to trigger by hand. Try the chaos overlay for fault injection
