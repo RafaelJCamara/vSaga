@@ -199,8 +199,12 @@ public sealed class RedisProviderTests(RedisProviderFixture fixture)
         const int pageSize = 100;
         await using var stores = await fixture.CreateNamespaceAsync();
         var scripts = new RedisPersistScripts(stores.Connection, stores.Keys, stores.Options, stores.Probe);
-        var inserts = Enumerable.Range(0, rows).Select(_ => new RedisSagaSnapshotStore<ConformanceSagaState>(stores.Connection, stores.Keys, scripts, new RedisSagaUnitOfWork()).InsertAsync(NewState()));
-        await Task.WhenAll(inserts);
+        // Bounded, not one Task.WhenAll over all 2000: that queues every EVALSHA on the one multiplexer at
+        // once, and on a loaded CI runner the tail of the queue outlasted the client's 5s timeout.
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, rows),
+            new ParallelOptions { MaxDegreeOfParallelism = 16 },
+            async (_, ct) => await new RedisSagaSnapshotStore<ConformanceSagaState>(stores.Connection, stores.Keys, scripts, new RedisSagaUnitOfWork()).InsertAsync(NewState(), ct));
 
         await using var uow = await stores.BeginAsync();
         var seen = new List<Guid>();
