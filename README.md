@@ -130,10 +130,33 @@ for the exact commands and ports.
 > reset for you. See [`docs/persistence.md`](docs/persistence.md#the-volume-caveat) if you're
 > comparing before/after counts or your volume predates the EF Core migrations pass.
 
+## Persistence samples
+
+To see one persistence provider on its own rather than the whole stack,
+[`dotnet/samples/Persistence/`](dotnet/samples/Persistence/) has one small console sample per provider.
+All four run the same saga over the in-memory transport, so no broker is needed, and the provider is the
+only thing that differs between them:
+
+| Provider | Sample | Database |
+| --- | --- | --- |
+| In-memory | [`VSaga.Samples.Persistence.InMemory`](dotnet/samples/Persistence/VSaga.Samples.Persistence.InMemory/) | none |
+| EF Core / Postgres | [`VSaga.Samples.Persistence.EFCore.Postgres`](dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.Postgres/) | Postgres 16 on `localhost:5434` |
+| MongoDB | [`VSaga.Samples.Persistence.MongoDB`](dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB/) | MongoDB 8 replica set on `localhost:27019` |
+| Redis | [`VSaga.Samples.Persistence.Redis`](dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis/) | Redis 7.4 on `localhost:6380` |
+
+```bash
+dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.InMemory
+
+# The durable ones start their database from the sample's own compose file first, e.g.:
+docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB/docker-compose.yml up -d --wait
+dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB
+```
+
 ## Repository layout
 
 ```
-dotnet/                  .NET 10 solution — engine, persistence, six transport adapters, dashboard API, samples
+dotnet/                  .NET 10 solution — engine, persistence, six transport adapters, dashboard API,
+                           samples (the OrderProcessing reference stack, and one per persistence provider)
 dashboard-web/            Angular 21 SPA for the dashboard (built with npm and the Angular CLI, not the
                            .NET solution — see dashboard-web/README.md)
 docs/                     Reference documentation, design records, and project history — see below

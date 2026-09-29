@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Persistence sample for VSaga.Persistence.EFCore on Postgres. A sample app, not a library — opt
+       out of the repo-wide IsPackable=true default. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VSaga.Samples.Persistence.Common\VSaga.Samples.Persistence.Common.csproj" />
+    <!-- The provider this sample demonstrates: the provider-agnostic EF Core stores, plus the Postgres
+         project that carries the migrations and the Npgsql dependency that supplies UseNpgsql. -->
+    <ProjectReference Include="..\..\..\src\VSaga.Persistence.EFCore\VSaga.Persistence.EFCore.csproj" />
+    <ProjectReference Include="..\..\..\src\VSaga.Persistence.EFCore.Postgres\VSaga.Persistence.EFCore.Postgres.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Persistence sample for VSaga.Persistence.Redis. A sample app, not a library — opt out of the
+       repo-wide IsPackable=true default. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VSaga.Samples.Persistence.Common\VSaga.Samples.Persistence.Common.csproj" />
+    <!-- The provider this sample demonstrates. -->
+    <ProjectReference Include="..\..\..\src\VSaga.Persistence.Redis\VSaga.Persistence.Redis.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

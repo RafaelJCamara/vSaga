@@ -1,0 +1,30 @@
+# Redis for the VSaga.Samples.Persistence.Redis sample — nothing else. The sample runs on the host with
+# the in-memory transport, so no broker is needed.
+#
+#   docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis/docker-compose.yml up -d --wait
+#
+# Configured at the provider's durability Tier A (docs/persistence.md, "Durability policy"): appendonly
+# yes and maxmemory-policy noeviction are hard requirements the provider's health check verifies, and
+# appendfsync everysec is what makes this Tier A — up to one second of acknowledged writes can be lost
+# on a hard kill. A maxmemory ceiling gives the provider's memory gate a number to measure against.
+#
+# Host port 6380, not 6379 (a local Redis) or 6479 (the repo root's Redis overlay), so this runs
+# alongside both. The AOF lives on the volume, so the sagas survive `down`/`up`; `down -v` starts clean.
+name: vsaga-sample-redis
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction", "--maxmemory", "256mb"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  redis-data:

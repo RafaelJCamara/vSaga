@@ -1,0 +1,31 @@
+# MongoDB for the VSaga.Samples.Persistence.MongoDB sample — nothing else. The sample runs on the host
+# with the in-memory transport, so no broker is needed.
+#
+#   docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB/docker-compose.yml up -d --wait
+#
+# A single-member replica set, the provider's hard prerequisite (a standalone mongod has no
+# multi-document transactions). The healthcheck initiates the set idempotently — rs.status() succeeds
+# once initiated, so rs.initiate() runs only on a fresh volume — and passes only once the member reports
+# itself PRIMARY, which is what `up --wait` waits for. The member advertises itself as mongo:27017, a
+# name only the compose network resolves, so the sample connects with directConnection=true.
+#
+# Host port 27019, not 27017 (a local mongod) or 27018 (the repo root's MongoDB overlay), so this runs
+# alongside both. The volume keeps the sagas across `down`/`up`; `down -v` starts clean.
+name: vsaga-sample-mongodb
+
+services:
+  mongo:
+    image: mongo:8.0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { if (rs.status().myState !== 1) quit(1) } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }); quit(1) }\""]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
+volumes:
+  mongo-data:

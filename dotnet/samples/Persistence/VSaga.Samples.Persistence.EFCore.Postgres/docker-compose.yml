@@ -1,0 +1,28 @@
+# Postgres for the VSaga.Samples.Persistence.EFCore.Postgres sample — nothing else. The sample runs on
+# the host with the in-memory transport, so no broker is needed.
+#
+#   docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.Postgres/docker-compose.yml up -d --wait
+#
+# Host port 5434, not 5432 (a local Postgres) or 5433 (the reference stack in the repo root), so this
+# runs alongside both. The volume keeps the sagas across `down`/`up`; `down -v` starts clean.
+name: vsaga-sample-postgres
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vsaga
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vsaga"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  postgres-data:

@@ -3,6 +3,13 @@
     <Project Path="samples/VSaga.Samples.OrderProcessing.Contracts/VSaga.Samples.OrderProcessing.Contracts.csproj" />
     <Project Path="samples/VSaga.Samples.OrderProcessing/VSaga.Samples.OrderProcessing.csproj" />
   </Folder>
+  <Folder Name="/samples/persistence/">
+    <Project Path="samples/Persistence/VSaga.Samples.Persistence.Common/VSaga.Samples.Persistence.Common.csproj" />
+    <Project Path="samples/Persistence/VSaga.Samples.Persistence.EFCore.Postgres/VSaga.Samples.Persistence.EFCore.Postgres.csproj" />
+    <Project Path="samples/Persistence/VSaga.Samples.Persistence.InMemory/VSaga.Samples.Persistence.InMemory.csproj" />
+    <Project Path="samples/Persistence/VSaga.Samples.Persistence.MongoDB/VSaga.Samples.Persistence.MongoDB.csproj" />
+    <Project Path="samples/Persistence/VSaga.Samples.Persistence.Redis/VSaga.Samples.Persistence.Redis.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/VSaga.Abstractions/VSaga.Abstractions.csproj" />
     <Project Path="src/VSaga.Chaos/VSaga.Chaos.csproj" />

@@ -21,6 +21,10 @@ implement and the xUnit v2 requirement. The eight divergences and three shared d
 once had are catalogued, with their fixes, in
 [`design/persistence-contracts.md`](design/persistence-contracts.md) §1 and §3; all are fixed.
 
+Each provider has a small runnable sample in
+[`dotnet/samples/Persistence/`](../dotnet/samples/Persistence/): the same saga on each store, the
+provider's wiring marked out in its `Program.cs`, and a compose file for its database.
+
 ## EF Core / Postgres
 
 `VSaga.Persistence.EFCore` implements every store against `VSagaDbContext` and is **provider-agnostic**

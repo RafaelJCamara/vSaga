@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The provider-neutral half of the persistence samples: one saga, one participant and the scenario
+       runner, used unchanged by every VSaga.Samples.Persistence.<Provider> host. Nothing in here
+       references a persistence package, which is the point the samples make: swapping the store never
+       touches saga code. A sample, not a library — opt out of the repo-wide IsPackable=true default. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\VSaga.Core\VSaga.Core.csproj" />
+    <ProjectReference Include="..\..\..\src\VSaga.Transport.InMemory\VSaga.Transport.InMemory.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+  </ItemGroup>
+
+</Project>

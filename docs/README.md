@@ -18,7 +18,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
 - [`persistence.md`](persistence.md) — EF Core/Postgres (migrations, the Postgres-volume caveat),
   MongoDB (the replica-set prerequisite, pinned write concern, the collections and indexes, supported
   servers), Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
-  persistence.
+  persistence. Each provider has a runnable sample in
+  [`dotnet/samples/Persistence/`](../dotnet/samples/Persistence/).
 - [`observability.md`](observability.md) — the persisted event log, OpenTelemetry traces/metrics,
   and the one-line OTLP exporter wiring.
 - [`dashboard.md`](dashboard.md) — API endpoints, API-key authentication, live updates over SignalR,
