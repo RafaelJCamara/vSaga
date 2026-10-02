@@ -14,8 +14,9 @@ namespace VSaga.Dashboard.Api.Auth;
 /// use for.
 /// </summary>
 /// <remarks>
-/// A session the store rejects is signed out (its cookie deleted) only while the store is ready. While it is
-/// not, nothing can be checked, so the request gets 401 but the cookie is kept for when the store returns.
+/// A session the store rejects is signed out (its cookie deleted) only when the store was ready before the
+/// session was resolved. While it is not, nothing can be checked, so the request gets 401 but the cookie is
+/// kept for when the store returns.
 /// </remarks>
 public sealed partial class DashboardCookieEvents(
     ICallerAccessResolver resolver,
@@ -46,10 +47,12 @@ public sealed partial class DashboardCookieEvents(
             return;
         }
 
+        // Readiness is read before resolving: it only ever goes from false to true, so a store that became
+        // ready mid-resolution must not turn the resolver's "not ready" answer into a sign-out.
+        var ready = readiness.IsReady;
         var caller = await resolver.ResolveAsync(context.Principal, context.HttpContext.RequestAborted);
         if (caller is null)
         {
-            var ready = readiness.IsReady;
             await RejectAsync(
                 context,
                 signOut: ready,

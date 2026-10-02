@@ -18,7 +18,8 @@ namespace VSaga.Dashboard.Api.Tests;
 /// <summary>
 /// The session cookie, checked against the store on every request: a revoked session (rotated stamp,
 /// disabled or deleted user) and one past its absolute lifetime get the shared 401 and lose the cookie; while
-/// the store is not ready the request gets 401 but the cookie is kept.
+/// the store is not ready the request gets 401 but the cookie is kept. Sliding renewal keeps the sign-in time
+/// that bounds the session.
 /// </summary>
 public sealed class CookieSessionTests : IAsyncLifetime, IAsyncDisposable
 {
@@ -88,6 +89,29 @@ public sealed class CookieSessionTests : IAsyncLifetime, IAsyncDisposable
     }
 
     [Fact]
+    public async Task SlidingRenewal_KeepsTheSignInTime()
+    {
+        using var client = _factory.CreateClient();
+        var alice = await CreateUserAsync(_factory.Services, "alice", grants: AllTypes(BuiltInRoles.ViewerId));
+        var now = DateTimeOffset.UtcNow;
+        var signedInAt = now.AddHours(-5);
+        var expected = new AuthenticationProperties();
+        DashboardCookieEvents.SetSignedInAt(expected, signedInAt);
+
+        // More than half of the 480-minute idle window has passed, so the handler renews the ticket.
+        using var request = Get(
+            "/api/sagas",
+            CookieHeader(_factory.Services, alice, signedInAt, issuedUtc: now.AddMinutes(-300), expiresUtc: now.AddMinutes(180)));
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var renewed = IssuedTicket(_factory.Services, response);
+        Assert.NotNull(renewed);
+        Assert.True(renewed.Properties.IssuedUtc > now.AddMinutes(-1), "The ticket was not renewed.");
+        Assert.Equal(expected.Items[DashboardCookieEvents.SignedInAtItem], renewed.Properties.Items[DashboardCookieEvents.SignedInAtItem]);
+    }
+
+    [Fact]
     public async Task TheAbsoluteLifetime_FollowsTheSetting()
     {
         await using var host = _factory.WithWebHostBuilder(builder =>
@@ -118,6 +142,25 @@ public sealed class CookieSessionTests : IAsyncLifetime, IAsyncDisposable
     [InlineData(false)]
     public async Task ARejectedSession_IsSignedOutOnlyWhileTheStoreIsReady(bool storeReady)
     {
+        var deleted = await ValidateRejectedSessionAsync(new NobodyResolver(), new Readiness(storeReady));
+
+        Assert.Equal(storeReady, deleted);
+    }
+
+    [Fact]
+    public async Task ARejectedSession_KeepsTheCookie_WhenTheStoreBecomesReadyWhileItIsResolved()
+    {
+        var store = new ReadyDuringResolution();
+
+        var deleted = await ValidateRejectedSessionAsync(store, store);
+
+        Assert.True(store.IsReady);
+        Assert.False(deleted);
+    }
+
+    /// <summary>Runs the cookie events on a rejected ticket; true when the session cookie was deleted.</summary>
+    private async Task<bool> ValidateRejectedSessionAsync(ICallerAccessResolver resolver, IIdentityReadiness readiness)
+    {
         using var client = _factory.CreateClient();
         await using var scope = _factory.Services.CreateAsyncScope();
         var context = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
@@ -128,13 +171,12 @@ public sealed class CookieSessionTests : IAsyncLifetime, IAsyncDisposable
         var scheme = new AuthenticationScheme(DashboardAuthExtensions.CookieScheme, null, typeof(CookieAuthenticationHandler));
         var validation = new CookieValidatePrincipalContext(context, scheme, options, ticket);
         var events = new DashboardCookieEvents(
-            new NobodyResolver(), new Readiness(storeReady), DashboardSecuritySettings.Default, TimeProvider.System,
-            NullLogger<DashboardCookieEvents>.Instance);
+            resolver, readiness, DashboardSecuritySettings.Default, TimeProvider.System, NullLogger<DashboardCookieEvents>.Instance);
 
         await events.ValidatePrincipal(validation);
 
         Assert.Null(validation.Principal);
-        Assert.Equal(storeReady, context.Response.Headers.SetCookie.Any(c => c!.StartsWith(options.Cookie.Name + "=;", StringComparison.Ordinal)));
+        return context.Response.Headers.SetCookie.Any(c => c!.StartsWith(options.Cookie.Name + "=;", StringComparison.Ordinal));
     }
 
     private static async Task AssertUnauthorizedAsync(HttpResponseMessage response)
@@ -160,5 +202,20 @@ public sealed class CookieSessionTests : IAsyncLifetime, IAsyncDisposable
     {
         public Task<CallerAccess?> ResolveAsync(System.Security.Claims.ClaimsPrincipal principal, CancellationToken cancellationToken) =>
             Task.FromResult<CallerAccess?>(null);
+    }
+
+    /// <summary>
+    /// A store that is not ready when the session is resolved (so the resolver answers null without checking
+    /// anything) and becomes ready during that resolution, as start-up recovery can make it.
+    /// </summary>
+    private sealed class ReadyDuringResolution : ICallerAccessResolver, IIdentityReadiness
+    {
+        public bool IsReady { get; private set; }
+
+        public Task<CallerAccess?> ResolveAsync(System.Security.Claims.ClaimsPrincipal principal, CancellationToken cancellationToken)
+        {
+            IsReady = true;
+            return Task.FromResult<CallerAccess?>(null);
+        }
     }
 }

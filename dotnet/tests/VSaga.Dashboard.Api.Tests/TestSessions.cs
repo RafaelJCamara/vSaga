@@ -36,14 +36,21 @@ internal static class TestSessions
     /// <summary>
     /// A <c>Cookie</c> header value carrying a session for <paramref name="user"/> as it stands (or with
     /// <paramref name="stamp"/>), signed in at <paramref name="signedInAt"/>; null leaves the sign-in time out.
-    /// The ticket itself is fresh: issued now, expiring in an hour.
+    /// The ticket itself is fresh unless <paramref name="issuedUtc"/> and <paramref name="expiresUtc"/> say
+    /// otherwise: by default issued now, expiring in an hour.
     /// </summary>
-    public static string CookieHeader(IServiceProvider services, DashboardUser user, DateTimeOffset? signedInAt, string? stamp = null)
+    public static string CookieHeader(
+        IServiceProvider services,
+        DashboardUser user,
+        DateTimeOffset? signedInAt,
+        string? stamp = null,
+        DateTimeOffset? issuedUtc = null,
+        DateTimeOffset? expiresUtc = null)
     {
         var options = Options(services);
         var principal = DashboardClaims.ForUser(stamp is null ? user : user with { SecurityStamp = stamp }, DashboardAuthExtensions.CookieScheme);
         var now = DateTimeOffset.UtcNow;
-        var properties = new AuthenticationProperties { IssuedUtc = now, ExpiresUtc = now.AddHours(1) };
+        var properties = new AuthenticationProperties { IssuedUtc = issuedUtc ?? now, ExpiresUtc = expiresUtc ?? now.AddHours(1) };
         if (signedInAt is { } at)
             DashboardCookieEvents.SetSignedInAt(properties, at);
 
@@ -57,6 +64,22 @@ internal static class TestSessions
         var request = new HttpRequestMessage(HttpMethod.Get, path);
         request.Headers.Add("Cookie", cookieHeader);
         return request;
+    }
+
+    /// <summary>The ticket in the session cookie this response sets, or null when it sets none.</summary>
+    public static AuthenticationTicket? IssuedTicket(IServiceProvider services, HttpResponseMessage response)
+    {
+        var options = Options(services);
+        var prefix = options.Cookie.Name + "=";
+        if (!response.Headers.TryGetValues("Set-Cookie", out var cookies))
+            return null;
+
+        var cookie = cookies.FirstOrDefault(c => c.StartsWith(prefix, StringComparison.Ordinal) && !c.StartsWith(prefix + ";", StringComparison.Ordinal));
+        if (cookie is null)
+            return null;
+
+        var value = cookie[prefix.Length..].Split(';', 2)[0];
+        return options.TicketDataFormat.Unprotect(value);
     }
 
     private static CookieAuthenticationOptions Options(IServiceProvider services) =>
