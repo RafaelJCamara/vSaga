@@ -8,6 +8,8 @@ import { SagaDetail as SagaDetailModel, SagaLogEntry, SagaMap as SagaMapModel, S
 import { KindBadge } from '../../components/kind-badge/kind-badge';
 import { StatusBadge } from '../../components/status-badge/status-badge';
 import { SagaMap } from '../../components/saga-map/saga-map';
+import { formatStateJson } from '../../util/state-json';
+import { entryTypeLabel as labelEntryType } from '../../util/entry-type-label';
 
 type Tab = 'timeline' | 'data' | 'map';
 
@@ -218,47 +220,14 @@ export class SagaDetail implements OnInit, OnDestroy {
     this.tab.set(tab);
   }
 
-  /**
-   * The saga's raw persisted state, pretty-printed. `Kind` and `Status` are serialized by the .NET
-   * engine as their underlying enum ints ("Kind": 0, "Status": 2) rather than names — everywhere
-   * else in this UI shows the string form, so this remaps those two fields for display only. The
-   * persisted JSON itself, and anything already using string enums, is left untouched.
-   */
+  /** The saga's raw persisted state, pretty-printed with Kind and Status as names (see state-json). */
   get prettyDataJson(): string {
-    const json = this.detail()?.dataJson;
-    if (!json) return '';
-
-    // Index = C#'s SagaKind enum order.
-    const kinds = ['Orchestrated', 'Choreographed'];
-    // Index = C#'s SagaStatus enum order (mirrors STATUSES in the sibling saga-list.ts).
-    const statuses = ['Running', 'Completed', 'Failed', 'Compensating', 'Compensated', 'TimedOut', 'Cancelled'];
-
-    try {
-      const parsed: unknown = JSON.parse(json);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const obj = parsed as Record<string, unknown>;
-        if (typeof obj['Kind'] === 'number') {
-          obj['Kind'] = kinds[obj['Kind']] ?? obj['Kind'];
-        }
-        if (typeof obj['Status'] === 'number') {
-          obj['Status'] = statuses[obj['Status']] ?? obj['Status'];
-        }
-      }
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      return json;
-    }
+    return formatStateJson(this.detail()?.dataJson);
   }
 
-  /**
-   * The entry type as the timeline should read it. The engine logs one terminal entry for every
-   * Finalize, so a saga that failed still ends on SagaCompleted — accurate about the lifecycle, but
-   * on screen directly under a red "Failed" badge it reads as a contradiction. "SagaFinalized" says
-   * the same thing without arguing with the status. Presentation only: the persisted SagaEntryType
-   * member is unchanged, and its `toState` already carries the outcome the entry ended on.
-   */
+  /** The entry type as the timeline reads it (see entry-type-label). */
   entryTypeLabel(entryType: string): string {
-    return entryType === 'SagaCompleted' ? 'SagaFinalized' : entryType;
+    return labelEntryType(entryType);
   }
 
   askRetryConfirmation(): void {
