@@ -138,7 +138,8 @@ public sealed class IdentityUnavailableTests : IAsyncLifetime, IAsyncDisposable
         {
             var watch = Stopwatch.StartNew();
             var result = await check.CheckHealthAsync(context, prober.Token);
-            Assert.True(watch.Elapsed < IdentityHealthCheck.MaxWait + TimeSpan.FromSeconds(1), $"The check took {watch.Elapsed}.");
+            // Well under MaxWait: a check that ignored the prober's token would sit out the full 2 s.
+            Assert.True(watch.Elapsed < IdentityHealthCheck.MaxWait - TimeSpan.FromMilliseconds(500), $"The check took {watch.Elapsed}.");
             Assert.Equal(HealthStatus.Degraded, result.Status);
             Assert.StartsWith(IdentityStartup.InitialisingReason, result.Description, StringComparison.Ordinal);
         }
