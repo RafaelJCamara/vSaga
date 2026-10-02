@@ -99,6 +99,11 @@ switch (builder.Configuration["Transport:Provider"] ?? "RabbitMq")
 }
 builder.Services.AddVSagaOpenTelemetry();
 
+// Dashboard:StateSnapshots:MaxBytes caps the StatePersisted entry a retry reset records; read and validated
+// once, here, so a bad value fails composition rather than the first retry.
+builder.Services.AddSingleton(DashboardStateSnapshotOptions.Read(builder.Configuration));
+builder.Services.AddScoped<SagaResetSnapshotRecorder>();
+
 builder.Services.AddSingleton<ISagaChangeNotifier, SignalRSagaChangeNotifier>();
 builder.Services.AddHostedService<SagaChangePollingService>();
 

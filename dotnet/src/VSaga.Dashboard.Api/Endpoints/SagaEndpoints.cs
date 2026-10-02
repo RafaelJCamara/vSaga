@@ -134,7 +134,7 @@ public static class SagaEndpoints
         return Results.Ok(SagaTimelineRedaction.Apply(timeline, includeData: true));
     }
 
-    private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider, CancellationToken ct)
+    private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider, SagaResetSnapshotRecorder snapshots, CancellationToken ct)
     {
         var summary = await reader.GetAsync(sagaType, correlationId, ct);
         if (summary is null)
@@ -169,7 +169,7 @@ public static class SagaEndpoints
         await log.AppendAsync(SagaLogEntry.Create(correlationId, summary.SagaType, SagaEntryType.ManualRetryRequested,
             fromState: summary.CurrentState, toState: resetToState, messageType: redrive.MessageType, messageId: redrive.MessageId), ct);
 
-        return await ResetAndRedriveAsync(sagaType, correlationId, summary, resetToState, redrive, admin, transport, timeProvider, ct);
+        return await ResetAndRedriveAsync(sagaType, correlationId, summary, resetToState, redrive, timeline, admin, transport, timeProvider, snapshots, ct);
     }
 
     /// <summary>
@@ -178,7 +178,8 @@ public static class SagaEndpoints
     /// persist/dispatch tails.
     /// </summary>
     private static async Task<IResult> ResetAndRedriveAsync(string sagaType, Guid correlationId, SagaSummary summary, string resetToState,
-        SagaLogEntry redrive, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider, CancellationToken ct)
+        SagaLogEntry redrive, IReadOnlyList<SagaLogEntry> timeline, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider,
+        SagaResetSnapshotRecorder snapshots, CancellationToken ct)
     {
         if (!string.Equals(resetToState, summary.CurrentState, StringComparison.Ordinal))
         {
@@ -196,6 +197,11 @@ public static class SagaEndpoints
                 // acting on a stale view and should reload before retrying again.
                 return Results.Conflict(new { error = $"Saga '{sagaType}' instance '{correlationId}' was modified concurrently with this retry; reload and try again." });
             }
+
+            // The reset wrote a state no engine snapshot describes; record it before the redrive, so it is
+            // sequenced ahead of the snapshots the redriven step records. Best effort (it never throws), and
+            // it writes nothing for a saga whose timeline holds no StatePersisted yet.
+            await snapshots.RecordAsync(sagaType, correlationId, summary.Version + 1, timeline, ct);
         }
 
         // Redrive by re-publishing the message with a fresh message id (so the dedupe check
