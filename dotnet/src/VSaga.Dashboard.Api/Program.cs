@@ -29,8 +29,9 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Ad
 builder.Services.AddOpenApi();
 builder.Services.AddSignalR().AddJsonProtocol(o => o.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
-// The edge (CORS today) is read and validated once, here, by DashboardEdge, the only reader of its keys.
-// CORS is opt-in: the bundled UI is same-origin, so with Dashboard:WebOrigin empty there is no policy.
+// The edge (CORS and forwarded headers) is read and validated once, here, by DashboardEdge, the only
+// reader of its keys. Both are opt-in: the bundled UI is same-origin, so with Dashboard:WebOrigin empty
+// there is no policy, and with Dashboard:TrustedProxies empty no peer's forwarded headers are honoured.
 var edge = DashboardEdge.Read(builder.Configuration);
 builder.Services.AddDashboardEdge(edge);
 

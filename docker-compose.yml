@@ -41,6 +41,11 @@ services:
       ConnectionStrings__VSaga: "Host=postgres;Port=5432;Database=vsaga;Username=postgres;Password=postgres"
       RabbitMq__ConnectionString: "amqp://guest:guest@rabbitmq:5672/"
       Dashboard__ApiKey: "dev-local-only-change-me"
+      # Honour X-Forwarded-For/-Proto from dashboard-web's nginx, so the API sees the browser's address and
+      # scheme. The private ranges, because the proxy's address is assigned dynamically inside the compose
+      # network; acceptable here because the ports are bound to loopback. Narrow this to your proxy's
+      # address or network for a real deployment: any peer in these ranges can assert a client address.
+      Dashboard__TrustedProxies: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     depends_on:
       postgres:
         condition: service_healthy
