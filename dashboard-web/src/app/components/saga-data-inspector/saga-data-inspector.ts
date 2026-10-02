@@ -56,6 +56,8 @@ export class SagaDataInspector {
   readonly beforeLabel = input<string | null>(null);
   /** The payload of the message that ran the step, where one was recorded. */
   readonly message = input<{ label: string; json: string } | null>(null);
+  /** What the changes view says when none of the saga's own fields differ from the baseline. */
+  readonly unchangedNote = input("None of the saga's own fields changed in this step.");
 
   /** Clipboard access is missing on plain HTTP origins other than localhost, and in old browsers. */
   readonly canCopy = typeof navigator !== 'undefined' && navigator.clipboard != null;

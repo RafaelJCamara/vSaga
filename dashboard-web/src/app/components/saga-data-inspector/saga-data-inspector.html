@@ -39,7 +39,7 @@
         </table>
       </div>
     } @else {
-      <p class="insp-note">None of the saga's own fields changed in this step.</p>
+      <p class="insp-note">{{ unchangedNote() }}</p>
     }
     @if (d.truncated) {
       <p class="insp-note muted">Showing the first {{ business().length }} changes. Full state shows the rest.</p>

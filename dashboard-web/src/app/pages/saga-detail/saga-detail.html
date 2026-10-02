@@ -100,10 +100,19 @@
     }
   </div>
 
+  <app-saga-data-overview
+    [history]="history()"
+    [historyLoaded]="timelineLoaded()"
+    [currentJson]="d.dataJson"
+    [summary]="d.summary"
+    [canViewData]="canViewData"
+    [view]="dataView()"
+    (viewChange)="setDataView($event)"
+  />
+
   <div class="tabs">
     <button type="button" [class.active]="tab() === 'map'" (click)="setTab('map')">Map</button>
     <button type="button" [class.active]="tab() === 'timeline'" (click)="setTab('timeline')">Timeline</button>
-    <button type="button" [class.active]="tab() === 'data'" (click)="setTab('data')">Data</button>
   </div>
 
   @if (tab() === 'map') {
@@ -117,7 +126,7 @@
     } @else {
       <div class="empty">Loading map…</div>
     }
-  } @else if (tab() === 'timeline') {
+  } @else {
     @if (history().rowCount === 0) {
       <div class="empty">No events recorded yet.</div>
     } @else {
@@ -129,12 +138,6 @@
         [(openKeys)]="openKeys"
         (entrySelected)="showOnMap($event)"
       />
-    }
-  } @else {
-    @if (prettyDataJson) {
-      <pre class="data-json">{{ prettyDataJson }}</pre>
-    } @else {
-      <div class="empty">No state data recorded.</div>
     }
   }
 }

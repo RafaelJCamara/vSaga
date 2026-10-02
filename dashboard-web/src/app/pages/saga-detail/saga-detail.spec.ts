@@ -467,32 +467,130 @@ describe('SagaDetail', () => {
     expect(times[1].getAttribute('title')).toBe('2026-01-01 00:00:01.000 UTC');
   });
 
-  it('prettyDataJson pretty-prints valid JSON', () => {
-    const fixture = setup(makeDetail());
-    fixture.componentInstance.detail.set({ ...fixture.componentInstance.detail()!, dataJson: '{"a":1}' });
-
-    expect(fixture.componentInstance.prettyDataJson).toBe(JSON.stringify({ a: 1 }, null, 2));
-  });
-
-  it('prettyDataJson returns the raw string when the JSON is invalid', () => {
-    const fixture = setup(makeDetail());
-    fixture.componentInstance.detail.set({ ...fixture.componentInstance.detail()!, dataJson: 'not json' });
-
-    expect(fixture.componentInstance.prettyDataJson).toBe('not json');
-  });
-
-  it('prettyDataJson returns an empty string when there is no data', () => {
-    const fixture = setup(makeDetail());
-    expect(fixture.componentInstance.prettyDataJson).toBe('');
-  });
-
-  it('setTab switches the active tab', () => {
+  it('setTab switches the active tab and writes it to the URL', () => {
     const fixture = setup();
     expect(fixture.componentInstance.tab()).toBe('map'); // Map is the default tab
 
-    fixture.componentInstance.setTab('data');
+    fixture.componentInstance.setTab('timeline');
 
-    expect(fixture.componentInstance.tab()).toBe('data');
+    expect(fixture.componentInstance.tab()).toBe('timeline');
+    expect(navigateSpy).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ queryParams: { tab: 'timeline', entry: null, data: null }, replaceUrl: false }),
+    );
+  });
+
+  // The saga's data moved from a third tab to the Saga data bar under the summary card.
+  it('has exactly two tabs, Map and Timeline, and no Data tab', () => {
+    const fixture = setup(makeDetail({ status: 'Completed' }), [], makeMap(), undefined, [], undefined, of(convertToParamMap({ tab: 'timeline' })));
+    const el: HTMLElement = fixture.nativeElement;
+
+    const tabs = Array.from(el.querySelectorAll('.tabs button')).map((b) => b.textContent?.trim());
+    expect(tabs).toEqual(['Map', 'Timeline']);
+    expect(el.querySelector('.data-json')).toBeNull();
+    expect(el.querySelector('app-saga-data-overview [role="group"][aria-label="Saga data"]')).not.toBeNull();
+  });
+
+  describe('the Saga data bar', () => {
+    const query = (params: Record<string, string>) => of(convertToParamMap(params));
+    const routeParams = () => of(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+
+    function dataButton(fixture: ReturnType<typeof setup>, label: string): HTMLButtonElement {
+      const buttons = Array.from(fixture.nativeElement.querySelectorAll('.ov-bar button') as NodeListOf<HTMLButtonElement>);
+      return buttons.find((b) => b.textContent?.trim() === label)!;
+    }
+
+    it('restores the open view from ?data=end and shows the stored state', () => {
+      const detail = { ...makeDetail({ status: 'Completed' }), dataJson: '{"Total":10,"Status":1}' };
+      const fixture = setup(detail, [], makeMap(), undefined, [], routeParams(), query({ data: 'end' }));
+
+      expect(fixture.componentInstance.dataView()).toBe('end');
+      expect(dataButton(fixture, 'At end').getAttribute('aria-pressed')).toBe('true');
+      const panel = fixture.nativeElement.querySelector('.ov-end');
+      expect(panel?.querySelector('pre')?.textContent).toBe(JSON.stringify({ Total: 10, Status: 'Completed' }, null, 2));
+      expect(navigateSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([[{ data: 'bogus' }], [{ data: 'End' }], [{ data: '' }], [{ tab: 'data' }]])(
+      'ignores an invalid data view or the old data tab in %o',
+      (params) => {
+        const fixture = setup(makeDetail(), [], makeMap(), undefined, [], routeParams(), query(params));
+
+        expect(fixture.componentInstance.dataView()).toBeNull();
+        expect(fixture.componentInstance.tab()).toBe('map');
+        expect(fixture.nativeElement.querySelector('.ov-panel')).toBeNull();
+      },
+    );
+
+    it('writes a data view to the URL without a history step, keeping the tab and the focus', () => {
+      const fixture = setup(makeDetail({ status: 'Completed' }), [], makeMap(), undefined, [], routeParams(), query({ tab: 'timeline', entry: '2' }));
+
+      dataButton(fixture, 'At start').click();
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.dataView()).toBe('start');
+      expect(navigateSpy).toHaveBeenCalledTimes(1);
+      expect(navigateSpy).toHaveBeenCalledWith(
+        [],
+        expect.objectContaining({ queryParams: { tab: 'timeline', entry: 2, data: 'start' }, queryParamsHandling: 'merge', replaceUrl: true }),
+      );
+      expect(fixture.nativeElement.querySelector('.ov-start')).not.toBeNull();
+      expect(fixture.componentInstance.tab()).toBe('timeline');
+    });
+
+    it('closes the open view when its button is clicked again', () => {
+      const fixture = setup(makeDetail({ status: 'Completed' }), [], makeMap(), undefined, [], routeParams(), query({ data: 'end' }));
+
+      dataButton(fixture, 'At end').click();
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.dataView()).toBeNull();
+      expect(navigateSpy.mock.calls.at(-1)![1]).toEqual(
+        expect.objectContaining({ queryParams: { tab: null, entry: null, data: null }, replaceUrl: true }),
+      );
+      expect(fixture.nativeElement.querySelector('.ov-panel')).toBeNull();
+    });
+
+    it('keeps the open view when the tab changes', () => {
+      const fixture = setup(makeDetail(), [], makeMap(), undefined, [], routeParams(), query({ data: 'start' }));
+
+      fixture.componentInstance.setTab('timeline');
+
+      expect(navigateSpy.mock.calls.at(-1)![1]).toEqual(
+        expect.objectContaining({ queryParams: { tab: 'timeline', entry: null, data: 'start' }, replaceUrl: false }),
+      );
+    });
+
+    it('tells At start the history is still loading until the timeline arrives', () => {
+      const paramMap$ = new Subject<ParamMap>();
+      const fixture = setup(makeDetail({ status: 'Completed' }), [], makeMap(), undefined, [], paramMap$, query({ data: 'start' }));
+      const timeline$ = new Subject<SagaLogEntry[]>();
+      apiMock.getTimeline.mockReturnValue(timeline$);
+      paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+      fixture.detectChanges();
+
+      const notes = () => Array.from(fixture.nativeElement.querySelectorAll('.ov-start .ov-note') as NodeListOf<Element>).map((n) => n.textContent?.trim());
+      expect(fixture.componentInstance.timelineLoaded()).toBe(false);
+      expect(notes()).toEqual(["Loading the saga's history…"]);
+
+      timeline$.next([makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageType: 'OrderSubmitted', payloadJson: '{"OrderId":"o-1"}' })]);
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.timelineLoaded()).toBe(true);
+      expect(notes()).not.toContain("Loading the saga's history…");
+      expect(fixture.nativeElement.querySelector('.ov-start pre')?.textContent).toBe(JSON.stringify({ OrderId: 'o-1' }, null, 2));
+    });
+
+    it('labels the end view Current while the saga runs, and follows a live status change', () => {
+      const fixture = setup(makeDetail({ status: 'Running' }));
+      expect(dataButton(fixture, 'Current')).toBeDefined();
+
+      hubMock.sagaUpdated$.next({ ...fixture.componentInstance.detail()!.summary, status: 'Completed' });
+      fixture.detectChanges();
+
+      expect(dataButton(fixture, 'Current')).toBeUndefined();
+      expect(dataButton(fixture, 'At end').getAttribute('aria-label')).toBe('Data at end');
+    });
   });
 
   function sibling(overrides: Partial<SagaSummary> = {}): SagaSummary {
@@ -762,12 +860,6 @@ describe('SagaDetail', () => {
       expect(fixture.componentInstance.focusedSequence()).toBeNull();
     });
 
-    it('accepts the data tab from the URL while that tab exists', () => {
-      const fixture = setup(makeDetail(), [], makeMap(), undefined, [], routeParams(), query({ tab: 'data' }));
-
-      expect(fixture.componentInstance.tab()).toBe('data');
-    });
-
     it('opens the map on an entry when its timeline row is clicked, as a history step', () => {
       const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3));
       fixture.componentInstance.setTab('timeline');
@@ -780,7 +872,7 @@ describe('SagaDetail', () => {
       expect(navigateSpy).toHaveBeenCalledTimes(1);
       expect(navigateSpy).toHaveBeenCalledWith(
         [],
-        expect.objectContaining({ queryParams: { tab: null, entry: 2 }, queryParamsHandling: 'merge', replaceUrl: false }),
+        expect.objectContaining({ queryParams: { tab: null, entry: 2, data: null }, queryParamsHandling: 'merge', replaceUrl: false }),
       );
       expect(fixture.componentInstance.tab()).toBe('map');
       const map = mapComponent(fixture);
@@ -796,7 +888,7 @@ describe('SagaDetail', () => {
 
       fixture.nativeElement.querySelector('button.tl-title').click();
 
-      expect(lastNavigation().queryParams).toEqual({ tab: null, entry: 3 });
+      expect(lastNavigation().queryParams).toEqual({ tab: null, entry: 3, data: null });
       expect(fixture.componentInstance.focusedSequence()).toBe(3);
     });
 
@@ -818,7 +910,7 @@ describe('SagaDetail', () => {
 
       expect(fixture.componentInstance.tab()).toBe('map');
       expect(fixture.componentInstance.focusedSequence()).toBeNull();
-      expect(lastNavigation().queryParams).toEqual({ tab: null, entry: null });
+      expect(lastNavigation().queryParams).toEqual({ tab: null, entry: null, data: null });
     });
 
     it('drops the focus without a history step when the map releases it', () => {
@@ -830,7 +922,7 @@ describe('SagaDetail', () => {
 
       expect(fixture.componentInstance.focusedSequence()).toBeNull();
       expect(lastNavigation()).toEqual(
-        expect.objectContaining({ queryParams: { tab: null, entry: null }, queryParamsHandling: 'merge', replaceUrl: true }),
+        expect.objectContaining({ queryParams: { tab: null, entry: null, data: null }, queryParamsHandling: 'merge', replaceUrl: true }),
       );
       expect(fixture.nativeElement.querySelector('.focus-banner')).toBeNull();
     });
@@ -844,7 +936,7 @@ describe('SagaDetail', () => {
       expect(fixture.componentInstance.tab()).toBe('timeline');
       expect(fixture.componentInstance.focusedSequence()).toBe(2);
       expect(lastNavigation()).toEqual(
-        expect.objectContaining({ queryParams: { tab: 'timeline', entry: 2 }, replaceUrl: false }),
+        expect.objectContaining({ queryParams: { tab: 'timeline', entry: 2, data: null }, replaceUrl: false }),
       );
       expect(fixture.nativeElement.querySelector('.tl-row--focused')?.getAttribute('data-seq')).toBe('2');
     });
@@ -870,7 +962,7 @@ describe('SagaDetail', () => {
       fixture.componentInstance.setTab('timeline');
 
       expect(lastNavigation()).toEqual(
-        expect.objectContaining({ queryParams: { tab: 'timeline', entry: 2 }, queryParamsHandling: 'merge', replaceUrl: false }),
+        expect.objectContaining({ queryParams: { tab: 'timeline', entry: 2, data: null }, queryParamsHandling: 'merge', replaceUrl: false }),
       );
     });
 

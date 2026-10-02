@@ -1,0 +1,86 @@
+<div class="ov-bar" role="group" aria-label="Saga data">
+  <span class="micro-label">Saga data</span>
+  <button
+    type="button"
+    class="btn btn--quiet"
+    aria-label="Data at start"
+    [disabled]="!canViewData()"
+    [attr.aria-pressed]="shown() === 'start'"
+    (click)="toggle('start')"
+  >At start</button>
+  <button
+    type="button"
+    class="btn btn--quiet"
+    [attr.aria-label]="terminal() ? 'Data at end' : 'Current data'"
+    [disabled]="!canViewData()"
+    [attr.aria-pressed]="shown() === 'end'"
+    (click)="toggle('end')"
+  >{{ terminal() ? 'At end' : 'Current' }}</button>
+  <button
+    type="button"
+    class="btn btn--quiet"
+    [disabled]="!canViewData() || !canCompare()"
+    [attr.title]="compareBlockedReason()"
+    [attr.aria-pressed]="shown() === 'compare'"
+    (click)="toggle('compare')"
+  >Compare</button>
+  @if (!canViewData()) {
+    <span class="muted">Saga data is hidden for your role. It needs the sagas.data permission.</span>
+  }
+</div>
+
+@switch (shown()) {
+  @case ('start') {
+    <div class="ov-panel ov-start">
+      @if (!historyLoaded()) {
+        <p class="ov-note muted">Loading the saga's history…</p>
+      } @else {
+        <p class="ov-caption">
+          <span class="micro-label">Message that started the saga</span>
+          @if (history().initiating?.messageType; as type) { <span class="mono">{{ type }}</span> }
+        </p>
+        @if (initiatingPretty()) {
+          <pre class="json-block" tabindex="0">{{ initiatingPretty() }}</pre>
+        } @else {
+          <p class="ov-note muted">The message that started this saga was not recorded.</p>
+        }
+        @if (history().firstRecorded; as step) {
+          <p class="ov-caption"><span class="micro-label">State after step {{ step.ordinal }}</span> {{ step.title }}</p>
+          <app-saga-data-inspector [state]="'recorded'" [afterJson]="step.snapshotJson" />
+        } @else {
+          <p class="ov-note muted">
+            No state snapshot was recorded for this saga: it ran before snapshots existed, or they are switched off.
+          </p>
+        }
+      }
+    </div>
+  }
+  @case ('end') {
+    <div class="ov-panel ov-end">
+      <p class="ov-caption">
+        <span class="micro-label">{{ terminal() ? 'State at end' : 'Current state' }}</span>
+        {{ summary().currentState }} · version {{ summary().version }}
+      </p>
+      @if (currentJson()) {
+        <app-saga-data-inspector [state]="'recorded'" [afterJson]="currentJson()" />
+      } @else {
+        <p class="ov-note muted">No state data recorded.</p>
+      }
+    </div>
+  }
+  @case ('compare') {
+    <div class="ov-panel ov-compare">
+      <p class="ov-caption">
+        <span class="micro-label">Compare</span>
+        {{ baselineLabel() }} with the {{ terminal() ? 'state at end' : 'current state' }}
+      </p>
+      <app-saga-data-inspector
+        [state]="'recorded'"
+        [afterJson]="currentJson()"
+        [beforeJson]="first()?.json ?? null"
+        [beforeLabel]="baselineLabel()"
+        unchangedNote="None of the saga's own fields changed since then."
+      />
+    </div>
+  }
+}

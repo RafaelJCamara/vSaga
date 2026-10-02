@@ -9,14 +9,14 @@ import { StatusBadge } from '../../components/status-badge/status-badge';
 import { SagaMap } from '../../components/saga-map/saga-map';
 import { LocalTime } from '../../components/local-time/local-time';
 import { SagaTimeline } from '../../components/saga-timeline/saga-timeline';
-import { formatStateJson } from '../../util/state-json';
+import { DATA_VIEWS, DataView, SagaDataOverview } from '../../components/saga-data-overview/saga-data-overview';
 import { foldTimeline } from '../../util/saga-transitions';
 import { timezoneLabel, toMillis } from '../../util/time-format';
 
-type Tab = 'timeline' | 'data' | 'map';
+type Tab = 'map' | 'timeline';
 
 /** The tabs a URL may name; the map is the default and is written as no `tab` at all. */
-const URL_TABS: readonly Tab[] = ['timeline', 'data'];
+const URL_TABS: readonly Tab[] = ['timeline'];
 
 /** `UTC+02:00` as of `iso` (a zone's offset changes with daylight saving); now when unparseable. */
 function zoneAt(iso: string | null | undefined): string {
@@ -31,13 +31,18 @@ function parseEntry(raw: string | null): number | null {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+/** The Saga data view a URL names: one of the three, else none. */
+function parseDataView(raw: string | null): DataView | null {
+  return raw !== null && (DATA_VIEWS as readonly string[]).includes(raw) ? (raw as DataView) : null;
+}
+
 function isEntry(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
 }
 
 @Component({
   selector: 'app-saga-detail',
-  imports: [RouterLink, KindBadge, StatusBadge, SagaMap, LocalTime, SagaTimeline],
+  imports: [RouterLink, KindBadge, StatusBadge, SagaMap, LocalTime, SagaTimeline, SagaDataOverview],
   templateUrl: './saga-detail.html',
   styleUrl: './saga-detail.scss',
 })
@@ -47,6 +52,9 @@ export class SagaDetail implements OnInit, OnDestroy {
 
   readonly detail = signal<SagaDetailModel | null>(null);
   readonly timeline = signal<SagaLogEntry[]>([]);
+  /** Whether `timeline` holds this saga's fetched timeline; until then the Saga data bar must not
+   *  read an empty one as "nothing recorded". */
+  readonly timelineLoaded = signal(false);
   readonly map = signal<SagaMapModel | null>(null);
   /** Other saga types tracking this same correlation id — empty for the usual one-saga case. */
   readonly related = signal<SagaSummary[]>([]);
@@ -58,6 +66,8 @@ export class SagaDetail implements OnInit, OnDestroy {
   /** The timeline entry the page is focused on (`?entry=`): the map shows the saga as of it and the
    *  timeline highlights its row. */
   readonly focusedSequence = signal<number | null>(null);
+  /** The Saga data view open under the summary card (`?data=`); null when none is. */
+  readonly dataView = signal<DataView | null>(null);
   /** The timeline steps whose data inspector is open. Held here rather than in the timeline, whose
    *  view goes while the map tab shows, so an inspector stays open across a jump to the map and
    *  back and across refreshes (step keys are sequence numbers); a saga change closes them all. */
@@ -173,6 +183,7 @@ export class SagaDetail implements OnInit, OnDestroy {
   load(): void {
     this.loading.set(true);
     this.error.set(null);
+    this.timelineLoaded.set(false);
 
     // Captured now, at the moment this call is fired — compared against the live fields when the
     // response arrives, below. Angular reuses this component instance across same-route-config
@@ -207,6 +218,7 @@ export class SagaDetail implements OnInit, OnDestroy {
     this.api.getTimeline(sagaType, correlationId).subscribe((entries) => {
       if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
       this.timeline.set(entries);
+      this.timelineLoaded.set(true);
     });
   }
 
@@ -270,27 +282,29 @@ export class SagaDetail implements OnInit, OnDestroy {
   }
 
   /**
-   * The tab and entry from the URL, validated the way the list page reads its filters: `tab` only
-   * names a tab other than the default map, `entry` only a positive safe integer; anything else is
-   * the default.
+   * The tab, entry and data view from the URL, validated the way the list page reads its filters:
+   * `tab` only names a tab other than the default map, `entry` only a positive safe integer, `data`
+   * only one of the three Saga data views; anything else is the default.
    */
   private readUrlState(query: ParamMap): void {
     const tab = query.get('tab');
     this.tab.set(tab !== null && (URL_TABS as readonly string[]).includes(tab) ? (tab as Tab) : 'map');
     this.urlEntry = parseEntry(query.get('entry'));
     this.focusedSequence.set(this.urlEntry);
+    this.dataView.set(parseDataView(query.get('data')));
   }
 
   /**
-   * Writes the tab and entry to the URL after the signals already changed, defaults as null so the
-   * plain detail URL stays plain. A tab or entry change is a history step, so Back returns to where
-   * the viewer came from; dropping the focus replaces the current step instead.
+   * Writes the tab, entry and data view to the URL after the signals already changed, defaults as
+   * null so the plain detail URL stays plain. A tab or entry change is a history step, so Back
+   * returns to where the viewer came from; dropping the focus or changing the data view replaces the
+   * current step instead.
    */
   private syncUrl(replaceUrl = false): void {
     const tab = this.tab();
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { tab: tab === 'map' ? null : tab, entry: this.focusedSequence() },
+      queryParams: { tab: tab === 'map' ? null : tab, entry: this.focusedSequence(), data: this.dataView() },
       queryParamsHandling: 'merge',
       replaceUrl,
     });
@@ -327,9 +341,11 @@ export class SagaDetail implements OnInit, OnDestroy {
     this.syncUrl(true);
   }
 
-  /** The saga's raw persisted state, pretty-printed with Kind and Status as names (see state-json). */
-  get prettyDataJson(): string {
-    return formatStateJson(this.detail()?.dataJson);
+  /** Opens a Saga data view, or closes it (null). Not a history step of its own: it replaces. */
+  setDataView(view: DataView | null): void {
+    if (this.dataView() === view) return;
+    this.dataView.set(view);
+    this.syncUrl(true);
   }
 
   askRetryConfirmation(): void {

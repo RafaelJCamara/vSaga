@@ -369,9 +369,11 @@ skipped as a duplicate) and a timeout that was claimed but not handled.
   snapshot budget of B bytes was used up" for a budget marker, §6.5), withheld, not-persisted, pending,
   missing.
 - `SagaDataOverview`, under the summary card: a "Saga data" group with buttons "At start", "At end"
-  ("Current" until the status is terminal) and "Compare", aria-labels "Data at start" and "Data at end".
-  At start is the initiating message plus the first recorded snapshot; At end is `detail.dataJson`;
-  Compare diffs the two. Without `sagas.data` the buttons are disabled beside "Saga data is hidden for
+  ("Current" until the status is terminal) and "Compare", aria-labels "Data at start" and "Data at end"
+  ("Current data" while the end button reads "Current", so the accessible name contains the visible
+  word). At start is the initiating message plus the first recorded snapshot; At end is
+  `detail.dataJson`; Compare diffs the two, and while disabled its title names the missing side (no
+  snapshot, or no stored state). Without `sagas.data` the buttons are disabled beside "Saga data is hidden for
   your role. It needs the sagas.data permission." and the timeline shows no Data toggles.
 - `SagaMap` gains `focusSequence` (input), `focusCleared` and `timelineRequested` (outputs) and a
   `role="status"` banner: "As of entry #12 of 34: StepSucceeded, recorded at 14:03:07.140 (+1.224 s)",
