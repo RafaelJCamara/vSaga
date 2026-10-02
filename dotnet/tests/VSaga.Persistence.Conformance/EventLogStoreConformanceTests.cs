@@ -105,6 +105,39 @@ public abstract class EventLogStoreConformanceTests(IProviderFixture fixture) : 
     }
 
     /// <summary>
+    /// A state snapshot comes back with its type, its message identity, null states and the payload text
+    /// byte for byte. System.Text.Json writes an ampersand in a state as a backslash-u0026 escape, so the
+    /// blob carries one: a store that parsed and re-wrote the JSON (a jsonb column, a BSON document) would
+    /// return different text and break the snapshot's equality with the stored state blob.
+    /// </summary>
+    [Fact]
+    public async Task GetTimeline_RoundTripsAStatePersistedEntry()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var correlationId = Guid.NewGuid();
+        var escapedAmpersand = (char)92 + "u0026";
+        var stateJson = "{\"Customer\":\"Smith " + escapedAmpersand + " Sons\",\"Status\":2,\"Version\":3}";
+        var written = SagaStateSnapshot.CreateEntry(correlationId, "OrderSaga", stateJson, SagaStateSnapshot.DefaultMaxBytes,
+            "ReserveInventory", "m-1");
+
+        long sequenceNumber;
+        await using (var uow = await stores.BeginAsync())
+            sequenceNumber = await uow.EventLog.AppendAsync(written);
+
+        await using var reader = await stores.BeginAsync();
+        var read = Assert.Single(await reader.EventLog.GetTimelineAsync("OrderSaga", correlationId));
+
+        Assert.Equal(sequenceNumber, read.SequenceNumber);
+        Assert.Equal(SagaEntryType.StatePersisted, read.EntryType);
+        Assert.Equal(stateJson, read.PayloadJson);
+        Assert.Contains(escapedAmpersand, read.PayloadJson, StringComparison.Ordinal);
+        Assert.Null(read.FromState);
+        Assert.Null(read.ToState);
+        Assert.Equal("ReserveInventory", read.MessageType);
+        Assert.Equal("m-1", read.MessageId);
+    }
+
+    /// <summary>
     /// Two saga types tracking one correlation id keep independent timelines: merging them would corrupt
     /// the compensation set <c>GetVisitedStatesAsync</c> derives from this log.
     /// </summary>
@@ -144,13 +177,15 @@ public abstract class EventLogStoreConformanceTests(IProviderFixture fixture) : 
     /// Clause 6, the other half: outbound entries and the dead-letter path's <c>DeliveryExhausted</c> carry
     /// message ids too — <c>DeliveryExhausted</c> reuses the inbound id outright — but none proves the
     /// message was processed. Matching them would drop a redelivered, never-processed message as a
-    /// duplicate.
+    /// duplicate. A <c>StatePersisted</c> snapshot carries the inbound id of the step it follows and is
+    /// not a correctness input, so it must not count either.
     /// </summary>
     [Theory]
     [InlineData(SagaEntryType.MessagePublished)]
     [InlineData(SagaEntryType.MessageSent)]
     [InlineData(SagaEntryType.DeliveryExhausted)]
     [InlineData(SagaEntryType.StepFailed)]
+    [InlineData(SagaEntryType.StatePersisted)]
     public async Task IsDuplicate_IgnoresOtherEntryTypesCarryingThatMessageId(SagaEntryType entryType)
     {
         await using var stores = await Fixture.CreateStoresAsync();

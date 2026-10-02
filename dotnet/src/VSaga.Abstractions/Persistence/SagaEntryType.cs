@@ -38,4 +38,16 @@ public enum SagaEntryType
     /// how NotifyParentAsync's own publish logs as an ordinary MessagePublished there.
     /// </summary>
     ChildSagaFinished,
+
+    /// <summary>
+    /// The state a persist just committed, exactly as the snapshot store wrote it: PayloadJson is that blob,
+    /// or a <c>$vsagaStateOmitted</c> size marker when the per-snapshot cap or the per-saga budget leaves it
+    /// out (see <see cref="SagaStateSnapshot"/>). Appended after the persist, never before, so it only
+    /// describes a state that was stored; a transition that lost its race, or a process that died between
+    /// the commit and this append, leaves none. MessageType/MessageId name the inbound message whose step it
+    /// follows for step success, failure and delivery exhaustion, and are null after a timeout or a dashboard
+    /// reset. FromState and ToState are always null: compensation order is read from ToState, and a snapshot
+    /// must not add to it. Not a correctness input: neither compensation nor dedupe reads it.
+    /// </summary>
+    StatePersisted,
 }
