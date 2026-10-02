@@ -5,6 +5,7 @@ using VSaga.Dashboard.Api;
 using VSaga.Dashboard.Api.Auth;
 using VSaga.Dashboard.Api.Endpoints;
 using VSaga.Dashboard.Api.HealthChecks;
+using VSaga.Dashboard.Api.Hosting;
 using VSaga.Dashboard.Api.Hubs;
 using VSaga.Observability;
 using VSaga.Persistence.EFCore;
@@ -28,10 +29,10 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Ad
 builder.Services.AddOpenApi();
 builder.Services.AddSignalR().AddJsonProtocol(o => o.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
-const string CorsPolicy = "Dashboard";
-var allowedOrigin = builder.Configuration["Dashboard:WebOrigin"] ?? "http://localhost:4200";
-builder.Services.AddCors(options => options.AddPolicy(CorsPolicy, policy =>
-    policy.WithOrigins(allowedOrigin).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
+// The edge (CORS today) is read and validated once, here, by DashboardEdge, the only reader of its keys.
+// CORS is opt-in: the bundled UI is same-origin, so with Dashboard:WebOrigin empty there is no policy.
+var edge = DashboardEdge.Read(builder.Configuration);
+builder.Services.AddDashboardEdge(edge);
 
 // Dashboard.Api deliberately never calls AddVSagaEngine/AddSaga<>() — it stays generic across any
 // number of saga types by reading persisted data (ISagaSummaryReader/ISagaEventLogStore) rather than
@@ -144,7 +145,7 @@ using (var scope = app.Services.CreateScope())
 if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 
-app.UseCors(CorsPolicy);
+app.UseDashboardEdge();
 
 app.UseAuthentication();
 app.UseAuthorization();

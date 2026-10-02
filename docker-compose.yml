@@ -36,7 +36,6 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__VSaga: "Host=postgres;Port=5432;Database=vsaga;Username=postgres;Password=postgres"
       RabbitMq__ConnectionString: "amqp://guest:guest@rabbitmq:5672/"
-      Dashboard__WebOrigin: "http://localhost:4200"
       Dashboard__ApiKey: "dev-local-only-change-me"
     depends_on:
       postgres:

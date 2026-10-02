@@ -5,9 +5,9 @@ using Microsoft.Extensions.Configuration;
 namespace VSaga.Dashboard.Api.Tests;
 
 /// <summary>
-/// Verifies the composition root actually resolves — every AddVSagaXxx registration, SignalR, CORS,
-/// and the endpoint mappings — without needing a live Postgres/RabbitMQ (neither connects eagerly at
-/// startup), and that /health's persistence and RabbitMQ checks actually detect an unreachable dependency.
+/// Verifies the composition root actually resolves — every AddVSagaXxx registration, SignalR, the
+/// edge settings, and the endpoint mappings — without needing a live Postgres/RabbitMQ (neither
+/// connects eagerly at startup), and that /health's persistence and RabbitMQ checks actually detect an unreachable dependency.
 /// Points both connection strings at port 1 (nothing listens there, so the OS returns
 /// connection-refused immediately — no risk of the test hanging on a real timeout) instead of relying
 /// on "no local infra happens to be running" being true. This is the one check in this suite that
