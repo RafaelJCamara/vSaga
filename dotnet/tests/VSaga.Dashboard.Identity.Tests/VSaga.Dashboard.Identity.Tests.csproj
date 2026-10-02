@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\VSaga.Dashboard.Identity\VSaga.Dashboard.Identity.csproj" />
+    <ProjectReference Include="..\..\src\VSaga.Dashboard.Identity.Sqlite\VSaga.Dashboard.Identity.Sqlite.csproj" />
   </ItemGroup>
 
   <ItemGroup>

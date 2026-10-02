@@ -12,9 +12,14 @@ namespace VSaga.Dashboard.Api.Tests;
 /// refusal is the caller's to act on: the list endpoint maps it to 400 with the provider's message,
 /// rather than letting it surface as a 500. Driven through a reader stub so the case needs no Redis.
 /// </summary>
-public sealed class SearchScanLimitTests : IAsyncDisposable
+public sealed class SearchScanLimitTests : IAsyncLifetime, IAsyncDisposable
 {
     private readonly DashboardApiFactory _factory = new();
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    // xunit 2 calls IAsyncLifetime.DisposeAsync, never a test class's IAsyncDisposable.
+    Task IAsyncLifetime.DisposeAsync() => DisposeAsync().AsTask();
 
     public ValueTask DisposeAsync() => _factory.DisposeAsync();
 

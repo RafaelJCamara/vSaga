@@ -18,7 +18,7 @@ namespace VSaga.Dashboard.Api.Tests;
 
 public sealed class DashboardTestState : SagaState;
 
-public sealed class SagaEndpointsTests : IAsyncDisposable
+public sealed class SagaEndpointsTests : IAsyncLifetime, IAsyncDisposable
 {
     // Must match Program.cs's ConfigureHttpJsonOptions (enums as strings) so the client can parse
     // what the server actually sends back.
@@ -35,6 +35,11 @@ public sealed class SagaEndpointsTests : IAsyncDisposable
         _client = _factory.CreateClient();
         _client.DefaultRequestHeaders.Add("X-Api-Key", DashboardApiFactory.TestApiKey);
     }
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    // xunit 2 calls IAsyncLifetime.DisposeAsync, never a test class's IAsyncDisposable.
+    Task IAsyncLifetime.DisposeAsync() => DisposeAsync().AsTask();
 
     public ValueTask DisposeAsync()
     {

@@ -13,6 +13,9 @@ namespace VSaga.Dashboard.Identity.Tests.EFCore;
 /// </summary>
 public sealed class SqliteIdentityStoreHarness : IIdentityStoreHarness
 {
+    /// <summary>The assembly the API takes the identity migrations from.</summary>
+    public const string MigrationsAssembly = "VSaga.Dashboard.Identity.Sqlite";
+
     private readonly Lock _gate = new();
     private readonly List<DashboardIdentityDbContext> _contexts = [];
     private readonly SqliteConnection _keepAlive;
@@ -37,12 +40,14 @@ public sealed class SqliteIdentityStoreHarness : IIdentityStoreHarness
         var keepAlive = new SqliteConnection(connectionString);
         await keepAlive.OpenAsync();
 
-        var options = new DbContextOptionsBuilder<DashboardIdentityDbContext>().UseSqlite(connectionString).Options;
+        var options = new DbContextOptionsBuilder<DashboardIdentityDbContext>()
+            .UseSqlite(connectionString, sqlite => sqlite.MigrationsAssembly(MigrationsAssembly))
+            .Options;
 
-        // The schema straight from the model. The generated migrations, and a test that they build the
-        // same schema, arrive with the VSaga.Dashboard.Identity.Sqlite project.
+        // The generated migrations, as the API applies them, so the store is tested on the schema it ships
+        // with; IdentityMigrationsTests checks that they match the model.
         await using (var db = new DashboardIdentityDbContext(options))
-            await db.Database.EnsureCreatedAsync();
+            await db.Database.MigrateAsync();
 
         return new SqliteIdentityStoreHarness(keepAlive, options);
     }

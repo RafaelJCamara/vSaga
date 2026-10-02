@@ -80,6 +80,20 @@ Postgres volume is **not** reset by `docker compose up` (see
 [`docs/persistence.md`](docs/persistence.md#the-volume-caveat)). Use `docker compose down -v` for a
 genuinely clean read.
 
+**EF Core migrations** are generated, never hand-written, with `VSaga.Dashboard.Api` as the startup
+project. It registers two contexts, the saga store's and the dashboard identity store's, so every
+`dotnet ef` command needs `--context`:
+
+```bash
+# The saga store (Postgres)
+dotnet ef migrations add <Name> --context VSagaDbContext --project dotnet/src/VSaga.Persistence.EFCore.Postgres --startup-project dotnet/src/VSaga.Dashboard.Api
+# The dashboard identity store (SQLite)
+dotnet ef migrations add <Name> --context DashboardIdentityDbContext --project dotnet/src/VSaga.Dashboard.Identity.Sqlite --startup-project dotnet/src/VSaga.Dashboard.Api --output-dir Migrations
+```
+
+`dotnet ef migrations has-pending-model-changes` with the same arguments (minus the name and
+`--output-dir`) says whether a model change still needs one; for the identity store a test asserts it too.
+
 **Mutation testing**, for anything envelope/header/linkage-adjacent: deliberately break the change
 (comment out a header copy, revert a scoping predicate, remove a guard), confirm *exactly* the tests
 written for it fail and nothing else does, then restore. This repo's commit history

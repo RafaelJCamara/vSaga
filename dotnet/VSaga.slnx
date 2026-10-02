@@ -16,6 +16,7 @@
     <Project Path="src/VSaga.Core/VSaga.Core.csproj" />
     <Project Path="src/VSaga.Dashboard.Api/VSaga.Dashboard.Api.csproj" />
     <Project Path="src/VSaga.Dashboard.Identity/VSaga.Dashboard.Identity.csproj" />
+    <Project Path="src/VSaga.Dashboard.Identity.Sqlite/VSaga.Dashboard.Identity.Sqlite.csproj" />
     <Project Path="src/VSaga.Http/VSaga.Http.csproj" />
     <Project Path="src/VSaga.Observability/VSaga.Observability.csproj" />
     <Project Path="src/VSaga.Persistence.EFCore/VSaga.Persistence.EFCore.csproj" />

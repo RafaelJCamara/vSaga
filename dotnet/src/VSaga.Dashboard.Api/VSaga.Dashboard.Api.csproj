@@ -20,10 +20,15 @@
          output. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\VSaga.Observability\VSaga.Observability.csproj" />
+    <!-- Brings in VSaga.Dashboard.Identity; referenced directly for the same reason as the Postgres
+         project below: the SQLite identity migrations must be in this app's output for
+         MigrationsAssembly(...)/MigrateAsync() to find them. -->
+    <ProjectReference Include="..\VSaga.Dashboard.Identity.Sqlite\VSaga.Dashboard.Identity.Sqlite.csproj" />
     <!-- Brings in VSaga.Persistence.EFCore transitively; referenced directly (rather than the plain
          VSaga.Persistence.EFCore project) so the Npgsql-specific EF Core migrations assembly is
          present in this app's output for MigrationsAssembly(...)/MigrateAsync() to find at runtime. -->

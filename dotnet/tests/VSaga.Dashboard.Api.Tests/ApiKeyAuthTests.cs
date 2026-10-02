@@ -3,9 +3,14 @@ using System.Net.Http.Headers;
 
 namespace VSaga.Dashboard.Api.Tests;
 
-public sealed class ApiKeyAuthTests : IAsyncDisposable
+public sealed class ApiKeyAuthTests : IAsyncLifetime, IAsyncDisposable
 {
     private readonly DashboardApiFactory _factory = new();
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    // xunit 2 calls IAsyncLifetime.DisposeAsync, never a test class's IAsyncDisposable.
+    Task IAsyncLifetime.DisposeAsync() => DisposeAsync().AsTask();
 
     public ValueTask DisposeAsync() => _factory.DisposeAsync();
 

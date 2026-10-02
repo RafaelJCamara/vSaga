@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The dotnet-ef generated migrations for the dashboard identity database on SQLite, and nothing else.
+       Generated migration code routinely trips the repo-wide analyzer rules, so, as in
+       VSaga.Persistence.EFCore.Postgres, analyzers are off here and only here; every hand-written project
+       stays fully covered. Composition support for VSaga.Dashboard.Api, not a package. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VSaga.Dashboard.Identity\VSaga.Dashboard.Identity.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+
+</Project>

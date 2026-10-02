@@ -14,11 +14,11 @@ namespace VSaga.Dashboard.Api.Tests;
 /// doesn't need Docker; DB/broker-backed endpoints need a real docker-compose stack, covered by the
 /// end-to-end checkpoint instead.
 /// </summary>
-public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class HealthEndpointTests : IClassFixture<RealCompositionFactory>
 {
     private readonly WebApplicationFactory<Program> _factory;
 
-    public HealthEndpointTests(WebApplicationFactory<Program> factory) =>
+    public HealthEndpointTests(RealCompositionFactory factory) =>
         _factory = factory.WithWebHostBuilder(builder =>
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>(StringComparer.Ordinal)
             {
@@ -38,6 +38,8 @@ public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Pr
         Assert.Contains("\"unhealthy\"", body, StringComparison.Ordinal);
         Assert.Contains("\"persistence\"", body, StringComparison.Ordinal);
         Assert.Contains("\"rabbitmq\"", body, StringComparison.Ordinal);
+        // The identity store needs neither: its SQLite file is created and migrated at start.
+        Assert.Equal("healthy", (await HealthResponse.ReadAsync(response)).Checks["identity"].Status);
     }
 }
 
@@ -47,11 +49,11 @@ public sealed class HealthEndpointTests : IClassFixture<WebApplicationFactory<Pr
 /// probe reports an unreachable server as Unhealthy rather than passing over what it could not verify.
 /// The short connect timeout keeps the deliberately-unreachable port from stalling the test.
 /// </summary>
-public sealed class RedisHealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class RedisHealthEndpointTests : IClassFixture<RealCompositionFactory>
 {
     private readonly WebApplicationFactory<Program> _factory;
 
-    public RedisHealthEndpointTests(WebApplicationFactory<Program> factory) =>
+    public RedisHealthEndpointTests(RealCompositionFactory factory) =>
         _factory = factory.WithWebHostBuilder(builder => builder
             // UseSetting, not ConfigureAppConfiguration: Program.cs reads Persistence:Provider from
             // builder.Configuration while composing services, and under minimal hosting the factory applies
@@ -83,11 +85,11 @@ public sealed class RedisHealthEndpointTests : IClassFixture<WebApplicationFacto
 /// probe reports an unreachable server as Unhealthy. The short server-selection timeout in the connection
 /// string keeps the deliberately-unreachable port from stalling the test.
 /// </summary>
-public sealed class MongoHealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class MongoHealthEndpointTests : IClassFixture<RealCompositionFactory>
 {
     private readonly WebApplicationFactory<Program> _factory;
 
-    public MongoHealthEndpointTests(WebApplicationFactory<Program> factory) =>
+    public MongoHealthEndpointTests(RealCompositionFactory factory) =>
         _factory = factory.WithWebHostBuilder(builder => builder
             // UseSetting, for the same reason as the Redis arm: Program.cs reads the switch while composing.
             .UseSetting("Persistence:Provider", "MongoDb")

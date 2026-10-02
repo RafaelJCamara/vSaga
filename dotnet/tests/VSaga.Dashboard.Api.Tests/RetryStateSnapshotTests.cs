@@ -24,7 +24,7 @@ namespace VSaga.Dashboard.Api.Tests;
 /// dashboard's cap and the engine host's smaller one; and a failed append that still lets the redrive go out.
 /// Each test runs in its own host, so DI and settings overrides cannot leak between them.
 /// </summary>
-public sealed class RetryStateSnapshotTests : IAsyncDisposable
+public sealed class RetryStateSnapshotTests : IAsyncLifetime, IAsyncDisposable
 {
     private const string SagaType = "OrderSaga";
 
@@ -34,6 +34,11 @@ public sealed class RetryStateSnapshotTests : IAsyncDisposable
     };
 
     private readonly DashboardApiFactory _factory = new();
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    // xunit 2 calls IAsyncLifetime.DisposeAsync, never a test class's IAsyncDisposable.
+    Task IAsyncLifetime.DisposeAsync() => DisposeAsync().AsTask();
 
     public ValueTask DisposeAsync() => _factory.DisposeAsync();
 

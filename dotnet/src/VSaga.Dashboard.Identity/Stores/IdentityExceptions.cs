@@ -33,6 +33,13 @@ public class IdentityNotFoundException(IdentityEntityKind kind, Guid id)
 /// </summary>
 public class IdentityReferenceException(string message) : Exception(message);
 
+/// <summary>
+/// The identity store is not ready (see <see cref="Services.IdentityStartup"/>): its database could not be
+/// opened, migrated or reached. Thrown rather than answering with nothing, so that, for one, Data Protection
+/// never mistakes an unreachable key ring for an empty one and mints a key that dies with the process.
+/// </summary>
+public class IdentityUnavailableException(string message) : Exception(message);
+
 internal static class IdentityEntityNames
 {
     public static string Noun(IdentityEntityKind kind) => kind switch

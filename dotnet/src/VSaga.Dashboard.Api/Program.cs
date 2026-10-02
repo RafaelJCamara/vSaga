@@ -7,6 +7,8 @@ using VSaga.Dashboard.Api.Endpoints;
 using VSaga.Dashboard.Api.HealthChecks;
 using VSaga.Dashboard.Api.Hosting;
 using VSaga.Dashboard.Api.Hubs;
+using VSaga.Dashboard.Identity;
+using VSaga.Dashboard.Identity.Services;
 using VSaga.Observability;
 using VSaga.Persistence.EFCore;
 using VSaga.Persistence.MongoDB;
@@ -72,6 +74,20 @@ switch (persistenceProvider)
         throw new InvalidOperationException($"Unknown Persistence:Provider '{persistenceProvider}'.");
 }
 
+// The dashboard's own users, teams, roles and Data Protection key ring, in a database of their own whatever
+// Persistence:Provider says: SQLite, the only provider so far, behind IDashboardIdentityStore so another
+// can be added. An unknown name fails composition like the switch above; an unusable database does not (see
+// IdentityStartup below).
+var identityProvider = builder.Configuration[DashboardIdentitySettings.ProviderKey] ?? DashboardIdentitySettings.SqliteProvider;
+switch (identityProvider)
+{
+    case DashboardIdentitySettings.SqliteProvider:
+        builder.Services.AddSqliteDashboardIdentity(DashboardIdentitySettings.ReadSqlite(builder.Configuration));
+        break;
+    default:
+        throw new InvalidOperationException($"Unknown {DashboardIdentitySettings.ProviderKey} '{identityProvider}'.");
+}
+
 // Transport:Provider, same convention as the OrderProcessing sample's own switch
 // (dotnet/samples/VSaga.Samples.OrderProcessing/Program.cs) — RabbitMq by default (matching every prior
 // compose run), Http when a docker-compose overlay says so (docker-compose.http.yml). This only ever needs to
@@ -124,6 +140,9 @@ switch (persistenceProvider)
         break;
 }
 
+// Degraded, never Unhealthy: sign-in needs the identity store, the saga views and the saga host do not.
+healthChecks.AddCheck<IdentityHealthCheck>("identity", failureStatus: HealthStatus.Degraded);
+
 builder.Services.AddAuthentication(ApiKeyAuthenticationDefaults.SchemeName)
     .AddScheme<ApiKeyAuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationDefaults.SchemeName, configureOptions: null);
 builder.Services.AddAuthorization();
@@ -147,6 +166,11 @@ using (var scope = app.Services.CreateScope())
         app.Logger.LogWarning(ex, "Could not apply VSaga migrations at startup; will retry lazily on first request.");
     }
 }
+
+// Create, migrate and fill the identity database. Never throws and gives up after 30 s: an unusable
+// database (an unset path in a container, a read-only volume, a stale migration lock) leaves sign-in
+// unavailable and the "identity" health check Degraded with the reason, and the check retries it.
+await app.Services.GetRequiredService<IdentityStartup>().EnsureReadyAsync(app.Lifetime.ApplicationStopping);
 
 if (app.Environment.IsDevelopment())
     app.MapOpenApi();
