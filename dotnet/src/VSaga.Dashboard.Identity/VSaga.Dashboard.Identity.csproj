@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The dashboard's own users, teams, roles and Data Protection key ring. Composition support for
+       VSaga.Dashboard.Api, not a library anyone installs, so it opts out of the repo-wide
+       IsPackable=true default like the API itself. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- The shared framework rather than individual Microsoft.Extensions packages: the services need
+       PasswordHasher<T> and IXmlRepository, which only ship in it, and referencing Extensions packages
+       beside it would be pruned with NU1510, which TreatWarningsAsErrors turns into a restore failure. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+  </ItemGroup>
+
+</Project>
