@@ -63,6 +63,11 @@ new here; the rest of this index is organized by topic, roughly in the order you
     `VSaga.Persistence.Redis` is built and live-verified; the plan records where the build deviated from
     it. It also authored the two seams it shared with the MongoDB plan (the `Persistence:Provider`
     switch and the provider-neutral `persistence` health check), which that plan now consumes.
+  - [`design/dashboard-usability-and-access.md`](design/dashboard-usability-and-access.md) —
+    **accepted, not yet implemented, 2026-10-02.** The dashboard UI in compose, a labelled timeline
+    with a jump to the map, per-step state snapshots, a retry that re-runs only the failed step, sign-in
+    with role and saga-type scoped access, and a guide mode with a user guide. ADRs 0006, 0007 and 0008
+    record its three decisions.
 
 - [`adr/`](adr/) — architecture decision records: one decision per file, numbered, stating the context,
   the options weighed, and the consequences accepted. Newer and narrower than `design/`, which holds
@@ -79,6 +84,16 @@ new here; the rest of this index is organized by topic, roughly in the order you
     startup warning the ADR requires has not been added.
   - [`adr/0005-saga-state-storage-model.md`](adr/0005-saga-state-storage-model.md) — **Accepted**,
     retroactive: one shared table, one opaque state blob, and the promotion rule.
+  - [`adr/0006-dashboard-authentication-and-identity-store.md`](adr/0006-dashboard-authentication-and-identity-store.md)
+    — **Accepted** 2026-10-02, not yet implemented: session-cookie sign-in, role and saga-type scoped
+    access, and a dashboard-owned SQLite identity store, replacing the shared API key as the way people
+    sign in.
+  - [`adr/0007-state-snapshots-in-the-event-log.md`](adr/0007-state-snapshots-in-the-event-log.md) —
+    **Accepted** 2026-10-02, not yet implemented: per-step saga state recorded as `StatePersisted`
+    entries in the existing event log, with a per-snapshot cap and a per-saga budget.
+  - [`adr/0008-dashboard-retry-reruns-the-failed-step.md`](adr/0008-dashboard-retry-reruns-the-failed-step.md)
+    — **Accepted** 2026-10-02, not yet implemented: a dashboard retry resets the saga to the state
+    before the failed step and republishes that step's message, targeted at the retried saga type.
 
 ## History
 
