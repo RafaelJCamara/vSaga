@@ -30,7 +30,7 @@ internal static partial class DashboardAuthExtensions
     internal const int MinimumApiKeyLength = 24;
 
     /// <summary>
-    /// Reads and validates the security settings (composition fails on a bad value, or when
+    /// Reads and validates the security and first-administrator settings (composition fails on a bad value, or when
     /// <c>Dashboard:Session:RequireHttps</c> is true with no trusted proxy to say a request arrived over
     /// HTTPS), registers them as a singleton, and adds the schemes, the policies and the 403 writer.
     /// </summary>
@@ -46,6 +46,7 @@ internal static partial class DashboardAuthExtensions
         }
 
         services.AddSingleton(settings);
+        services.AddSingleton(FirstAdministratorSettings.Read(configuration));
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<CallerAccessResolver>();
         services.AddScoped<ICallerAccessResolver>(provider => provider.GetRequiredService<CallerAccessResolver>());
@@ -127,7 +128,8 @@ internal static partial class DashboardAuthExtensions
     }
 
     // What the sign-in endpoints use. The store-backed services are scoped and resolved by the endpoints only
-    // once the store is ready: with no usable database path, building the store itself throws. The observer
+    // once the store is ready: with no usable database path, building the store itself throws. IdentityStartup
+    // resolves FirstAdministratorService once the store is ready, to seed or open first-run setup. The observer
     // does nothing until the hub registers one that drops live connections.
     private static void AddSignIn(IServiceCollection services, DashboardSecuritySettings settings)
     {
@@ -138,6 +140,7 @@ internal static partial class DashboardAuthExtensions
         services.AddSingleton<PasswordPolicy>();
         services.AddScoped<CredentialVerifier>();
         services.AddScoped<AccessAdministrationService>();
+        services.AddScoped<FirstAdministratorService>();
         services.TryAddSingleton<IAccessChangeObserver, NoAccessChangeObserver>();
     }
 

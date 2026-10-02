@@ -15,8 +15,8 @@ using HttpJsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
 namespace VSaga.Dashboard.Api.Endpoints;
 
 /// <summary>
-/// Signing in and out (design §8.3, §8.4, §8.9): <c>GET /api/auth/session</c>, <c>POST /api/auth/login</c>,
-/// <c>POST /api/auth/logout</c> and <c>POST /api/auth/password</c>.
+/// Signing in and out (design §8.3, §8.4, §8.8, §8.9): <c>GET /api/auth/session</c>, <c>POST /api/auth/login</c>,
+/// <c>POST /api/auth/logout</c>, <c>POST /api/auth/setup</c> and <c>POST /api/auth/password</c>.
 /// <list type="bullet">
 /// <item>Every one first makes sure the identity store is ready (its key ring protects the cookie and the
 /// antiforgery tokens) and answers 503 <c>identity_unavailable</c> when it is not.</item>
@@ -25,8 +25,8 @@ namespace VSaga.Dashboard.Api.Endpoints;
 /// <item>A failed sign-in is one uniform 401 <c>invalid_credentials</c>, completing no earlier than
 /// <see cref="FailureFloor"/> (plus jitter) after the request started, so neither the body nor the timing
 /// tells an unknown user from a wrong password, a locked or a disabled account.</item>
-/// <item>Sign-in and password change are rate limited per client address and username, and the password
-/// hashing they do runs under a global concurrency limit (<see cref="AuthRateLimits"/>).</item>
+/// <item>Sign-in and password change are rate limited per client address and username, setup per client
+/// address, and the password hashing they do runs under a global concurrency limit (<see cref="AuthRateLimits"/>).</item>
 /// </list>
 /// Request bodies are read here rather than bound by the framework, so an unknown member or malformed JSON is
 /// a 400 <c>validation</c> problem naming the member.
@@ -48,6 +48,7 @@ public static class AuthEndpoints
     private const int MaxJitterMilliseconds = 50;
     private const string LoginAction = "sign-in";
     private const string PasswordAction = "password-change";
+    private const string SetupAction = "setup";
 
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
@@ -56,6 +57,7 @@ public static class AuthEndpoints
         group.MapGet("/session", GetSessionAsync).WithName("GetSession").AllowAnonymous();
         group.MapPost("/login", LoginAsync).WithName("Login").AllowAnonymous().Accepts<LoginRequest>("application/json");
         group.MapPost("/logout", LogoutAsync).WithName("Logout").AllowAnonymous();
+        group.MapPost("/setup", SetupAsync).WithName("Setup").AllowAnonymous().Accepts<SetupRequest>("application/json");
         group.MapPost("/password", ChangePasswordAsync).WithName("ChangePassword").RequireAuthorization()
             .Accepts<ChangePasswordRequest>("application/json");
         return app;
@@ -123,6 +125,60 @@ public static class AuthEndpoints
         context.ClearCaller();
         AntiforgeryEnforcement.IssueRequestToken(context);
         return TypedResults.Ok(await SessionAsync(context, caller: null));
+    }
+
+    /// <summary>
+    /// First-run setup (design §8.8): creates the first administrator and signs them in. Rate limited per client
+    /// address before the setup code or the request's values are checked (after readiness and body parsing);
+    /// then the one-time code, compared in fixed time, and the request.
+    /// <see cref="FirstAdministratorService"/> re-checks inside the exclusive scope that setup is still open and
+    /// no user exists. 409 <c>setup_unavailable</c> when it is not open; 400 <c>invalid_credentials</c> naming
+    /// <c>code</c> for a missing or wrong code.
+    /// </summary>
+    private static async Task<IResult> SetupAsync(HttpContext context, IdentityStartup startup, AuthRateLimits limits, TimeProvider time)
+    {
+        if (!await startup.EnsureReadyAsync(IdentityReadyWait, context.RequestAborted))
+            return AuthProblems.IdentityUnavailable();
+
+        var (request, invalid) = await ReadBodyAsync<SetupRequest>(context);
+        if (request is null)
+            return invalid!;
+
+        var address = ClientAddress(context);
+        using var window = limits.AcquireSetup(address);
+        if (!window.IsAcquired)
+            return RateLimited(context, window, SetupAction, request.Username);
+
+        using var hashing = await limits.AcquireHashingAsync(context.RequestAborted);
+        if (!hashing.IsAcquired)
+            return RateLimited(context, hashing, SetupAction, request.Username);
+
+        var service = context.RequestServices.GetRequiredService<FirstAdministratorService>();
+        SetupResult result;
+        try
+        {
+            result = await service.CompleteSetupAsync(
+                request.Username, request.DisplayName, request.Password, request.Code,
+                new AuditContext(FirstAdministratorService.SetupActor, address), context.RequestAborted);
+        }
+        catch (IdentityValidationException ex)
+        {
+            return AuthProblems.Validation(ex.Errors);
+        }
+
+        switch (result)
+        {
+            case { Status: SetupStatus.Completed, User: { } user }:
+                var caller = await SignInAsync(context, user, time);
+                DashboardAudit.SignedIn(Audit(context), user.Username, user.Id, address);
+                return TypedResults.Ok(await SessionAsync(context, caller));
+
+            case { Status: SetupStatus.WrongCode }:
+                return AuthProblems.WrongSetupCode();
+
+            default:
+                return AuthProblems.SetupUnavailable(result.Detail ?? "First-run setup is not available.");
+        }
     }
 
     private static async Task<IResult> ChangePasswordAsync(HttpContext context, IdentityStartup startup, AuthRateLimits limits, TimeProvider time)
@@ -230,10 +286,18 @@ public static class AuthEndpoints
     {
         var store = context.RequestServices.GetRequiredService<IDashboardIdentityStore>();
         var settings = context.RequestServices.GetRequiredService<DashboardSecuritySettings>();
+        var firstRun = context.RequestServices.GetRequiredService<FirstRunState>();
         var setupRequired = await store.CountUsersAsync(context.RequestAborted) == 0;
 
-        // First-run setup is not offered yet, so it is never available.
-        return SessionResponse.For(caller, setupRequired, setupAvailable: false, settings.PasswordMinLength);
+        // A user exists however it got there, so the one-time code must never work again.
+        if (!setupRequired)
+            firstRun.CloseSetup();
+
+        var setupAvailable = setupRequired && firstRun.IsSetupOpen;
+        var problem = setupRequired && !setupAvailable
+            ? new SetupProblem(AuthProblems.SetupUnavailableCode, firstRun.SetupUnavailableReason)
+            : null;
+        return SessionResponse.For(caller, new SetupState(setupRequired, setupAvailable, problem), settings.PasswordMinLength);
     }
 
     /// <summary>

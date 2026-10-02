@@ -14,7 +14,7 @@ namespace VSaga.Dashboard.Api.Tests;
 
 /// <summary>
 /// Every endpoint states its access, and only the ones that must be reachable before signing in are
-/// anonymous: <c>/health</c> for infrastructure probes, the session, login and logout endpoints, and, in
+/// anonymous: <c>/health</c> for infrastructure probes, the session, login, logout and first-run setup endpoints, and, in
 /// Development only, the OpenAPI document. An
 /// endpoint mapped without saying anything still needs an authenticated caller (the fallback policy).
 /// Routing is case-insensitive, so upper-case paths must get the same answers.
@@ -42,7 +42,7 @@ public sealed class EndpointProtectionTests : IAsyncLifetime, IAsyncDisposable
     }
 
     [Fact]
-    public void TheAnonymousEndpoints_AreExactlyHealthSignInAndTheDevelopmentOpenApiDocument()
+    public void TheAnonymousEndpoints_AreExactlyHealthSignInSetupAndTheDevelopmentOpenApiDocument()
     {
         var anonymous = Endpoints()
             .Where(e => e.Metadata.GetMetadata<IAllowAnonymous>() is not null)
@@ -50,7 +50,7 @@ public sealed class EndpointProtectionTests : IAsyncLifetime, IAsyncDisposable
             .Order(StringComparer.Ordinal);
 
         Assert.Equal(
-            ["/api/auth/login", "/api/auth/logout", "/api/auth/session", "/health", "/openapi/{documentName}.json"],
+            ["/api/auth/login", "/api/auth/logout", "/api/auth/session", "/api/auth/setup", "/health", "/openapi/{documentName}.json"],
             anonymous,
             StringComparer.Ordinal);
     }

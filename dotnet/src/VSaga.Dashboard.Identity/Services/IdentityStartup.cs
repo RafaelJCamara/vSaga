@@ -9,8 +9,9 @@ namespace VSaga.Dashboard.Identity.Services;
 /// <summary>
 /// Brings the identity store to a usable state: creates the database's directory and file (owner-only on
 /// Unix, since the file holds password hashes, security stamps and the Data Protection key ring), applies
-/// the migrations and writes the built-in roles from code, so their permission sets always match
-/// <see cref="BuiltInRoles"/>. It never throws: an unusable store must not stop the API, whose saga views
+/// the migrations, writes the built-in roles from code, so their permission sets always match
+/// <see cref="BuiltInRoles"/>, and then lets <see cref="FirstAdministratorService"/> seed the first
+/// administrator or open first-run setup, when one is registered. It never throws: an unusable store must not stop the API, whose saga views
 /// do not depend on it. Until it succeeds, <see cref="IsReady"/> is false and <see cref="FailureReason"/>
 /// says why in words an operator can act on.
 /// </summary>
@@ -206,6 +207,10 @@ public sealed partial class IdentityStartup : IIdentityReadiness, IDisposable
             var store = scope.ServiceProvider.GetRequiredService<IDashboardIdentityStore>();
             await store.InitializeAsync(attempt.Token);
             await UpsertBuiltInRolesAsync(store, attempt.Token);
+
+            // The API registers it; a host without sign-in (the store's own tests) has no first administrator.
+            if (scope.ServiceProvider.GetService<FirstAdministratorService>() is { } firstAdministrator)
+                await firstAdministrator.ApplyAtStartAsync(attempt.Token);
         }
         catch (Exception) when (_disposedToken.IsCancellationRequested)
         {

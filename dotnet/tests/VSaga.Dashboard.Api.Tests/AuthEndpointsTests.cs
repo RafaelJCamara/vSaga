@@ -45,8 +45,10 @@ public sealed class AuthEndpointsTests : IAsyncLifetime, IAsyncDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var session = await SignInClient.ReadJsonAsync(response);
         Assert.False(session.GetProperty("authenticated").GetBoolean());
+        // No user and no seed keys: first-run setup is open, with the code the API logged at start.
         Assert.True(session.GetProperty("setupRequired").GetBoolean());
-        Assert.False(session.GetProperty("setupAvailable").GetBoolean());
+        Assert.True(session.GetProperty("setupAvailable").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, session.GetProperty("setupProblem").ValueKind);
         Assert.Equal(JsonValueKind.Null, session.GetProperty("user").ValueKind);
         Assert.Equal(JsonValueKind.Null, session.GetProperty("access").ValueKind);
         Assert.Equal(12, session.GetProperty("passwordMinLength").GetInt32());
@@ -179,6 +181,7 @@ public sealed class AuthEndpointsTests : IAsyncLifetime, IAsyncDisposable
     [InlineData("/api/auth/login")]
     [InlineData("/API/AUTH/LOGIN")]
     [InlineData("/api/auth/logout")]
+    [InlineData("/api/auth/setup")]
     public async Task AnUnsafeRequestWithoutAToken_Is400Antiforgery(string path)
     {
         await CreateUserWithPasswordAsync(_factory.Services, "alice", Password);

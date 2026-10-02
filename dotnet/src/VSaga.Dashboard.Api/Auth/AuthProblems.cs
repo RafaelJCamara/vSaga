@@ -31,6 +31,8 @@ public static class AuthProblems
 
     public const string IdentityUnavailableCode = "identity_unavailable";
 
+    public const string SetupUnavailableCode = "setup_unavailable";
+
     /// <summary>The detail of every failed sign-in, whatever the reason.</summary>
     public const string InvalidCredentialsDetail = "The username or password is not correct, or the account cannot sign in right now.";
 
@@ -164,6 +166,27 @@ public static class AuthProblems
             "Sign-in is unavailable",
             "The identity store is not ready, so sign-in is unavailable; the identity check on /health says why.",
             IdentityUnavailableCode);
+
+    /// <summary>
+    /// 409 <see cref="SetupUnavailableCode"/>: first-run setup cannot be completed; <paramref name="detail"/> says
+    /// why (a user exists, seed keys are set, the seed could not be applied, or no code is in force).
+    /// </summary>
+    public static IResult SetupUnavailable(string detail) =>
+        Problem(StatusCodes.Status409Conflict, "First-run setup is not available", detail, SetupUnavailableCode);
+
+    /// <summary>
+    /// 400 <see cref="InvalidCredentialsCode"/> with <c>errors.code</c>: the one-time setup code is missing or
+    /// wrong. Not 401, which the SPA reads as signed out.
+    /// </summary>
+    public static IResult WrongSetupCode()
+    {
+        const string message = "The setup code is not correct. Copy it from the API log (it was logged at start), or from Dashboard:Setup:Code when that is set.";
+        return TypedResults.ValidationProblem(
+            new Dictionary<string, string[]>(StringComparer.Ordinal) { ["code"] = [message] },
+            detail: message,
+            title: "The setup code is not correct",
+            extensions: Code(InvalidCredentialsCode));
+    }
 
     private static IResult Problem(int status, string title, string detail, string code) =>
         TypedResults.Problem(detail: detail, statusCode: status, title: title, extensions: Code(code));

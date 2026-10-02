@@ -977,13 +977,22 @@ The SPA shows the server's error text for a 400 on the list and returns to the l
   and valid, create an Administrator with `MustChangePassword = false`. It never touches an existing
   database. When either key is set, setup is never available. A seed that cannot be applied leaves
   `setupRequired` true and `setupAvailable` false, marks the `identity` health check Degraded with the
-  reason, and returns a problem code the SPA shows.
+  reason, and returns a problem code the SPA shows: whenever setup is required but not available, the
+  session carries `setupProblem: { code: "setup_unavailable", detail }`, and `POST /api/auth/setup`
+  answers 409 with the same code and detail. The reason names the key to fix, never its value.
 - `Dashboard:Admin:ResetOnStart=true` with both seed keys resets that user's password, re-enables the
-  account, rotates the stamp and restores an unscoped Administrator grant at start, logged at Warning.
+  account, clears its lockout and forced change, rotates the stamp and restores an unscoped
+  Administrator grant (its other grants stay; the user is created when missing) at every start while it
+  is true, logged at Warning. A password the policy rejects resets nothing and degrades `identity`.
+  `ResetOnStart=true` with neither seed key fails composition.
 - Setup: when no users exist and no seed key is set, the API generates a one-time code at start and
-  logs it once at Warning; `Dashboard:Setup:Code` presets it. `POST /api/auth/setup` requires it
-  (fixed-time comparison, inside the setup limiter), re-checks inside an exclusive scope, commits, then
-  signs in. There is no time window. 409 `setup_unavailable` otherwise.
+  logs it once at Warning; `Dashboard:Setup:Code` presets it (at least 16 characters, never logged). A
+  generated code is 16 characters in four groups of four from an alphabet without look-alikes (80
+  bits); codes compare ignoring case, spaces and hyphens. `POST /api/auth/setup`
+  `{username, displayName, password, code}` requires it (fixed-time comparison, inside the setup
+  limiter; a missing or wrong code is 400 `invalid_credentials` with `errors.code`), re-checks inside an
+  exclusive scope, commits, then signs in. There is no time window; the code stops working once any
+  user exists. 409 `setup_unavailable` otherwise.
 - In a container (`DOTNET_RUNNING_IN_CONTAINER=true`) `Dashboard:Identity:Sqlite:Path` must be set; an
   unset path is an error reported by the `identity` health check, with no fallback under `/app`.
   Outside a container the default is `{LocalApplicationData}/vSaga/dashboard/identity.db`. The resolved

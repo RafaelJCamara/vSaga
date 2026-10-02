@@ -3,7 +3,11 @@ using Microsoft.Extensions.Logging;
 namespace VSaga.Dashboard.Identity.Services;
 
 /// <summary>Who made an audited change, and from where.</summary>
-/// <param name="Actor">The caller's audit name (<see cref="CallerAccess.AuditActor"/>), or a fixed name such as <c>dashboard:setup</c> for start-up work.</param>
+/// <param name="Actor">
+/// The caller's audit name (<see cref="CallerAccess.AuditActor"/>, <c>dashboard:</c> and the username), or a
+/// fixed one outside that namespace, which no username can produce: <c>vsaga:configuration</c> for start-up
+/// work from configuration, <c>vsaga:setup</c> for first-run setup with the one-time code.
+/// </param>
 /// <param name="ClientAddress">The client's address as the API sees it, or null when there is no request.</param>
 public sealed record AuditContext(string Actor, string? ClientAddress);
 
@@ -16,6 +20,9 @@ public static class AccessActions
     public const string ResetPassword = "user.reset-password";
     public const string UnlockUser = "user.unlock";
     public const string ChangeOwnPassword = "user.change-password";
+    public const string SeedAdministrator = "user.seed";
+    public const string ResetAdministratorOnStart = "user.reset-on-start";
+    public const string SetupAdministrator = "user.setup";
     public const string CreateTeam = "team.create";
     public const string UpdateTeam = "team.update";
     public const string DeleteTeam = "team.delete";

@@ -17,7 +17,8 @@ public static class DashboardIdentityServiceCollectionExtensions
 
     /// <summary>
     /// Registers the EF Core identity store over the database <paramref name="configureDatabase"/> points
-    /// at (the provider's <c>Use*</c> call, with its migrations assembly), <see cref="IdentityStartup"/>, and
+    /// at (the provider's <c>Use*</c> call, with its migrations assembly), <see cref="IdentityStartup"/>, the
+    /// <see cref="FirstRunState"/> its first-administrator step fills (that step is the API's to register), and
     /// Data Protection with its key ring in that store. Nothing touches the database here; the host calls
     /// <see cref="IdentityStartup.EnsureReadyAsync(CancellationToken)"/> once it is built.
     /// </summary>
@@ -36,6 +37,7 @@ public static class DashboardIdentityServiceCollectionExtensions
         services.AddScoped<IDashboardIdentityStore, EfCoreDashboardIdentityStore>();
         services.AddScoped<IDashboardKeyRingStore, EfCoreKeyRingStore>();
         services.AddSingleton<IdentityStartup>();
+        services.AddSingleton<FirstRunState>();
         services.AddSingleton<IIdentityReadiness>(provider => provider.GetRequiredService<IdentityStartup>());
         services.AddSingleton<IdentityStoreXmlRepository>();
 
