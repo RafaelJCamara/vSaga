@@ -26,6 +26,19 @@ public sealed record MessageEnvelope(
     /// <summary>The correlation id of the instance that published a child's initiating message — see <see cref="ParentSagaTypeHeader"/>.</summary>
     public const string ParentCorrelationIdHeader = "x-vsaga-parent-correlation-id";
 
+    /// <summary>
+    /// Names the one saga type a redriven message is meant for. The dashboard's retry stamps it on the
+    /// message it republishes, because a publish by message type under a saga's correlation id would
+    /// otherwise reach every saga type subscribed to that type and run their steps too. The engine
+    /// acknowledges and ignores a message whose header names another saga type (ordinal comparison):
+    /// no timeline entry, no deserialisation, no instance lookup. A message without the header is
+    /// handled as it always was. The <c>x-vsaga-</c> prefix is what makes every wire adapter carry it
+    /// unchanged (Brighter and HTTP keep only prefixed headers). It never propagates: outbound envelopes
+    /// are built fresh by <see cref="From"/>, so the messages a redriven step publishes reach every
+    /// subscriber as usual, while an infrastructure redelivery copies the inbound headers and keeps it.
+    /// </summary>
+    public const string TargetSagaTypeHeader = "x-vsaga-target-saga-type";
+
     public static MessageEnvelope New(Guid correlationId, IReadOnlyDictionary<string, string>? headers = null) =>
         new(correlationId, Guid.NewGuid().ToString("N"), headers);
 

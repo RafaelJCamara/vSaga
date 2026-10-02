@@ -146,6 +146,7 @@ public sealed class MassTransitTransportTests : IAsyncLifetime
             [MessageEnvelope.CausationIdHeader] = "causation-" + Guid.NewGuid().ToString("N"),
             [MessageEnvelope.ParentSagaTypeHeader] = "ParentSagaTypeForTest",
             [MessageEnvelope.ParentCorrelationIdHeader] = Guid.NewGuid().ToString(),
+            [MessageEnvelope.TargetSagaTypeHeader] = "TargetSagaTypeForTest",
         };
 
         await _transport.PublishAsync(new PingMessage("with-headers"), MessageEnvelope.New(correlationId, stampedHeaders));
@@ -166,7 +167,7 @@ public sealed class MassTransitTransportTests : IAsyncLifetime
     /// prefix -- interoperability with a non-vSaga consumer is the point -- so they ride
     /// MassTransit's own SendContext.Headers/ConsumeContext.Headers under their bare W3C names,
     /// alongside MassTransit's unrelated `Diagnostic-Id` instrumentation header rather than in place
-    /// of it. The sibling four-header test above can't stand in for this one: it only ever exercises
+    /// of it. The sibling x-vsaga- header test above can't stand in for this one: it only ever exercises
     /// prefixed names, which is exactly the class of bug (a prefix filter, or a transport that
     /// reserves the W3C names for itself) that would drop these two silently. Asserted
     /// byte-identical, not merely present -- a truncated or re-formatted traceparent still "exists".

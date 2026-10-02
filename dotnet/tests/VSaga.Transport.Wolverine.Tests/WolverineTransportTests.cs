@@ -159,6 +159,7 @@ public sealed class WolverineTransportTests : IAsyncLifetime
             [MessageEnvelope.CausationIdHeader] = "causation-" + Guid.NewGuid().ToString("N"),
             [MessageEnvelope.ParentSagaTypeHeader] = "PostShipmentChoreography",
             [MessageEnvelope.ParentCorrelationIdHeader] = Guid.NewGuid().ToString(),
+            [MessageEnvelope.TargetSagaTypeHeader] = "InvoiceFollowUpSaga",
         };
 
         await _transport.PublishAsync(new PingMessage("carries headers"), new MessageEnvelope(correlationId, Guid.NewGuid().ToString("N"), headers));
@@ -171,14 +172,15 @@ public sealed class WolverineTransportTests : IAsyncLifetime
         Assert.Equal(headers[MessageEnvelope.CausationIdHeader], received.Headers[MessageEnvelope.CausationIdHeader]);
         Assert.Equal("PostShipmentChoreography", received.Headers[MessageEnvelope.ParentSagaTypeHeader]);
         Assert.Equal(headers[MessageEnvelope.ParentCorrelationIdHeader], received.Headers[MessageEnvelope.ParentCorrelationIdHeader]);
+        Assert.Equal("InvoiceFollowUpSaga", received.Headers[MessageEnvelope.TargetSagaTypeHeader]);
     }
 
     /// <summary>
     /// §6/production-readiness §8.17: `traceparent`/`tracestate` deliberately carry no `x-vsaga-`
     /// prefix -- interoperability with a non-vSaga consumer is the point -- which is precisely why
-    /// the sibling four-header test above cannot stand in for this one: anything that filters inbound
+    /// the sibling x-vsaga- header test above cannot stand in for this one: anything that filters inbound
     /// headers by that prefix, or that reserves the W3C names for its own instrumentation, drops
-    /// these two silently while the prefixed four sail through. This transport carries them inside
+    /// these two silently while the prefixed headers sail through. This transport carries them inside
     /// WireEnvelope.Headers rather than Wolverine's own Envelope.Headers (see WireEnvelope's doc
     /// comment), so the full 55-character W3C traceparent and a multi-vendor tracestate must come
     /// back byte-identical -- not merely present, since a truncated or re-formatted traceparent still

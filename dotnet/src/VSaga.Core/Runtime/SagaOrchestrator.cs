@@ -397,6 +397,16 @@ public sealed class SagaOrchestrator<TState>(
 
     private async Task HandleCoreAsync(ReceivedMessage received, Action<Guid> onResolved, Action<StagedChildSagaFinished?> onChildFinishedStaged, CancellationToken cancellationToken)
     {
+        // A dashboard retry redrives one saga type only (docs/adr/0008). Returning here is the ack path
+        // in HandleAsync: the message is not ours, so nothing is logged, deserialised or looked up.
+        if (received.Headers.TryGetValue(MessageEnvelope.TargetSagaTypeHeader, out var targetSagaType)
+            && !string.Equals(targetSagaType, SagaType, StringComparison.Ordinal))
+        {
+            logger.LogDebug("Ignoring {MessageType} {MessageId} for saga {SagaType}: it is targeted at saga type {TargetSagaType}",
+                received.MessageTypeName, received.MessageId, SagaType, targetSagaType);
+            return;
+        }
+
         if (!_messageTypesByName.TryGetValue(received.MessageTypeName, out var clrType))
         {
             logger.LogWarning("Ignoring message of unknown type {MessageType} for saga {SagaType}", received.MessageTypeName, SagaType);
@@ -619,8 +629,11 @@ public sealed class SagaOrchestrator<TState>(
         if (state.Status == SagaStatus.Failed)
             state.Status = SagaStatus.Running;
 
+        // The body rides on every step's MessageReceived (the first step's too), so a dashboard retry can
+        // replay whichever step failed, not only the initiating message or a step that threw.
         await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.MessageReceived,
             messageType: messageTypeName, messageId: messageId,
+            payloadJson: JsonSerializer.Serialize(message, message.GetType()),
             sourceService: GetSourceService(headers), causationId: GetCausationId(headers)), cancellationToken);
 
         var (visitedStates, recordedSnapshotBytes) = await GetVisitedStatesAsync(correlationId, cancellationToken);

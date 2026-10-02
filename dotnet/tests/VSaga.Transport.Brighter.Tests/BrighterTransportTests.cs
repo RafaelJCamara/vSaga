@@ -185,6 +185,7 @@ public sealed class BrighterTransportTests : IAsyncLifetime
             [MessageEnvelope.CausationIdHeader] = "causation-" + Guid.NewGuid().ToString("N"),
             [MessageEnvelope.ParentSagaTypeHeader] = "InvoiceFollowUpSaga",
             [MessageEnvelope.ParentCorrelationIdHeader] = Guid.NewGuid().ToString(),
+            [MessageEnvelope.TargetSagaTypeHeader] = "InvoiceFollowUpSaga",
         };
         var envelope = MessageEnvelope.New(correlationId, headers);
 
@@ -198,6 +199,7 @@ public sealed class BrighterTransportTests : IAsyncLifetime
         Assert.Equal(headers[MessageEnvelope.CausationIdHeader], received.Headers[MessageEnvelope.CausationIdHeader]);
         Assert.Equal(headers[MessageEnvelope.ParentSagaTypeHeader], received.Headers[MessageEnvelope.ParentSagaTypeHeader]);
         Assert.Equal(headers[MessageEnvelope.ParentCorrelationIdHeader], received.Headers[MessageEnvelope.ParentCorrelationIdHeader]);
+        Assert.Equal(headers[MessageEnvelope.TargetSagaTypeHeader], received.Headers[MessageEnvelope.TargetSagaTypeHeader]);
     }
 
     /// <summary>

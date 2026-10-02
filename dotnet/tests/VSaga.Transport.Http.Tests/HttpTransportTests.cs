@@ -145,6 +145,7 @@ public sealed class HttpTransportTests
             [MessageEnvelope.CausationIdHeader] = "causation-" + Guid.NewGuid().ToString("N"),
             [MessageEnvelope.ParentSagaTypeHeader] = "PostShipmentChoreography",
             [MessageEnvelope.ParentCorrelationIdHeader] = Guid.NewGuid().ToString(),
+            [MessageEnvelope.TargetSagaTypeHeader] = "InvoiceFollowUpSaga",
         };
 
         await senderTransport.PublishAsync(new PingMessage("carries headers"), new MessageEnvelope(correlationId, Guid.NewGuid().ToString("N"), headers));
@@ -154,6 +155,7 @@ public sealed class HttpTransportTests
         Assert.Equal(headers[MessageEnvelope.CausationIdHeader], received.Headers[MessageEnvelope.CausationIdHeader]);
         Assert.Equal("PostShipmentChoreography", received.Headers[MessageEnvelope.ParentSagaTypeHeader]);
         Assert.Equal(headers[MessageEnvelope.ParentCorrelationIdHeader], received.Headers[MessageEnvelope.ParentCorrelationIdHeader]);
+        Assert.Equal("InvoiceFollowUpSaga", received.Headers[MessageEnvelope.TargetSagaTypeHeader]);
     }
 
     /// <summary>

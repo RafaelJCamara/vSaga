@@ -122,10 +122,11 @@ public sealed class RabbitMqTransportTests : IAsyncLifetime
     /// <summary>
     /// The reference adapter's own version of the header-threading round trip every other adapter's
     /// suite carries: BuildHeaders copies MessageEnvelope.Headers verbatim into BasicProperties.Headers
-    /// and ToStringHeaders copies the delivery's headers back out with no allowlist, so all four
-    /// x-vsaga- envelope headers must arrive byte-identical -- note RabbitMQ.Client hands string header
+    /// and ToStringHeaders copies the delivery's headers back out with no allowlist, so every
+    /// x-vsaga- envelope header must arrive byte-identical -- note RabbitMQ.Client hands string header
     /// values back as AMQP longstr byte arrays, so this also covers GetHeaderString's UTF-8 decode, the
-    /// one place the values could silently change shape between publish and receive.
+    /// one place the values could silently change shape between publish and receive. The name predates
+    /// the fifth header, the dashboard retry's target saga type, which it now carries as well.
     /// </summary>
     [Fact]
     public async Task PublishAndSubscribe_PropagatesAllFourVSagaHeadersUnchanged()
@@ -146,6 +147,7 @@ public sealed class RabbitMqTransportTests : IAsyncLifetime
             [MessageEnvelope.CausationIdHeader] = "causation-" + Guid.NewGuid().ToString("N"),
             [MessageEnvelope.ParentSagaTypeHeader] = "InvoiceFollowUpSaga",
             [MessageEnvelope.ParentCorrelationIdHeader] = Guid.NewGuid().ToString(),
+            [MessageEnvelope.TargetSagaTypeHeader] = "InvoiceFollowUpSaga",
         };
 
         await _transport.PublishAsync(new PingMessage("sub-saga headers"), MessageEnvelope.New(correlationId, headers));
@@ -158,6 +160,7 @@ public sealed class RabbitMqTransportTests : IAsyncLifetime
         Assert.Equal(headers[MessageEnvelope.CausationIdHeader], received.Headers[MessageEnvelope.CausationIdHeader]);
         Assert.Equal(headers[MessageEnvelope.ParentSagaTypeHeader], received.Headers[MessageEnvelope.ParentSagaTypeHeader]);
         Assert.Equal(headers[MessageEnvelope.ParentCorrelationIdHeader], received.Headers[MessageEnvelope.ParentCorrelationIdHeader]);
+        Assert.Equal(headers[MessageEnvelope.TargetSagaTypeHeader], received.Headers[MessageEnvelope.TargetSagaTypeHeader]);
     }
 
     /// <summary>
