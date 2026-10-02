@@ -431,9 +431,12 @@ describe('SagaDetail', () => {
     fixture.componentInstance.setTab('timeline');
     fixture.detectChanges();
 
-    const heads = Array.from(fixture.nativeElement.querySelectorAll('.tl-head') as NodeListOf<Element>).map((h) =>
-      (h.textContent ?? '').replace(/\s+/g, ' ').trim(),
-    );
+    // The step header's text without its Data toggle.
+    const heads = Array.from(fixture.nativeElement.querySelectorAll('.tl-head') as NodeListOf<Element>).map((h) => {
+      const copy = h.cloneNode(true) as Element;
+      copy.querySelector('.tl-data')?.remove();
+      return (copy.textContent ?? '').replace(/\s+/g, ' ').trim();
+    });
     expect(heads.length).toBe(2);
     expect(heads[1]).toBe(`Step 2 PaymentCaptured ${outcome}`);
   });
@@ -881,6 +884,71 @@ describe('SagaDetail', () => {
       paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-2' }));
 
       expect(fixture.componentInstance.focusedSequence()).toBeNull();
+    });
+  });
+
+  describe("a step's data inspector", () => {
+    /** One step (key 1) with a recorded snapshot. */
+    function oneStep(): SagaLogEntry[] {
+      return [
+        makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageId: 'm0' }),
+        makeEntry({ sequenceNumber: 2, entryType: 'StepSucceeded', messageId: 'm0', fromState: 'Initial', toState: 'Submitted' }),
+        makeEntry({ sequenceNumber: 3, entryType: 'StatePersisted', messageId: 'm0', payloadJson: '{"Total":10}' }),
+      ];
+    }
+
+    function openFirstStep(fixture: ReturnType<typeof setup>): void {
+      fixture.componentInstance.setTab('timeline');
+      fixture.detectChanges();
+      (fixture.nativeElement.querySelector('.tl-head .tl-data') as HTMLButtonElement).click();
+      fixture.detectChanges();
+    }
+
+    const inspector = (fixture: ReturnType<typeof setup>): HTMLElement | null =>
+      fixture.nativeElement.querySelector('#step-data-1');
+
+    it('opens from the step header and stays open after a trip to the map and back', () => {
+      const fixture = setup(makeDetail({ status: 'Completed' }), oneStep());
+      openFirstStep(fixture);
+      expect(inspector(fixture)).not.toBeNull();
+      expect([...fixture.componentInstance.openKeys()]).toEqual([1]);
+
+      fixture.componentInstance.setTab('map');
+      fixture.detectChanges();
+      expect(inspector(fixture)).toBeNull();
+
+      fixture.componentInstance.setTab('timeline');
+      fixture.detectChanges();
+      expect(inspector(fixture)).not.toBeNull();
+      expect(fixture.nativeElement.querySelector('.tl-head .tl-data').getAttribute('aria-expanded')).toBe('true');
+    });
+
+    it('stays open when a live update refreshes the timeline', () => {
+      const fixture = setup(makeDetail({ status: 'Running' }), oneStep());
+      openFirstStep(fixture);
+      apiMock.getTimeline.mockReturnValue(
+        of([...oneStep(), makeEntry({ sequenceNumber: 4, entryType: 'MessageReceived', messageId: 'm1', messageType: 'PaymentCaptured' })]),
+      );
+
+      hubMock.sagaUpdated$.next(fixture.componentInstance.detail()!.summary);
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelectorAll('.tl-step').length).toBe(2);
+      expect(inspector(fixture)).not.toBeNull();
+      expect(inspector(fixture)?.querySelector('pre')?.textContent).toBe(JSON.stringify({ Total: 10 }, null, 2));
+    });
+
+    it('closes every inspector when the route moves to another saga', () => {
+      const paramMap$ = new BehaviorSubject<ParamMap>(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+      const fixture = setup(makeDetail({ status: 'Completed' }), oneStep(), makeMap(), undefined, [], paramMap$);
+      openFirstStep(fixture);
+      expect(inspector(fixture)).not.toBeNull();
+
+      paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-2' }));
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.openKeys().size).toBe(0);
+      expect(inspector(fixture)).toBeNull();
     });
   });
 });

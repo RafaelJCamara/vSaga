@@ -58,6 +58,12 @@ export class SagaDetail implements OnInit, OnDestroy {
   /** The timeline entry the page is focused on (`?entry=`): the map shows the saga as of it and the
    *  timeline highlights its row. */
   readonly focusedSequence = signal<number | null>(null);
+  /** The timeline steps whose data inspector is open. Held here rather than in the timeline, whose
+   *  view goes while the map tab shows, so an inspector stays open across a jump to the map and
+   *  back and across refreshes (step keys are sequence numbers); a saga change closes them all. */
+  readonly openKeys = signal<ReadonlySet<number>>(new Set());
+  /** Whether the viewer may see saga data. Always true until the permission wiring lands. */
+  readonly canViewData = true;
   readonly retrying = signal(false);
   readonly retryMessage = signal<string | null>(null);
   /** Retry re-drives a real saga against real participants, so the button asks before it fires. */
@@ -105,6 +111,8 @@ export class SagaDetail implements OnInit, OnDestroy {
           // A focus belongs to one saga's timeline. The router emits query params before params, so
           // the URL of the new saga has already been read: keep only the entry it names.
           this.focusedSequence.set(this.urlEntry);
+          // Step keys are sequence numbers of another saga's timeline.
+          this.openKeys.set(new Set());
         }
 
         this.sagaType = params.get('sagaType') ?? '';

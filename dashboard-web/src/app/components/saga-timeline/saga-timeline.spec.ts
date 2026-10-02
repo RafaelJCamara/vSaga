@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { SagaLogEntry } from '../../models/saga.model';
 import {
   deliveryExhausted,
@@ -14,7 +15,7 @@ import {
   succeeded,
   T0,
 } from '../../testing/timeline-fixtures';
-import { foldTimeline } from '../../util/saga-transitions';
+import { PENDING_SNAPSHOT_MS, foldTimeline } from '../../util/saga-transitions';
 import { formatRecordedAt, timezoneLabel } from '../../util/time-format';
 import { SagaTimeline } from './saga-timeline';
 
@@ -24,7 +25,7 @@ import { SagaTimeline } from './saga-timeline';
 describe('SagaTimeline', () => {
   function render(
     entries: SagaLogEntry[],
-    inputs: { live?: boolean; focusedSequence?: number | null } = {},
+    inputs: { live?: boolean; focusedSequence?: number | null; canViewData?: boolean } = {},
   ): ComponentFixture<SagaTimeline> {
     const fixture = TestBed.createComponent(SagaTimeline);
     fixture.componentRef.setInput('history', foldTimeline(entries));
@@ -32,11 +33,19 @@ describe('SagaTimeline', () => {
     if (inputs.focusedSequence !== undefined) {
       fixture.componentRef.setInput('focusedSequence', inputs.focusedSequence);
     }
+    if (inputs.canViewData !== undefined) fixture.componentRef.setInput('canViewData', inputs.canViewData);
     fixture.detectChanges();
     return fixture;
   }
 
   const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+  /** A step header's number, title and outcome, without its Data toggle. */
+  const headText = (head: Element) => {
+    const copy = head.cloneNode(true) as Element;
+    copy.querySelector('.tl-data')?.remove();
+    return text(copy);
+  };
 
   /** A started saga with one more message: two steps, five rows, two snapshots. */
   function twoSteps(): SagaLogEntry[] {
@@ -54,7 +63,7 @@ describe('SagaTimeline', () => {
   it('heads every step with its number, its title and how it ended', () => {
     const el: HTMLElement = render(twoSteps()).nativeElement;
 
-    const heads = Array.from(el.querySelectorAll('.tl-head')).map(text);
+    const heads = Array.from(el.querySelectorAll('.tl-head')).map(headText);
     expect(heads).toEqual([
       'Step 1 Started by OrderSubmitted · succeeded',
       'Step 2 PaymentCaptured · succeeded',
@@ -141,7 +150,9 @@ describe('SagaTimeline', () => {
     }
     // Sequence numbers, not ordinals: the snapshot (4) is not a row.
     expect(rows.map((r) => r.getAttribute('data-seq'))).toEqual(['1', '2', '3', '5', '6']);
-    expect(el.textContent).not.toMatch(/\bData\b/);
+    // The Data toggle is a sibling in the step header, never nested in a row.
+    for (const row of rows) expect(row.querySelector('button')).toBeNull();
+    expect(rows.map(text).join(' ')).not.toMatch(/\bData\b/);
   });
 
   it('asks for the map as of an entry when its row is clicked', () => {
@@ -203,11 +214,11 @@ describe('SagaTimeline', () => {
     const entries = numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), persisted('m0'), received('m1')]);
 
     const live: HTMLElement = render(entries, { live: true }).nativeElement;
-    expect(text(live.querySelectorAll('.tl-head')[1])).toBe('Step 2 PaymentCaptured · in progress');
+    expect(headText(live.querySelectorAll('.tl-head')[1])).toBe('Step 2 PaymentCaptured · in progress');
 
     TestBed.resetTestingModule();
     const finished: HTMLElement = render(entries, { live: false }).nativeElement;
-    expect(text(finished.querySelectorAll('.tl-head')[1])).toBe('Step 2 PaymentCaptured · no outcome recorded');
+    expect(headText(finished.querySelectorAll('.tl-head')[1])).toBe('Step 2 PaymentCaptured · no outcome recorded');
   });
 
   it('says who asked for a manual retry and styles a failed step and its error', () => {
@@ -224,7 +235,7 @@ describe('SagaTimeline', () => {
     const steps = el.querySelectorAll('.tl-step');
     expect(steps[1].classList).toContain('tl-step--failed');
     expect(steps[1].classList).toContain('tl-step');
-    expect(text(steps[2].querySelector('.tl-head'))).toBe(
+    expect(headText(steps[2].querySelector('.tl-head')!)).toBe(
       'Step 3 Manual retry of PaymentCaptured · requested by alice',
     );
 
@@ -243,7 +254,7 @@ describe('SagaTimeline', () => {
       numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), deliveryExhausted('m1')]),
     ).nativeElement;
 
-    const heads = Array.from(el.querySelectorAll('.tl-head')).map(text);
+    const heads = Array.from(el.querySelectorAll('.tl-head')).map(headText);
     expect(heads[1]).toBe('Step 2 PaymentCaptured dead-lettered · never handled');
   });
 
@@ -252,8 +263,122 @@ describe('SagaTimeline', () => {
       numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), received('m1'), deliveryExhausted('m1')]),
     ).nativeElement;
 
-    const heads = Array.from(el.querySelectorAll('.tl-head')).map(text);
+    const heads = Array.from(el.querySelectorAll('.tl-head')).map(headText);
     expect(heads[1]).toBe('Step 2 PaymentCaptured · dead-lettered');
+  });
+
+  describe('the per-step Data toggle', () => {
+    /** Two steps whose snapshots differ: step 2 (key 5) changes Status and adds Paid. */
+    function withData(): SagaLogEntry[] {
+      return numbered([
+        started('m0'),
+        received('m0', 'OrderSubmitted'),
+        succeeded('m0', 'Initial', 'Submitted'),
+        persisted('m0', '{"Status":0,"Total":10}'),
+        received('m1', 'PaymentCaptured', { payloadJson: '{"Amount":10}' }),
+        succeeded('m1', 'Submitted', 'Paid'),
+        persisted('m1', '{"Status":1,"Total":10,"Paid":true}'),
+      ]);
+    }
+
+    const toggles = (el: HTMLElement) => Array.from(el.querySelectorAll<HTMLButtonElement>('.tl-head .tl-data'));
+
+    it('puts a closed Data toggle in every step header, named after its step', () => {
+      const el: HTMLElement = render(withData()).nativeElement;
+
+      const buttons = toggles(el);
+      expect(buttons.map(text)).toEqual(['Data', 'Data']);
+      expect(buttons[1].getAttribute('type')).toBe('button');
+      expect(buttons[1].classList).toContain('btn');
+      expect(buttons[1].classList).toContain('btn--quiet');
+      expect(buttons[1].getAttribute('aria-expanded')).toBe('false');
+      expect(buttons[1].getAttribute('aria-controls')).toBe('step-data-5');
+      expect(buttons[1].getAttribute('aria-label')).toBe('Data after step 2: PaymentCaptured');
+      expect(el.querySelector('app-saga-data-inspector')).toBeNull();
+    });
+
+    it("opens the step's inspector below its rows and marks the toggle expanded, and closes it again", () => {
+      const fixture = render(withData());
+      const el: HTMLElement = fixture.nativeElement;
+      const emitted: ReadonlySet<number>[] = [];
+      fixture.componentInstance.openKeys.subscribe((keys) => emitted.push(keys));
+
+      toggles(el)[1].click();
+      fixture.detectChanges();
+
+      expect(toggles(el)[1].getAttribute('aria-expanded')).toBe('true');
+      expect(toggles(el)[0].getAttribute('aria-expanded')).toBe('false');
+      const step = el.querySelectorAll('.tl-step')[1];
+      const inspector = step.querySelector('app-saga-data-inspector')!;
+      expect(inspector.id).toBe('step-data-5');
+      expect(inspector.previousElementSibling?.classList).toContain('tl-rows');
+      expect(text(inspector.querySelector('.insp-note'))).toBe(
+        'Compared with the state after step 1 (Started by OrderSubmitted)',
+      );
+      const changed = Array.from(inspector.querySelectorAll('.insp-diff tbody th')).map(text);
+      expect(changed).toEqual(['~Changed: Status', '+Added: Paid']);
+      expect([...emitted.at(-1)!]).toEqual([5]);
+
+      toggles(el)[1].click();
+      fixture.detectChanges();
+
+      expect(toggles(el)[1].getAttribute('aria-expanded')).toBe('false');
+      expect(el.querySelector('app-saga-data-inspector')).toBeNull();
+      expect([...emitted.at(-1)!]).toEqual([]);
+    });
+
+    it('opens the inspectors the page says are open, and keeps them open across a refresh', () => {
+      const fixture = render(withData());
+      fixture.componentRef.setInput('openKeys', new Set([1]));
+      fixture.detectChanges();
+
+      const el: HTMLElement = fixture.nativeElement;
+      expect(el.querySelector('app-saga-data-inspector')?.id).toBe('step-data-1');
+
+      fixture.componentRef.setInput('history', foldTimeline([...withData()]));
+      fixture.detectChanges();
+      expect(el.querySelector('app-saga-data-inspector')?.id).toBe('step-data-1');
+      expect(toggles(el)[0].getAttribute('aria-expanded')).toBe('true');
+    });
+
+    it('offers no toggles and shows no inspector without canViewData', () => {
+      const fixture = render(withData(), { canViewData: false });
+      fixture.componentRef.setInput('openKeys', new Set([1, 5]));
+      fixture.detectChanges();
+
+      const el: HTMLElement = fixture.nativeElement;
+      expect(toggles(el)).toEqual([]);
+      expect(el.querySelector('app-saga-data-inspector')).toBeNull();
+      expect(el.querySelectorAll('.tl-step').length).toBe(2);
+    });
+
+    describe('a live final step still waiting for its snapshot', () => {
+      afterEach(() => vi.useRealTimers());
+
+      it('reads pending while young, then missing once the window passes, without a refresh', () => {
+        vi.useFakeTimers();
+        // The final step (key 4) has no snapshot yet; its newest row is at T0 + 400 ms.
+        vi.setSystemTime(Date.parse(T0) + 1500);
+        const entries = numbered([
+          started('m0'),
+          succeeded('m0', 'Initial', 'Submitted'),
+          persisted('m0'),
+          received('m1'),
+          succeeded('m1', 'Submitted', 'Paid'),
+        ]);
+        const fixture = render(entries, { live: true });
+        fixture.componentRef.setInput('openKeys', new Set([4]));
+        fixture.detectChanges();
+
+        const note = () => text(fixture.nativeElement.querySelector('#step-data-4 .insp-note'));
+        expect(note()).toBe('Not recorded yet. The step may still be committing; this view refreshes by itself.');
+
+        vi.advanceTimersByTime(PENDING_SNAPSHOT_MS);
+        fixture.detectChanges();
+
+        expect(note()).toMatch(/^No snapshot was recorded for this step/);
+      });
+    });
   });
 });
 

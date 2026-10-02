@@ -14,6 +14,16 @@
           <span class="tl-title">{{ t.title }}</span>
         }
         <span class="tl-outcome">· {{ outcomeLabel(t) }}</span>
+        @if (canViewData()) {
+          <button
+            type="button"
+            class="btn btn--quiet tl-data"
+            [attr.aria-expanded]="isOpen(t.key)"
+            [attr.aria-controls]="'step-data-' + t.key"
+            [attr.aria-label]="'Data after step ' + t.ordinal + ': ' + t.title"
+            (click)="toggleData(t.key)"
+          >Data</button>
+        }
       </div>
       @if (t.rows.length > 0) {
         <ol class="tl-rows">
@@ -60,6 +70,16 @@
             </li>
           }
         </ol>
+      }
+      @if (canViewData() && isOpen(t.key)) {
+        <app-saga-data-inspector
+          [attr.id]="'step-data-' + t.key"
+          [state]="dataState(t)"
+          [afterJson]="t.snapshotJson"
+          [beforeJson]="t.baseline?.json ?? null"
+          [beforeLabel]="baselineLabel(t)"
+          [message]="t.message"
+        />
       }
     </li>
   }

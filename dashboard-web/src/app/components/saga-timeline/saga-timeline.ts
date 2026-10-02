@@ -1,8 +1,30 @@
-import { Component, ElementRef, afterRenderEffect, computed, inject, input, output } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  afterRenderEffect,
+  computed,
+  effect,
+  inject,
+  input,
+  model,
+  output,
+  signal,
+} from '@angular/core';
 import { SagaLogEntry } from '../../models/saga.model';
 import { entryTypeLabel } from '../../util/entry-type-label';
-import { SagaHistory, SagaTransition, TimelineRow } from '../../util/saga-transitions';
+import {
+  PENDING_SNAPSHOT_MS,
+  SagaHistory,
+  SagaTransition,
+  SnapshotState,
+  TimelineRow,
+  effectiveSnapshotState,
+} from '../../util/saga-transitions';
 import { RecordedAt, formatRecordedAt, timezoneLabel, toMillis } from '../../util/time-format';
+import { SagaDataInspector } from '../saga-data-inspector/saga-data-inspector';
+
+/** Past the pending window, so the re-check after it never lands a millisecond early. */
+const PENDING_RECHECK_SLACK_MS = 50;
 
 const OUTCOME_LABELS: Record<Exclude<SagaTransition['outcome'], 'in-flight' | 'requested'>, string> = {
   succeeded: 'succeeded',
@@ -18,9 +40,14 @@ const OUTCOME_LABELS: Record<Exclude<SagaTransition['outcome'], 'in-flight' | 'r
  *
  * Every row is a native button that asks for the map as of that entry, and a step's title asks for
  * the map as of the step's last entry, which is the state after the step.
+ *
+ * With `canViewData`, each step header has a Data toggle that opens the step's data inspector below
+ * its rows. Which steps are open is `openKeys` (step keys, stable across refreshes), a model the
+ * page holds, so open inspectors survive a refresh and a trip to the map and back.
  */
 @Component({
   selector: 'app-saga-timeline',
+  imports: [SagaDataInspector],
   templateUrl: './saga-timeline.html',
   styleUrl: './saga-timeline.scss',
   // The spaces between a row's parts are part of its text: without them it reads (and copies, and
@@ -35,6 +62,8 @@ export class SagaTimeline {
   readonly canViewData = input(true);
   /** Whether the saga is still running, so its final step without an outcome is in progress. */
   readonly live = input(false);
+  /** The keys of the steps whose data inspector is open. */
+  readonly openKeys = model<ReadonlySet<number>>(new Set());
 
   /** The viewer picked an entry to see on the map; carries its sequence number. */
   readonly entrySelected = output<number>();
@@ -42,8 +71,45 @@ export class SagaTimeline {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   /** The focus this view last scrolled to, so a refresh of the same focus never steals focus. */
   private scrolledTo: number | null = null;
+  /** Bumped when a pending snapshot's window runs out, so its step reads missing without a refresh. */
+  private readonly tick = signal(0);
+
+  /** The clock the snapshot states are judged by: read again on every input change and every tick. */
+  private readonly now = computed(() => {
+    this.history();
+    this.live();
+    this.tick();
+    return Date.now();
+  });
+
+  /** Each step's snapshot state as of `now` (see effectiveSnapshotState), by step key. */
+  readonly dataStates = computed(() => {
+    const now = this.now();
+    const live = this.live();
+    const states = new Map<number, SnapshotState>();
+    for (const step of this.history().transitions) {
+      states.set(step.key, effectiveSnapshotState(step, live, now));
+    }
+    return states;
+  });
 
   constructor() {
+    // A pending step stops being pending once its newest row is PENDING_SNAPSHOT_MS old: look again
+    // then, since nothing else may happen to this saga to trigger a refresh.
+    effect((onCleanup) => {
+      const now = this.now();
+      let due: number | null = null;
+      for (const step of this.history().transitions) {
+        if (this.dataStates().get(step.key) !== 'pending') continue;
+        const at = toMillis(step.lastOccurredAtUtc) ?? now;
+        const wait = at + PENDING_SNAPSHOT_MS - now + PENDING_RECHECK_SLACK_MS;
+        due = due === null ? wait : Math.min(due, wait);
+      }
+      if (due === null) return;
+      const timer = setTimeout(() => this.tick.update((n) => n + 1), Math.max(0, due));
+      onCleanup(() => clearTimeout(timer));
+    });
+
     // Once per new focus, and only once its row exists (the history may arrive after the focus).
     afterRenderEffect(() => {
       const sequence = this.focusedSequence();
@@ -87,6 +153,29 @@ export class SagaTimeline {
 
   at(row: TimelineRow): RecordedAt {
     return this.times().get(row) ?? formatRecordedAt(row.entry.occurredAtUtc, null);
+  }
+
+  isOpen(key: number): boolean {
+    return this.openKeys().has(key);
+  }
+
+  /** Opens or closes a step's data inspector. */
+  toggleData(key: number): void {
+    this.openKeys.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }
+
+  dataState(step: SagaTransition): SnapshotState {
+    return this.dataStates().get(step.key) ?? step.snapshotState;
+  }
+
+  /** Names the snapshot a step's changes are measured against. */
+  baselineLabel(step: SagaTransition): string | null {
+    const baseline = step.baseline;
+    return baseline ? `the state after step ${baseline.ordinal} (${baseline.title})` : null;
   }
 
   /** The sequence number of the step's last row, which the step title jumps to; null without rows. */

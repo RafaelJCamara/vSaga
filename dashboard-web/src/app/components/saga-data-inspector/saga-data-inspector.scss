@@ -1,0 +1,75 @@
+:host {
+  display: block;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border);
+  font-size: 0.8rem;
+}
+
+.insp-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.insp-copy {
+  margin-left: auto;
+}
+
+.insp-note,
+.insp-caption {
+  margin: 0.3rem 0;
+}
+
+.insp-scroll {
+  overflow-x: auto;
+}
+
+.insp-diff {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.insp-diff th,
+.insp-diff td {
+  padding: 0.2rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.insp-diff thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.insp-diff tbody th {
+  font-weight: 500;
+}
+
+.insp-mark {
+  display: inline-block;
+  width: 1ch;
+  margin-right: 0.4rem;
+  font-weight: 700;
+}
+
+.insp-added .insp-mark {
+  color: var(--status-completed);
+}
+
+.insp-removed .insp-mark {
+  color: var(--status-failed);
+}
+
+.insp-changed .insp-mark {
+  color: var(--status-compensating);
+}
+
+.json-block {
+  max-height: 24rem;
+  margin: 0;
+}

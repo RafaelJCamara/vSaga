@@ -69,6 +69,57 @@ code, .mono {
   color: var(--text-muted);
 }
 
+/* A plain bordered button; `--quiet` is the low-weight one used in toolbars and step headers.
+   `aria-pressed="true"` marks the selected one of a group of view buttons. */
+.btn {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.btn--quiet {
+  background: none;
+  color: var(--text-muted);
+}
+
+.btn:hover:not(:disabled),
+.btn[aria-pressed='true'],
+.btn[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.btn[aria-pressed='true'],
+.btn[aria-expanded='true'] {
+  background: var(--accent-soft);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Pretty-printed JSON: a saga's state or a message payload. Focusable where it scrolls. */
+.json-block {
+  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  white-space: pre;
+}
+
 /* Read by screen readers, not shown. */
 .sr-only {
   position: absolute;

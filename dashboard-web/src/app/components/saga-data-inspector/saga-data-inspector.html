@@ -1,0 +1,56 @@
+@if (state() !== 'recorded') {
+  <p class="insp-note">{{ note() }}</p>
+  @if (message(); as m) {
+    <p class="insp-caption"><span class="micro-label">Message</span> <span class="mono">{{ m.label }}</span></p>
+    <pre class="json-block" tabindex="0">{{ messagePretty() }}</pre>
+  }
+} @else {
+  <div class="insp-bar" role="group" aria-label="Data view">
+    <button type="button" class="btn btn--quiet" [attr.aria-pressed]="view() === 'changes'" [disabled]="!diff()" (click)="view.set('changes')">Changes</button>
+    <button type="button" class="btn btn--quiet" [attr.aria-pressed]="view() === 'state'" (click)="view.set('state')">Full state</button>
+    @if (message()) {
+      <button type="button" class="btn btn--quiet" [attr.aria-pressed]="view() === 'message'" (click)="view.set('message')">Message</button>
+    }
+    @if (canCopy) {
+      <button type="button" class="btn btn--quiet insp-copy" (click)="copy()">Copy JSON</button>
+    }
+    <span class="insp-copied muted" role="status">{{ copied() ? 'Copied' : '' }}</span>
+  </div>
+
+  @let d = diff();
+  @if (view() === 'changes' && d) {
+    <p class="insp-note">Compared with {{ beforeLabel() ?? 'the previous recorded state' }}</p>
+    @if (business().length > 0) {
+      <div class="insp-scroll">
+        <table class="insp-diff">
+          <thead>
+            <tr><th scope="col">Field</th><th scope="col">Before</th><th scope="col">After</th></tr>
+          </thead>
+          <tbody>
+            @for (c of business(); track c.path) {
+              @let mark = marker(c);
+              <tr [class]="'insp-' + c.kind">
+                <th scope="row" class="mono"><span class="insp-mark" aria-hidden="true">{{ mark.symbol }}</span><span class="sr-only">{{ mark.text }}:</span> {{ c.path || '(whole state)' }}</th>
+                <td class="mono">{{ c.kind === 'added' ? '—' : preview(c.before) }}</td>
+                <td class="mono">{{ c.kind === 'removed' ? '—' : preview(c.after) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else {
+      <p class="insp-note">None of the saga's own fields changed in this step.</p>
+    }
+    @if (d.truncated) {
+      <p class="insp-note muted">Showing the first {{ business().length }} changes. Full state shows the rest.</p>
+    }
+    @if (bookkeepingText(); as bookkeeping) {
+      <p class="insp-note insp-bookkeeping muted">Engine bookkeeping also changed: {{ bookkeeping }}</p>
+    }
+  } @else if (view() === 'message') {
+    <p class="insp-caption"><span class="micro-label">Message</span> <span class="mono">{{ message()?.label }}</span></p>
+    <pre class="json-block" tabindex="0">{{ messagePretty() }}</pre>
+  } @else {
+    <pre class="json-block" tabindex="0">{{ pretty() }}</pre>
+  }
+}
