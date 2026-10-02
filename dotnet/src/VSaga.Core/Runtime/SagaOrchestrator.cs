@@ -725,6 +725,9 @@ public sealed class SagaOrchestrator<TState>(
             fromState: outcome.FromState, toState: outcome.ToState, messageType: messageTypeName, messageId: messageId,
             traceId: activity?.TraceId.ToString(), spanId: activity?.SpanId.ToString()), cancellationToken);
 
+        // TimeoutScheduled and SagaCompleted below carry the step's inbound message id so the dashboard can
+        // attach them to the step that logged them when another handler of the same instance interleaves;
+        // neither feeds dedupe (only SagaStarted/MessageReceived count) or visited states (ToState unchanged).
         if (!string.Equals(outcome.ToState, outcome.FromState, StringComparison.Ordinal))
         {
             await timeoutStore.CancelAsync(SagaType, correlationId, outcome.FromState, cancellationToken);
@@ -733,12 +736,12 @@ public sealed class SagaOrchestrator<TState>(
             {
                 var dueAt = timeProvider.GetUtcNow() + delay;
                 await timeoutStore.ScheduleAsync(SagaType, correlationId, outcome.ToState, dueAt, cancellationToken);
-                await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.TimeoutScheduled, toState: outcome.ToState), cancellationToken);
+                await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.TimeoutScheduled, toState: outcome.ToState, messageId: messageId), cancellationToken);
             }
         }
 
         if (outcome.FinalStatus is not null)
-            await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.SagaCompleted, toState: outcome.ToState), cancellationToken);
+            await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.SagaCompleted, toState: outcome.ToState, messageId: messageId), cancellationToken);
 
         await PersistAndFinalizeStepSuccessAsync(state, outcome, correlationId, fromState, isNew, needsInsert, expectedVersion, context, cancellationToken);
     }

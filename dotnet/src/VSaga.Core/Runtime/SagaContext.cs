@@ -170,7 +170,17 @@ internal sealed class SagaContext<TState>(
 
     void ISagaContextDeferredPublisher.ClearDeferredPublishes() => _deferredPublishes.Clear();
 
-    Task ISagaContextLogSink.LogAsync(SagaLogEntry entry, CancellationToken cancellationToken) => logAsync(entry, cancellationToken);
+    /// <summary>
+    /// Stamps the step's inbound message id as the causation id of an entry that names none (the
+    /// Compensation entries, a .CallHttp request), so the dashboard can attach it to the step that logged
+    /// it when another handler of the same instance interleaves. An entry with its own causation id (a
+    /// .CallHttp reply, caused by the request) keeps it, and on the timeout path there is no inbound
+    /// message, so entries pass through unchanged. The causation id filled here is never read by dedupe or
+    /// by the map's stitching (the map reads causation only from MessageReceived entries, and a .CallHttp
+    /// reply keeps its own), so nothing else moves.
+    /// </summary>
+    Task ISagaContextLogSink.LogAsync(SagaLogEntry entry, CancellationToken cancellationToken) =>
+        logAsync(entry.CausationId is null && inboundMessageId is not null ? entry with { CausationId = inboundMessageId } : entry, cancellationToken);
 
     private async Task PublishInternalAsync<TMessage>(TMessage message, string? destination, MessageEnvelope envelope, CancellationToken cancellationToken, SagaEntryType? entryTypeOverride = null) where TMessage : notnull
     {

@@ -412,6 +412,52 @@ public sealed class SagaMapBuilderTests
         Assert.Equal(10, actual.Events[actual.FailureEventIndex!.Value].SequenceNumber);
     }
 
+    [Theory]
+    [InlineData(SagaStatus.Failed)]
+    [InlineData(SagaStatus.Completed)]
+    public void InboundMessageIdsStampedOnStepBookkeeping_LeaveTheMapOfACallHttpTimelineUnchanged(SagaStatus status)
+    {
+        // A .CallHttp step that ends in a business failure, the way the engine logs it before and after
+        // TimeoutScheduled/SagaCompleted carry the step's message id and the context's log sink fills a
+        // null causation id with it (the .CallHttp request and the Compensation entries). The map reads
+        // causation only off MessageReceived entries and never reads those two entries' message id.
+        SagaLogEntry[] unstamped =
+        [
+            Entry(1, SagaEntryType.SagaStarted, "BeginCharge", "m-start", source: "checkout"),
+            Entry(2, SagaEntryType.MessagePublished, "POST https://pay.test/charge", "m-call", source: SagaType, destination: "pay.test/charge"),
+            Entry(3, SagaEntryType.MessageReceived, "200 OK", "m-reply", source: "pay.test/charge", causationId: "m-call"),
+            Entry(4, SagaEntryType.StepSucceeded, "BeginCharge", "m-start"),
+            Entry(5, SagaEntryType.TimeoutScheduled),
+            Entry(6, SagaEntryType.MessagePublished, "ChargeDeclined", "m-loop", source: SagaType, causationId: "m-start"),
+            Entry(7, SagaEntryType.MessageReceived, "ChargeDeclined", "m-loop", source: SagaType, causationId: "m-start"),
+            Entry(8, SagaEntryType.CompensationStarted),
+            Entry(9, SagaEntryType.MessagePublished, "ReleaseStock", "m-release", source: SagaType, causationId: "m-loop"),
+            Entry(10, SagaEntryType.CompensationStepSucceeded),
+            Entry(11, SagaEntryType.StepSucceeded, "ChargeDeclined", "m-loop"),
+            Entry(12, SagaEntryType.SagaCompleted),
+        ];
+        var stamped = unstamped.Select(e => e.SequenceNumber switch
+        {
+            2 => e with { CausationId = "m-start" },
+            5 => e with { MessageId = "m-start" },
+            8 or 10 => e with { CausationId = "m-loop" },
+            12 => e with { MessageId = "m-loop" },
+            _ => e,
+        }).ToList();
+        IReadOnlyList<ServiceTopologyEntry> topology = [Consumer("warehouse", "ReleaseStock")];
+
+        var expected = Build(unstamped, status, topology);
+        var actual = Build(stamped, status, topology);
+
+        Assert.Equal(expected.Nodes, actual.Nodes);
+        Assert.Equal(expected.Edges, actual.Edges);
+        Assert.Equal(expected.Events, actual.Events);
+        Assert.Equal(expected.FailureEventIndex, actual.FailureEventIndex);
+
+        // The request/reply pair still stitches on the request's own id.
+        Assert.False(Edge(actual, "e2-pay.test/charge").Unanswered);
+    }
+
     [Fact]
     public void TimelineOfOnlySnapshots_ProducesNoEventNodeOrEdge()
     {
