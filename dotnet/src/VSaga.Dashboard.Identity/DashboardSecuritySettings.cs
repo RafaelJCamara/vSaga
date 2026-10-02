@@ -29,7 +29,11 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
 
     public const string ApiKeyRoleKey = "Dashboard:ApiKeyRole";
 
+    public const string AuthPerMinuteKey = "Dashboard:RateLimit:AuthPerMinute";
+
     public const int DefaultPasswordMinLength = 12;
+
+    public const int DefaultAuthPerMinute = 20;
 
     public const int DefaultLockoutMaxFailedAttempts = 5;
 
@@ -73,6 +77,12 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
     /// <summary>The name of the built-in or custom role the API key acts as; <c>access.manage</c> is never held.</summary>
     public string ApiKeyRole { get; init; } = DefaultApiKeyRole;
 
+    /// <summary>
+    /// Sign-in and password-change attempts allowed per minute for one client address and one username;
+    /// first-run setup gets the same number per client address.
+    /// </summary>
+    public int AuthPerMinute { get; init; } = DefaultAuthPerMinute;
+
     /// <summary>The name the session cookie is written under: <see cref="SessionCookieName"/>, prefixed when <see cref="RequireHttps"/> is true.</summary>
     public string EffectiveSessionCookieName => RequireHttps ? HostCookiePrefix + SessionCookieName : SessionCookieName;
 
@@ -82,8 +92,9 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
     /// <c>Dashboard:Lockout:Minutes</c> 1 to 1440 (a day), <c>Dashboard:Session:IdleTimeoutMinutes</c> 1 to
     /// 10080 (a week), <c>Dashboard:Session:AbsoluteTimeoutHours</c> 1 to 720 (30 days),
     /// <c>Dashboard:Session:RequireHttps</c> true or false, <c>Dashboard:Session:CookieName</c> 1 to 64 letters,
-    /// digits, dots, hyphens and underscores not starting with <c>__</c> (the prefix is the setting's job), and
-    /// <c>Dashboard:ApiKeyRole</c> at most 64 characters, or composition fails here.
+    /// digits, dots, hyphens and underscores not starting with <c>__</c> (the prefix is the setting's job),
+    /// <c>Dashboard:ApiKeyRole</c> at most 64 characters, and <c>Dashboard:RateLimit:AuthPerMinute</c> 1 to
+    /// 1000, or composition fails here.
     /// </summary>
     /// <exception cref="InvalidOperationException">A key holds something outside its range.</exception>
     public static DashboardSecuritySettings Read(IConfiguration configuration)
@@ -101,6 +112,7 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
                 ReadInt(configuration, SessionAbsoluteTimeoutHoursKey, DefaultSessionAbsoluteTimeoutHours, 1, 720)),
             RequireHttps = ReadBool(configuration, RequireHttpsKey),
             ApiKeyRole = ReadApiKeyRole(configuration[ApiKeyRoleKey]),
+            AuthPerMinute = ReadInt(configuration, AuthPerMinuteKey, DefaultAuthPerMinute, 1, 1000),
         };
     }
 

@@ -245,7 +245,7 @@ public sealed class AccessAdministrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ChangeOwnPassword_WrongCurrentPassword_CountsAndLocksAtTheThreshold()
+    public async Task ChangeOwnPassword_WrongCurrentPassword_CountsAndLocksAtTheThreshold_EndingEverySession()
     {
         var bob = await _context.SeedUserAsync("bob");
         var administration = _context.NewAdministration();
@@ -255,17 +255,25 @@ public sealed class AccessAdministrationServiceTests : IAsyncLifetime
             var wrong = await administration.ChangeOwnPasswordAsync(bob.Id, "not my password", "my own new secret", Bob(), None);
             Assert.Equal(PasswordChangeStatus.WrongCurrentPassword, wrong.Status);
             Assert.Null(wrong.LockedUntilUtc);
-            Assert.Equal(i, (await _context.ReadUserAsync(bob.Id)).FailedSignInCount);
+            var counted = await _context.ReadUserAsync(bob.Id);
+            Assert.Equal(i, counted.FailedSignInCount);
+            Assert.Equal(bob.SecurityStamp, counted.SecurityStamp);
         }
 
+        Assert.Empty(_context.Observer.UserNotifications);
         var fifth = await administration.ChangeOwnPasswordAsync(bob.Id, "not my password", "my own new secret", Bob(), None);
+        var locked = await _context.ReadUserAsync(bob.Id);
         var afterwards = await administration.ChangeOwnPasswordAsync(bob.Id, StrongPassword, "my own new secret", Bob(), None);
 
         Assert.Equal(PasswordChangeStatus.WrongCurrentPassword, fifth.Status);
         Assert.Equal(T0.AddMinutes(15), fifth.LockedUntilUtc);
+        Assert.Equal(T0.AddMinutes(15), locked.LockoutEndUtc);
+        Assert.NotEqual(bob.SecurityStamp, locked.SecurityStamp, StringComparer.Ordinal);
+        Assert.Equal([Ids(bob.Id)], _context.Observer.Notified);
         Assert.Equal(PasswordChangeStatus.Refused, afterwards.Status);
-        Assert.Equal(bob.PasswordHash, (await _context.ReadUserAsync(bob.Id)).PasswordHash);
-        Assert.Empty(_context.Observer.UserNotifications);
+        var stored = await _context.ReadUserAsync(bob.Id);
+        Assert.Equal(bob.PasswordHash, stored.PasswordHash);
+        Assert.Equal(locked.SecurityStamp, stored.SecurityStamp);
     }
 
     [Fact]

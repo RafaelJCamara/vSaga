@@ -15,7 +15,8 @@ namespace VSaga.Dashboard.Identity.Services;
 /// <para>
 /// Passwords are hashed before the scope opens, so the write lock is never held for the hashing work. Team
 /// membership is written only through the team. The security stamp rotates on a password change, an
-/// administrator's reset, and when the account is disabled or enabled.
+/// administrator's reset, when the account is disabled or enabled, and when a wrong current password on a
+/// password change locks the account.
 /// </para>
 /// </summary>
 /// <exception cref="IdentityValidationException">Thrown by a mutation whose request is malformed.</exception>
@@ -181,8 +182,12 @@ public sealed class AccessAdministrationService
     /// <summary>
     /// A signed-in user changes their own password. The new password is checked first (policy, and not the
     /// current one). A wrong current password counts against the account like a failed sign-in and can lock
-    /// it; a locked or disabled account is refused without checking anything. On success the stamp rotates
-    /// (ending every other session), <c>MustChangePassword</c> clears and the failure count resets.
+    /// it; the failure that reaches the threshold also rotates the stamp and notifies the observer, ending
+    /// every session of the user (the one that guessed included). A session gains no more guesses at the
+    /// current password than the sign-in endpoint allows. A locked or disabled account is refused without
+    /// checking anything and its sessions are left alone, so an outsider's failed sign-ins cannot end them.
+    /// On success the stamp rotates (ending every other session), <c>MustChangePassword</c> clears and the
+    /// failure count resets.
     /// </summary>
     public async Task<PasswordChangeResult> ChangeOwnPasswordAsync(
         Guid userId, string? currentPassword, string? newPassword, AuditContext audit, CancellationToken cancellationToken)
@@ -206,6 +211,10 @@ public sealed class AccessAdministrationService
                     _ => "invalid_credentials_locked_out",
                 };
                 DashboardAudit.AccessChangeRejected(_audit, audit.Actor, AccessActions.ChangeOwnPassword, UserKind, userId, audit.ClientAddress, outcome);
+
+                // The failure that locked the account rotated the stamp: live connections must go too.
+                if (result.LockedUntilUtc is not null)
+                    await NotifyAsync(AccessActions.ChangeOwnPassword, Notification.Users(userId));
             }
 
             return result;
@@ -309,6 +318,9 @@ public sealed class AccessAdministrationService
         {
             var lockedUntil = await _store.RecordFailedSignInAsync(
                 userId, _settings.LockoutMaxFailedAttempts, now, _settings.LockoutDuration, cancellationToken);
+            if (lockedUntil is not null)
+                await EndSessionsAsync(userId, cancellationToken);
+
             return new PasswordChangeResult(PasswordChangeStatus.WrongCurrentPassword, null, lockedUntil);
         }
 
@@ -329,6 +341,23 @@ public sealed class AccessAdministrationService
             return WriteOwnPasswordAsync(current, hash, cancellationToken);
         }, cancellationToken);
     }
+
+    /// <summary>
+    /// Rotates the stamp, so every session of the user ends, the one that asked included, and on the server:
+    /// a copy of the cookie that ignores the sign-out stops working too. The failure count and the lockout
+    /// <see cref="IDashboardIdentityStore.RecordFailedSignInAsync"/> just wrote are re-read under the lock and kept.
+    /// </summary>
+    private Task EndSessionsAsync(Guid userId, CancellationToken cancellationToken) =>
+        InScopeAsync(async snapshot =>
+        {
+            var updated = snapshot.User(userId) with
+            {
+                SecurityStamp = SecurityStamps.New(),
+                UpdatedAtUtc = _timeProvider.GetUtcNow(),
+            };
+            await _store.UpdateUserAsync(updated, cancellationToken);
+            return true;
+        }, cancellationToken);
 
     private async Task<PasswordChangeResult> WriteOwnPasswordAsync(DashboardUser current, string hash, CancellationToken cancellationToken)
     {

@@ -29,4 +29,8 @@ public static class CallerAccessHttpContextExtensions
 
     internal static void SetCaller(this HttpContext context, CallerAccess caller) =>
         context.Features.Set<ICallerAccessFeature>(new CallerAccessFeature(caller));
+
+    /// <summary>Forgets the resolved caller, when the request's principal was replaced by one with no caller (signing out).</summary>
+    internal static void ClearCaller(this HttpContext context) =>
+        context.Features.Set<ICallerAccessFeature>(null);
 }

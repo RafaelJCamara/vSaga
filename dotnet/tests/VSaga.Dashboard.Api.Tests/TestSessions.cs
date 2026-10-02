@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using VSaga.Dashboard.Api.Auth;
@@ -28,7 +29,28 @@ internal static class TestSessions
         return user;
     }
 
+    /// <summary>A user who can sign in with <paramref name="password"/>, hashed with the host's own hasher.</summary>
+    public static async Task<DashboardUser> CreateUserWithPasswordAsync(
+        IServiceProvider services,
+        string username,
+        string password,
+        bool isEnabled = true,
+        DateTimeOffset? lockoutEndUtc = null,
+        params AccessGrant[] grants)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var user = new DashboardUser(
+            Guid.NewGuid(), username, username + " (display)", PasswordHash: "", SecurityStamps.New(), isEnabled, MustChangePassword: false,
+            FailedSignInCount: 0, lockoutEndUtc, LastSignInAtUtc: null, now, now, grants);
+        user = user with { PasswordHash = services.GetRequiredService<IPasswordHasher<DashboardUser>>().HashPassword(user, password) };
+        await using var scope = services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IDashboardIdentityStore>().CreateUserAsync(user, CancellationToken.None);
+        return user;
+    }
+
     public static AccessGrant AllTypes(Guid roleId) => new(roleId, AllSagaTypes: true, []);
+
+    public static AccessGrant ForTypes(Guid roleId, params string[] sagaTypes) => new(roleId, AllSagaTypes: false, sagaTypes);
 
     /// <summary>The session cookie's name in this host.</summary>
     public static string CookieName(IServiceProvider services) => Options(services).Cookie.Name!;

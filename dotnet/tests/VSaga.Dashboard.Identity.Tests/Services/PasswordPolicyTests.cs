@@ -103,6 +103,8 @@ public sealed class DashboardSecuritySettingsTests
     [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "__Host-vsaga.session")]
     [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "a0123456789012345678901234567890123456789012345678901234567890123")]
     [InlineData(DashboardSecuritySettings.ApiKeyRoleKey, "r0123456789012345678901234567890123456789012345678901234567890123")]
+    [InlineData(DashboardSecuritySettings.AuthPerMinuteKey, "0")]
+    [InlineData(DashboardSecuritySettings.AuthPerMinuteKey, "1001")]
     public void Read_InvalidValue_FailsNamingTheKeyAndTheValue(string key, string value)
     {
         var error = Assert.Throws<InvalidOperationException>(() => DashboardSecuritySettings.Read(Configuration((key, value))));
@@ -122,6 +124,7 @@ public sealed class DashboardSecuritySettingsTests
         Assert.Equal(TimeSpan.FromHours(24), settings.SessionAbsoluteTimeout);
         Assert.False(settings.RequireHttps);
         Assert.Equal("Viewer", settings.ApiKeyRole);
+        Assert.Equal(20, settings.AuthPerMinute);
     }
 
     [Fact]
@@ -132,7 +135,8 @@ public sealed class DashboardSecuritySettingsTests
             (DashboardSecuritySettings.SessionIdleTimeoutMinutesKey, "30"),
             (DashboardSecuritySettings.SessionAbsoluteTimeoutHoursKey, "8"),
             (DashboardSecuritySettings.RequireHttpsKey, "True"),
-            (DashboardSecuritySettings.ApiKeyRoleKey, " Operator ")));
+            (DashboardSecuritySettings.ApiKeyRoleKey, " Operator "),
+            (DashboardSecuritySettings.AuthPerMinuteKey, "5")));
 
         Assert.Equal("vsaga.session.overlay_2", settings.SessionCookieName);
         Assert.Equal("__Host-vsaga.session.overlay_2", settings.EffectiveSessionCookieName);
@@ -140,6 +144,7 @@ public sealed class DashboardSecuritySettingsTests
         Assert.Equal(TimeSpan.FromHours(8), settings.SessionAbsoluteTimeout);
         Assert.True(settings.RequireHttps);
         Assert.Equal("Operator", settings.ApiKeyRole);
+        Assert.Equal(5, settings.AuthPerMinute);
     }
 
     private static IConfiguration Configuration(params (string Key, string Value)[] values) =>

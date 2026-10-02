@@ -896,13 +896,16 @@ correlation id, and the username on a retry entry; ADR 0006 lists this.
 - `CredentialVerifier`: unknown, disabled or locked accounts verify a dummy hash and count nothing; a
   wrong password increments the counter and locks at `Dashboard:Lockout:MaxFailedAttempts` (5; 0
   disables) for `Dashboard:Lockout:Minutes` (15); success resets it and rehashes when needed. A username
-  over 64 or a password over 128 characters is rejected before any lookup with the same 401. Every
+  over 64 or a password over 128 characters is rejected before any lookup with the same 401; a request
+  body over 16 KiB is a 400 `validation` problem, refused without reading past the cap. Every
   failed sign-in completes no earlier than about 300 ms after the request started, plus jitter. Login
   failures are one uniform 401 `invalid_credentials`.
 - Passwords: `Dashboard:Password:MinLength` (12) to 128, not equal to the username; a new password equal
   to the current one is rejected. A wrong `currentPassword` on `POST /api/auth/password` answers 400
   `invalid_credentials` with `errors.currentPassword`, counts against the account's failure counter, and
-  ends the session at the threshold.
+  ends the session at the threshold by rotating the stamp, so a copy of the cookie stops working too. On
+  an account that is already locked or disabled the current password is not checked: the 400 says the
+  account is locked or disabled and the session is left alone.
 - Rate limits: login and password change are keyed on client address plus a hash of the normalised
   username (`Dashboard:RateLimit:AuthPerMinute`, 20); setup has a per-address window. A global
   concurrency limiter around password hashing (permits `max(2, cores/2)`, short queue, 429 when full)
@@ -910,7 +913,8 @@ correlation id, and the username on a retry entry; ADR 0006 lists this.
 - Lockout stays. An attacker who knows a username can keep it locked; the OWASP device-cookie bypass is a
   follow-up (§14). The residual risk is recorded in ADR 0006 and the guide's Troubleshooting section
   documents the escape: restart with `Dashboard:Lockout:MaxFailedAttempts=0`.
-- Security stamp (128 random bits) rotates on password change, administrator reset, disable and enable.
+- Security stamp (128 random bits) rotates on password change, administrator reset, disable and enable,
+  and when a wrong current password on a password change locks the account.
   The hub connections of the affected user are aborted on every rotation and on sign-out.
 
 ### 8.5 Enforcement on the saga endpoints

@@ -1,6 +1,7 @@
 using System.Data.Common;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using VSaga.Dashboard.Api.Hosting;
 using VSaga.Dashboard.Identity;
@@ -50,6 +51,7 @@ internal static partial class DashboardAuthExtensions
         services.AddScoped<ICallerAccessResolver>(provider => provider.GetRequiredService<CallerAccessResolver>());
         services.AddScoped<DashboardCookieEvents>();
         AddSchemes(services, settings);
+        AddSignIn(services, settings);
 
         var authorization = services.AddAuthorizationBuilder();
         var authenticated = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
@@ -64,7 +66,10 @@ internal static partial class DashboardAuthExtensions
         return services;
     }
 
-    /// <summary>HSTS when HTTPS is required, then authentication and authorization.</summary>
+    /// <summary>
+    /// HSTS when HTTPS is required, then authentication, authorization and antiforgery enforcement, which
+    /// needs both: it decides by the routed endpoint and by how the caller authenticated.
+    /// </summary>
     internal static WebApplication UseDashboardAuth(this WebApplication app)
     {
         if (app.Services.GetRequiredService<DashboardSecuritySettings>().RequireHttps)
@@ -72,6 +77,7 @@ internal static partial class DashboardAuthExtensions
 
         app.UseAuthentication();
         app.UseAuthorization();
+        app.UseAntiforgeryEnforcement();
         return app;
     }
 
@@ -118,6 +124,21 @@ internal static partial class DashboardAuthExtensions
                     ApiKeyCredentials.IsPresent(context) ? ApiKeyAuthenticationDefaults.SchemeName : CookieScheme)
             .AddCookie(CookieScheme, options => ConfigureCookie(options, settings))
             .AddScheme<ApiKeyAuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationDefaults.SchemeName, configureOptions: null);
+    }
+
+    // What the sign-in endpoints use. The store-backed services are scoped and resolved by the endpoints only
+    // once the store is ready: with no usable database path, building the store itself throws. The observer
+    // does nothing until the hub registers one that drops live connections.
+    private static void AddSignIn(IServiceCollection services, DashboardSecuritySettings settings)
+    {
+        services.AddDashboardAntiforgery(settings);
+        services.AddSingleton<AuthRateLimits>();
+        services.TryAddSingleton<IPasswordHasher<DashboardUser>, PasswordHasher<DashboardUser>>();
+        services.AddSingleton<DummyPasswordHash>();
+        services.AddSingleton<PasswordPolicy>();
+        services.AddScoped<CredentialVerifier>();
+        services.AddScoped<AccessAdministrationService>();
+        services.TryAddSingleton<IAccessChangeObserver, NoAccessChangeObserver>();
     }
 
     // HttpOnly and SameSite=Strict always; Secure on HTTPS requests, or always (with the __Host- prefix,

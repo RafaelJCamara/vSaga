@@ -180,8 +180,10 @@ app.UseDashboardEdge();
 app.UseApiResponseHeaders();
 app.UseDashboardAuth();
 
+app.MapAuthEndpoints();
 app.MapSagaEndpoints();
-app.MapHub<SagaHub>("/hubs/saga").RequireAuthorization();
+// The only endpoints exempt from antiforgery enforcement: a WebSocket upgrade cannot carry the header.
+app.MapHub<SagaHub>("/hubs/saga").RequireAuthorization().WithMetadata(AntiforgeryExemption.Hub);
 // Left unauthenticated: infra probes (docker-compose healthcheck, orchestrators) hit this without a key.
 app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = WriteHealthResponseAsync }).AllowAnonymous();
 
