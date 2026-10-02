@@ -334,10 +334,10 @@ a snapshot beyond a prefix test for markers. An entry attaches to a step by `mes
 | Entry | Lands in |
 | --- | --- |
 | `SagaStarted` | Opens a `start` step and registers its `messageId`. |
-| `MessageReceived` | The `start` step awaiting the same id without a `MessageReceived` yet (the engine logs both for the initiating message). Otherwise it opens a `message` step when its id is the id of some outcome entry (`StepSucceeded`, `StepFailed`, `UnexpectedEvent`, `StatePersisted`) or the current step already has an outcome. A `MessageReceived` with no outcome of its own goes to the step holding the outbound entry its `causationId` names (a `.CallHttp` reply). |
+| `MessageReceived` | The `start` step awaiting the same id without a `MessageReceived` yet (the engine logs both for the initiating message). Otherwise it opens a `message` step when its id is the id of some outcome entry (`StepSucceeded`, `StepFailed`, `UnexpectedEvent`, `StatePersisted`) or the current step already has an outcome. A `MessageReceived` with no outcome of its own goes to the step holding the outbound entry its `causationId` names (a `.CallHttp` reply); else it joins a current step still running only when it carries no `causationId` at all (an older reply's shape), and opens its own step otherwise. |
 | `TimeoutFired` | Opens a `timeout` step. |
 | `ManualRetryRequested` | Opens a `retry` step; its actor is `sourceService` without the `dashboard:` prefix. Its `messageId` is not registered (the in-process retry reuses the failed id). |
-| `StepSucceeded`, `StepFailed`, `UnexpectedEvent`, `StatePersisted` | The step awaiting that `messageId`; with no id, the latest timeout or retry step without a snapshot; else the current step. `StatePersisted` becomes the step's snapshot and is never a row. |
+| `StepSucceeded`, `StepFailed`, `UnexpectedEvent`, `StatePersisted` | The step awaiting that `messageId`; with no id, the latest timeout or retry step without a snapshot; else the current step. An outcome whose id no step started (an `UnexpectedEvent` for a message whose instance was not found) opens a `detached` step instead of joining the current one. `StatePersisted` becomes the step's snapshot and is never a row. |
 | `DeliveryExhausted` with a `messageId` | The step awaiting it, else a new `delivery` step, so the Failed snapshot that follows is not charged to the previous step. |
 | `TimeoutScheduled`, `SagaCompleted` with a `messageId` (stamped since C20, §6.6) | The step with that id. |
 | Outbound (`MessagePublished`, `MessageSent`, `ChildSaga*`) | The step whose inbound id equals `causationId`, else the current step. |
@@ -346,7 +346,7 @@ a snapshot beyond a prefix test for markers. An entry attaches to a step by `mes
 Each step's snapshot state is `recorded`, `omitted` (a marker), `withheld` (null payload: no
 `sagas.data`), `not-persisted` (an unhandled outcome, a retry or detached step, a non-final timeout with
 no outcome), or `missing`. A step is `pending` only while its newest entry is younger than five seconds
-(a named constant); after that it falls back to `missing`, or `not-persisted` for a timeout with no
+(a named constant; a row up to that much ahead of the browser clock also counts as young); after that it falls back to `missing`, or `not-persisted` for a timeout with no
 outcome. This matters because two engine paths leave a final step without a snapshot for good: a step
 that lost its persist race (its `MessageReceived` and `StepSucceeded` stay in the log, the redelivery is
 skipped as a duplicate) and a timeout that was claimed but not handled.

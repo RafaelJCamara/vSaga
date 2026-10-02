@@ -38,7 +38,7 @@ const DAY = 24 * HOUR;
  * Milliseconds since the epoch, or null when the text is not a date. .NET writes up to seven
  * fractional digits; Date.parse is only required to read three, so the rest are dropped first.
  */
-function toMillis(iso: string | null | undefined): number | null {
+export function toMillis(iso: string | null | undefined): number | null {
   if (!iso) return null;
   const millis = Date.parse(iso.replace(/(\.\d{3})\d+/, '$1'));
   return Number.isNaN(millis) ? null : millis;

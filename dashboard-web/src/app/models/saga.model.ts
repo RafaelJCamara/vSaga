@@ -30,7 +30,12 @@ export type SagaEntryType =
   | 'MessagePublished'
   | 'MessageSent'
   | 'ChildSagaStarted'
-  | 'ChildSagaFinished';
+  | 'ChildSagaFinished'
+  /**
+   * The saga's state as committed by the step it follows, in `payloadJson`. A snapshot, never a
+   * row: the timeline folds it into its step (util/saga-transitions.ts).
+   */
+  | 'StatePersisted';
 
 export interface SagaSummary {
   correlationId: string;
@@ -65,6 +70,18 @@ export interface SagaLogEntry {
   traceId: string | null;
   spanId: string | null;
   occurredAtUtc: string;
+  /**
+   * Who sent an inbound message, or the saga for an outbound one. Optional because older specs and
+   * fixtures leave them out; the API always sends them, null when unknown.
+   */
+  sourceService?: string | null;
+  /** Where an outbound message was addressed (MessageSent, an HTTP call's host). */
+  destinationService?: string | null;
+  /**
+   * The id of the message that caused this entry: an outbound entry's inbound message, an HTTP
+   * reply's request.
+   */
+  causationId?: string | null;
 }
 
 export interface PagedResult<T> {
