@@ -531,6 +531,34 @@ public sealed class SagaEndpointsTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task GetMap_TimelineWithStateSnapshots_LeavesThemOutOfEventsAndFailureIndex()
+    {
+        var (sagaType, correlationId) = await SeedSagaAsync("OrderSaga", "Failed", SagaStatus.Failed);
+
+        await AppendLogAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.SagaStarted,
+            toState: "Submitted", messageType: "OrderSubmitted", messageId: "m0", payloadJson: "{}", sourceService: "OrderSubmitter"));
+        await AppendLogAsync(SagaStateSnapshot.CreateEntry(correlationId, "OrderSaga", """{"CurrentState":"Submitted"}""",
+            SagaStateSnapshot.DefaultMaxBytes, messageType: "OrderSubmitted", messageId: "m0"));
+        await AppendLogAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.MessageReceived,
+            messageType: "PaymentFailed", messageId: "m1", sourceService: "PaymentService"));
+        await AppendLogAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.StepFailed,
+            fromState: "Submitted", messageType: "PaymentFailed", messageId: "m1", errorMessage: "boom"));
+        await AppendLogAsync(SagaStateSnapshot.CreateEntry(correlationId, "OrderSaga", """{"CurrentState":"Submitted"}""",
+            SagaStateSnapshot.DefaultMaxBytes, messageType: "PaymentFailed", messageId: "m1"));
+
+        var map = await _client.GetFromJsonAsync<SagaMap>($"/api/sagas/{sagaType}/{correlationId}/map", JsonOptions);
+
+        Assert.NotNull(map);
+        Assert.Equal(
+            [SagaEntryType.SagaStarted, SagaEntryType.MessageReceived, SagaEntryType.StepFailed],
+            map.Events.Select(e => e.EntryType));
+        Assert.Equal(2, map.FailureEventIndex);
+        Assert.Equal("boom", map.Events[map.FailureEventIndex!.Value].ErrorMessage);
+        Assert.Equal(2, map.Edges.Count);
+        Assert.True(Assert.Single(map.Edges, e => string.Equals(e.MessageId, "m1", StringComparison.Ordinal)).Failed);
+    }
+
+    [Fact]
     public async Task GetMap_BusinessFailureWithNoStepFailedEntry_StillMarksTheTriggeringEdgeFailed()
     {
         // "Declined payment" shape: the saga reaches Failed via a normal, successful step transition

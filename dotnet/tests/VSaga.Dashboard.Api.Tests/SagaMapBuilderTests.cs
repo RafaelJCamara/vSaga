@@ -29,6 +29,10 @@ public sealed class SagaMapBuilderTests
         new(sequenceNumber, CorrelationId, SagaType, entryType, null, null, messageType, messageId, null, error,
             null, null, Start.AddSeconds(sequenceNumber), source, destination, causationId);
 
+    /// <summary>A snapshot the way the engine writes one: the state blob, plus the step's inbound message identity (none after a timeout).</summary>
+    private static SagaLogEntry Snapshot(long sequenceNumber, string? messageType = null, string? messageId = null) =>
+        Entry(sequenceNumber, SagaEntryType.StatePersisted, messageType, messageId) with { PayloadJson = """{"CurrentState":"Current"}""" };
+
     private static ServiceTopologyEntry Consumer(string service, string messageType, string? queue = null) =>
         new(service, messageType, queue ?? $"{service}-queue", Start);
 
@@ -363,5 +367,60 @@ public sealed class SagaMapBuilderTests
         // The same timeline on a saga that completed normally marks nothing.
         var completedMap = Build(timeline, SagaStatus.Completed);
         Assert.DoesNotContain(completedMap.Edges, e => e.Failed);
+    }
+
+    [Theory]
+    [InlineData(SagaStatus.Failed)]
+    [InlineData(SagaStatus.Completed)]
+    public void StatePersistedSnapshots_ProduceExactlyTheMapOfTheTimelineWithoutThem(SagaStatus status)
+    {
+        // The snapshots carry the inbound message's type and id, like the engine writes them, and sit
+        // before the first failure entry, so a builder that saw them would add events and shift
+        // FailureEventIndex.
+        SagaLogEntry[] withoutSnapshots =
+        [
+            Entry(1, SagaEntryType.SagaStarted, "OrderPlaced", "m-start", source: "checkout"),
+            Entry(2, SagaEntryType.MessagePublished, "ReserveStock", "m-reserve"),
+            Entry(3, SagaEntryType.StepSucceeded, "OrderPlaced", "m-start"),
+            Entry(5, SagaEntryType.MessageReceived, "StockReserved", "m-reserved", source: "inventory", causationId: "m-reserve"),
+            Entry(6, SagaEntryType.MessagePublished, "ChargeCard", "m-charge"),
+            Entry(7, SagaEntryType.StepSucceeded, "StockReserved", "m-reserved"),
+            Entry(9, SagaEntryType.MessageReceived, "PaymentDeclined", "m-declined", source: "payments", causationId: "m-charge"),
+            Entry(10, SagaEntryType.StepFailed, "PaymentDeclined", "m-declined", error: "boom"),
+            Entry(12, SagaEntryType.TimeoutFired),
+            Entry(14, SagaEntryType.SagaCompleted),
+        ];
+        SagaLogEntry[] snapshots =
+        [
+            Snapshot(4, "OrderPlaced", "m-start"),
+            Snapshot(8, "StockReserved", "m-reserved"),
+            Snapshot(11, "PaymentDeclined", "m-declined"),
+            Snapshot(13),
+        ];
+        var interleaved = withoutSnapshots.Concat(snapshots).OrderBy(e => e.SequenceNumber).ToList();
+        IReadOnlyList<ServiceTopologyEntry> topology = [Consumer("billing", "ChargeCard")];
+
+        var expected = Build(withoutSnapshots, status, topology);
+        var actual = Build(interleaved, status, topology);
+
+        Assert.Equal(expected.Nodes, actual.Nodes);
+        Assert.Equal(expected.Edges, actual.Edges);
+        Assert.Equal(expected.Events, actual.Events);
+        Assert.Equal(expected.FailureEventIndex, actual.FailureEventIndex);
+        Assert.DoesNotContain(actual.Events, e => e.EntryType == SagaEntryType.StatePersisted);
+        Assert.Equal(7, actual.FailureEventIndex);
+        Assert.Equal(10, actual.Events[actual.FailureEventIndex!.Value].SequenceNumber);
+    }
+
+    [Fact]
+    public void TimelineOfOnlySnapshots_ProducesNoEventNodeOrEdge()
+    {
+        var map = Build([Snapshot(1, "OrderPlaced", "m-start"), Snapshot(2)], SagaStatus.Failed);
+
+        var orchestrator = Assert.Single(map.Nodes);
+        Assert.Equal(SagaType, orchestrator.Id);
+        Assert.Empty(map.Edges);
+        Assert.Empty(map.Events);
+        Assert.Null(map.FailureEventIndex);
     }
 }

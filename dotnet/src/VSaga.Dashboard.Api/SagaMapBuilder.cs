@@ -40,7 +40,8 @@ public sealed record SagaMap(
 /// later inbound entry's CausationId. An unstitched outbound entry — nothing ever replied — resolves its
 /// destination from the topology registry (or renders as an unresolved placeholder if even that doesn't
 /// know it) and is marked Unanswered rather than dropped, since that's often the most useful thing the
-/// map shows (e.g. a hung downstream service).
+/// map shows (e.g. a hung downstream service). <see cref="SagaEntryType.StatePersisted"/> snapshots are
+/// skipped entirely: they carry no message flow, so the map's events are the timeline's other entries.
 /// </summary>
 public static class SagaMapBuilder
 {
@@ -72,7 +73,12 @@ public static class SagaMapBuilder
 
         public SagaMap BuildMap()
         {
-            var ordered = timeline.OrderBy(e => e.SequenceNumber).ToList();
+            // A StatePersisted snapshot records state, not a message: filtering it here keeps it out of
+            // initiator resolution, stitching, failed-id resolution, Events and FailureEventIndex alike.
+            var ordered = timeline
+                .Where(e => e.EntryType != SagaEntryType.StatePersisted)
+                .OrderBy(e => e.SequenceNumber)
+                .ToList();
             _initiatorId = ResolveInitiatorId(ordered);
             _inboundByCausation = BuildInboundByCausation(ordered);
             _failedMessageIds = ResolveFailedMessageIds(ordered);
