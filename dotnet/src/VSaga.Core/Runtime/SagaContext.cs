@@ -80,6 +80,13 @@ internal sealed class SagaContext<TState>(
 
     public IReadOnlyList<string> VisitedStates { get; } = visitedStates;
 
+    /// <summary>
+    /// The UTF-8 length of the StatePersisted payloads the saga's timeline held when this step started,
+    /// read alongside <see cref="VisitedStates"/>. Engine-internal: SagaOrchestrator holds the snapshot
+    /// it records after this step to its per-saga budget with it (SagaOrchestratorOptions.MaxStateSnapshotBytesPerSaga).
+    /// </summary>
+    internal long RecordedSnapshotBytes { get; init; }
+
     public IReadOnlyDictionary<string, string> Headers { get; } = headers;
 
     public IServiceProvider Services { get; } = services;

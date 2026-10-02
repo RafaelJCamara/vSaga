@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using VSaga.Abstractions.Diagnostics;
 using VSaga.Abstractions.Notifications;
@@ -158,7 +159,11 @@ public sealed class SagaOrchestrator<TState>(
             {
                 var expectedVersion = state!.Version;
                 state.Status = SagaStatus.Failed;
-                await PersistAsync(state, isNew: false, expectedVersion, cancellationToken);
+
+                // No timeline read on this path, and the dead-lettered step is what an investigation
+                // needs, so this snapshot is exempt from the per-saga budget (null below).
+                await PersistAndSnapshotAsync(state, isNew: false, expectedVersion, received.MessageTypeName, received.MessageId,
+                    recordedSnapshotBytes: null, cancellationToken);
 
                 // production-readiness.md §6/§8.18's terminal-status wiring missed this site because the
                 // dead-letter path predates it. The rule is that every path reaching a terminal status
@@ -269,9 +274,9 @@ public sealed class SagaOrchestrator<TState>(
 
         await LogAsync(SagaLogEntry.Create(timeout.CorrelationId, SagaType, SagaEntryType.TimeoutFired, fromState: timeout.ForState), cancellationToken);
 
-        var visitedStates = await GetVisitedStatesAsync(timeout.CorrelationId, cancellationToken);
+        var (visitedStates, recordedSnapshotBytes) = await GetVisitedStatesAsync(timeout.CorrelationId, cancellationToken);
         var context = new SagaContext<TState>(state, timeout.CorrelationId, new Dictionary<string, string>(StringComparer.Ordinal), visitedStates,
-            services, transport, SagaType, inboundMessageId: null, LogAsync, DeferAllPublishes, cancellationToken);
+            services, transport, SagaType, inboundMessageId: null, LogAsync, DeferAllPublishes, cancellationToken) { RecordedSnapshotBytes = recordedSnapshotBytes };
 
         var outcome = await definition.HandleTimeoutAsync(context, timeout.ForState, cancellationToken);
         if (!outcome.WasHandled)
@@ -320,6 +325,11 @@ public sealed class SagaOrchestrator<TState>(
             return;
         }
 
+        // Explicit rather than through PersistAndSnapshotAsync, because the claim in HandleTimeoutAsync
+        // shares TryPersistOrLogRaceLossAsync and must record nothing. After the commit, before the drain:
+        // the in-memory transport dispatches a drained loopback synchronously, and that nested step's
+        // higher-version snapshot must not be sequenced ahead of this one.
+        await RecordStateSnapshotAsync(state, messageType: null, messageId: null, context.RecordedSnapshotBytes, cancellationToken);
         await DrainDeferredPublishesAsync(timeout.CorrelationId, context, cancellationToken);
         await RecordTimeoutOutcomeAsync(state, outcome, stagedChildFinished, cancellationToken);
     }
@@ -613,8 +623,11 @@ public sealed class SagaOrchestrator<TState>(
             messageType: messageTypeName, messageId: messageId,
             sourceService: GetSourceService(headers), causationId: GetCausationId(headers)), cancellationToken);
 
-        var visitedStates = await GetVisitedStatesAsync(correlationId, cancellationToken);
-        var context = new SagaContext<TState>(state, correlationId, headers, visitedStates, services, transport, SagaType, messageId, LogAsync, DeferAllPublishes, cancellationToken);
+        var (visitedStates, recordedSnapshotBytes) = await GetVisitedStatesAsync(correlationId, cancellationToken);
+        var context = new SagaContext<TState>(state, correlationId, headers, visitedStates, services, transport, SagaType, messageId, LogAsync, DeferAllPublishes, cancellationToken)
+        {
+            RecordedSnapshotBytes = recordedSnapshotBytes,
+        };
 
         using var activity = StartConsumerSpan(fromState, correlationId, headers);
 
@@ -676,7 +689,7 @@ public sealed class SagaOrchestrator<TState>(
 
         try
         {
-            await PersistAsync(state, needsInsert, expectedVersion, cancellationToken);
+            await PersistAndSnapshotAsync(state, needsInsert, expectedVersion, messageTypeName, messageId, recordedSnapshotBytes: null, cancellationToken);
             onChildFinishedStaged(null);
         }
         catch (SagaConcurrencyException)
@@ -743,7 +756,7 @@ public sealed class SagaOrchestrator<TState>(
         if (outcome.FinalStatus is not null)
             await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.SagaCompleted, toState: outcome.ToState, messageId: messageId), cancellationToken);
 
-        await PersistAndFinalizeStepSuccessAsync(state, outcome, correlationId, fromState, isNew, needsInsert, expectedVersion, context, cancellationToken);
+        await PersistAndFinalizeStepSuccessAsync(state, outcome, correlationId, fromState, messageTypeName, messageId, isNew, needsInsert, expectedVersion, context, cancellationToken);
     }
 
     /// <summary>
@@ -752,7 +765,7 @@ public sealed class SagaOrchestrator<TState>(
     /// <see cref="RecordTimeoutOutcomeAsync"/> are for <see cref="HandleTimeoutAsync"/>.
     /// </summary>
     private async Task PersistAndFinalizeStepSuccessAsync(TState state, SagaStepOutcome outcome, Guid correlationId, string fromState,
-        bool isNew, bool needsInsert, int expectedVersion, SagaContext<TState> context, CancellationToken cancellationToken)
+        string messageTypeName, string messageId, bool isNew, bool needsInsert, int expectedVersion, SagaContext<TState> context, CancellationToken cancellationToken)
     {
         // production-readiness.md §4.1 step 2: staged immediately before this persist, which commits
         // them with the snapshot in one implicit transaction, so a crash between that commit and the
@@ -761,7 +774,9 @@ public sealed class SagaOrchestrator<TState>(
 
         try
         {
-            await PersistAsync(state, needsInsert, expectedVersion, cancellationToken);
+            // The state snapshot is appended right after the commit and before the drain below, held to
+            // the per-saga budget with the snapshot bytes this step read at its start.
+            await PersistAndSnapshotAsync(state, needsInsert, expectedVersion, messageTypeName, messageId, context.RecordedSnapshotBytes, cancellationToken);
         }
         catch (SagaConcurrencyException)
         {
@@ -940,15 +955,76 @@ public sealed class SagaOrchestrator<TState>(
             : snapshotStore.UpdateAsync(state, expectedVersion, cancellationToken);
     }
 
-    private async Task<IReadOnlyList<string>> GetVisitedStatesAsync(Guid correlationId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Persists, then records the state that persist committed. One call, so nothing can ever be inserted
+    /// between the commit and the snapshot, and so HandleStepFailureAsync, which has no headroom under the
+    /// method-length analyzer, changes by a call replacement only. A persist that throws, a lost race
+    /// included, propagates untouched and records nothing. <paramref name="recordedSnapshotBytes"/> null
+    /// exempts the snapshot from the per-saga budget (step failure and delivery exhaustion).
+    /// </summary>
+    private async Task PersistAndSnapshotAsync(TState state, bool isNew, int expectedVersion,
+        string? messageType, string? messageId, long? recordedSnapshotBytes, CancellationToken cancellationToken)
+    {
+        await PersistAsync(state, isNew, expectedVersion, cancellationToken);
+        await RecordStateSnapshotAsync(state, messageType, messageId, recordedSnapshotBytes, cancellationToken);
+    }
+
+    /// <summary>
+    /// Appends a StatePersisted entry carrying <paramref name="state"/> serialised with the same generic
+    /// <c>JsonSerializer.Serialize(state)</c> call every snapshot store makes, on the object the store just
+    /// wrote, so the text equals the stored blob. Best effort and bounded in time: the append runs under its
+    /// own <see cref="SagaOrchestratorOptions.StateSnapshotTimeout"/>, and every failure, cancellation and
+    /// timeout included, is logged and swallowed, because the transition is already committed and the
+    /// deferred publishes, notifier and acknowledgement must still follow. The only effect is a step with no
+    /// snapshot. With <paramref name="recordedSnapshotBytes"/> set, a state that would take the saga's
+    /// snapshots past <see cref="SagaOrchestratorOptions.MaxStateSnapshotBytesPerSaga"/> is recorded as the
+    /// budget marker.
+    /// </summary>
+    private async Task RecordStateSnapshotAsync(TState state, string? messageType, string? messageId, long? recordedSnapshotBytes,
+        CancellationToken cancellationToken)
+    {
+        if (!options.RecordStateSnapshots)
+            return;
+
+        try
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(options.StateSnapshotTimeout);
+
+            var stateJson = JsonSerializer.Serialize(state);
+            var entry = recordedSnapshotBytes is { } recorded
+                ? SagaStateSnapshot.CreateEntry(state.CorrelationId, SagaType, stateJson, options.MaxStateSnapshotBytes,
+                    recorded, options.MaxStateSnapshotBytesPerSaga, messageType, messageId)
+                : SagaStateSnapshot.CreateEntry(state.CorrelationId, SagaType, stateJson, options.MaxStateSnapshotBytes, messageType, messageId);
+
+            await LogAsync(entry, deadline.Token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Could not record the state snapshot for saga {SagaType} correlation {CorrelationId} at version {Version}; the transition is committed and processing continues",
+                SagaType, state.CorrelationId, state.Version);
+        }
+    }
+
+    /// <summary>What a step needs from the saga's timeline before it runs: the states it has visited, and the UTF-8 length of the StatePersisted payloads it already holds (the per-saga snapshot budget's running total).</summary>
+    private readonly record struct TimelineDigest(IReadOnlyList<string> VisitedStates, long RecordedSnapshotBytes);
+
+    private async Task<TimelineDigest> GetVisitedStatesAsync(Guid correlationId, CancellationToken cancellationToken)
     {
         var timeline = await eventLog.GetTimelineAsync(SagaType, correlationId, cancellationToken);
 
-        return timeline
+        var visitedStates = timeline
             .Where(e => e.ToState is not null)
             .Select(e => e.ToState!)
             .Distinct(StringComparer.Ordinal)
             .ToList();
+
+        var recordedSnapshotBytes = timeline
+            .Where(e => e is { EntryType: SagaEntryType.StatePersisted, PayloadJson: not null })
+            .Sum(e => (long)Encoding.UTF8.GetByteCount(e.PayloadJson!));
+
+        return new TimelineDigest(visitedStates, recordedSnapshotBytes);
     }
 
     /// <summary>

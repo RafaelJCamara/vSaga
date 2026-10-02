@@ -117,6 +117,9 @@ if (role != ServiceRole.Participants)
     // PostShipmentChoreography: both react to InvoiceIssued, so both open under whatever correlation id
     // that message already carries.
     builder.Services.AddVSagaEngine(o => o
+        // The engine's own tunables (MaxDeliveryAttempts and the state snapshot options), bound from an
+        // "Orchestrator" section so a compose run can set Orchestrator__MaxStateSnapshotBytes and the rest.
+        .ConfigureOrchestrator(opt => builder.Configuration.GetSection("Orchestrator").Bind(opt))
         .AddSaga<OrderSaga, OrderSagaState>()
         .AddSaga<PostShipmentChoreography, PostShipmentState>()
         .AddSaga<InvoiceDeliverySaga, InvoiceDeliveryState>()

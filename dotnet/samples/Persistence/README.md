@@ -47,6 +47,7 @@ finishes. It is small, but each part lands in a different store contract:
 | --- | --- | --- |
 | The saga state, versioned on every persist | `ISagaSnapshotStore<TState>` | `snapshot: state …, status …, version …` |
 | Every step, publish, timeout and unexpected message | `ISagaEventLogStore` | the numbered `timeline` |
+| The state each committed step saved | `ISagaEventLogStore` (a `StatePersisted` entry) | `StatePersisted  state saved, N bytes` after each step |
 | `CorrelateOn(s => s.OrderNumber)`, the business key | the snapshot store's unique key per `(SagaType, BusinessKey)` | the resubmitted order finds the existing saga |
 | `WithTimeout(AwaitingPayment, 5 s)` | `ISagaTimeoutStore` | `TimeoutScheduled`, then `TimeoutFired` for the unanswered order |
 | `SagaOutboxMode.All` (set in `AddCheckoutSample`) | `ISagaOutboxStore` | outbox rows committed with the snapshot (inspect them per provider) |

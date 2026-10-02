@@ -89,6 +89,51 @@ public sealed class SagaStateSnapshotTests
     }
 
     [Fact]
+    public void ToPayload_WithinTheBudget_ReturnsTheBlob_ExactlyAtItToo()
+    {
+        const string stateJson = "{\"Sku\":\"A\"}";
+
+        Assert.Equal(stateJson, SagaStateSnapshot.ToPayload(stateJson, 1024, recordedBytes: 100, budgetBytes: 111));
+        Assert.Equal(stateJson, SagaStateSnapshot.ToPayload(stateJson, 1024, recordedBytes: 0, budgetBytes: 11));
+    }
+
+    /// <summary>The budget marker names the budget, not a per-snapshot limit this state did not exceed.</summary>
+    [Fact]
+    public void ToPayload_PastTheBudget_ReturnsTheBudgetMarker()
+    {
+        Assert.Equal("{\"$vsagaStateOmitted\":true,\"bytes\":11,\"budget\":110}",
+            SagaStateSnapshot.ToPayload("{\"Sku\":\"A\"}", 1024, recordedBytes: 100, budgetBytes: 110));
+    }
+
+    [Fact]
+    public void ToPayload_WithABudgetOfZero_HasNoBudget()
+    {
+        Assert.Equal("{}", SagaStateSnapshot.ToPayload("{}", 1024, recordedBytes: long.MaxValue / 2, budgetBytes: 0));
+    }
+
+    /// <summary>A state over the per-snapshot cap reports the cap, since that is why it was left out, whatever the budget says.</summary>
+    [Fact]
+    public void ToPayload_OverTheCapAndPastTheBudget_ReportsTheCap()
+    {
+        Assert.Equal("{\"$vsagaStateOmitted\":true,\"bytes\":11,\"limit\":4}",
+            SagaStateSnapshot.ToPayload("{\"Sku\":\"A\"}", 4, recordedBytes: 100, budgetBytes: 50));
+    }
+
+    [Fact]
+    public void CreateEntry_WithABudget_CarriesTheBudgetMarkerAndTheMessageIdentity()
+    {
+        var entry = SagaStateSnapshot.CreateEntry(Guid.NewGuid(), "OrderSaga", "{\"Sku\":\"A\"}", 1024,
+            recordedBytes: 5, budgetBytes: 10, "ReserveInventory", "m-2");
+
+        Assert.Equal(SagaEntryType.StatePersisted, entry.EntryType);
+        Assert.Equal("ReserveInventory", entry.MessageType);
+        Assert.Equal("m-2", entry.MessageId);
+        Assert.Equal("{\"$vsagaStateOmitted\":true,\"bytes\":11,\"budget\":10}", entry.PayloadJson);
+        Assert.Null(entry.FromState);
+        Assert.Null(entry.ToState);
+    }
+
+    [Fact]
     public void DefaultMaxBytes_Is256KiB()
     {
         Assert.Equal(256 * 1024, SagaStateSnapshot.DefaultMaxBytes);

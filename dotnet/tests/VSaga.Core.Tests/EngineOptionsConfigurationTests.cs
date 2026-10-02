@@ -37,6 +37,27 @@ public sealed class EngineOptionsConfigurationTests
     }
 
     [Fact]
+    public void ConfigureOrchestratorSetsTheStateSnapshotOptions()
+    {
+        var services = NewServices();
+
+        services.AddVSagaEngine(o => o.ConfigureOrchestrator(opt =>
+        {
+            opt.RecordStateSnapshots = false;
+            opt.MaxStateSnapshotBytes = 64;
+            opt.MaxStateSnapshotBytesPerSaga = 0;
+            opt.StateSnapshotTimeout = TimeSpan.FromSeconds(2);
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<SagaOrchestratorOptions>();
+        Assert.False(options.RecordStateSnapshots);
+        Assert.Equal(64, options.MaxStateSnapshotBytes);
+        Assert.Equal(0, options.MaxStateSnapshotBytesPerSaga);
+        Assert.Equal(TimeSpan.FromSeconds(2), options.StateSnapshotTimeout);
+    }
+
+    [Fact]
     public void ConfigureOutboxOverridesTheDefaultModeAndPollInterval()
     {
         var services = NewServices();
@@ -61,7 +82,12 @@ public sealed class EngineOptionsConfigurationTests
         services.AddVSagaEngine(_ => { });
 
         using var provider = services.BuildServiceProvider();
-        Assert.Equal(5, provider.GetRequiredService<SagaOrchestratorOptions>().MaxDeliveryAttempts);
+        var orchestrator = provider.GetRequiredService<SagaOrchestratorOptions>();
+        Assert.Equal(5, orchestrator.MaxDeliveryAttempts);
+        Assert.True(orchestrator.RecordStateSnapshots);
+        Assert.Equal(262_144, orchestrator.MaxStateSnapshotBytes);
+        Assert.Equal(1_048_576, orchestrator.MaxStateSnapshotBytesPerSaga);
+        Assert.Equal(TimeSpan.FromSeconds(5), orchestrator.StateSnapshotTimeout);
         Assert.Equal(SagaOutboxMode.Deferred, provider.GetRequiredService<SagaOutboxOptions>().Mode);
     }
 }

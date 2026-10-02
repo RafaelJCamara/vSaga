@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using VSaga.Abstractions.Persistence;
 using VSaga.Abstractions.Sagas;
@@ -164,6 +165,9 @@ public static class CheckoutDemo
 
     private static string Describe(SagaLogEntry entry) => entry switch
     {
+        // A snapshot names the inbound message whose step it follows; printing that type would read as
+        // the message arriving twice, so it is described by the size of the state it saved instead.
+        { EntryType: SagaEntryType.StatePersisted } => DescribeSnapshot(entry.PayloadJson),
         { FromState: not null, ToState: not null } => $"{entry.FromState} -> {entry.ToState}",
         { ToState: not null } => entry.ToState,
         { FromState: not null, MessageType: not null } => $"{entry.MessageType} in {entry.FromState}",
@@ -171,4 +175,24 @@ public static class CheckoutDemo
         { FromState: not null } => entry.FromState,
         _ => string.Empty,
     };
+
+    /// <summary>
+    /// The state blob's size, or a note when the engine recorded a size marker in its place: a marker with a
+    /// "budget" key means the saga's snapshot allowance ran out, any other marker a state over the
+    /// per-snapshot cap.
+    /// </summary>
+    private static string DescribeSnapshot(string? payloadJson)
+    {
+        if (payloadJson is null)
+            return "state saved";
+
+        if (payloadJson.StartsWith("{\"$vsaga", StringComparison.Ordinal))
+        {
+            return payloadJson.Contains("\"budget\":", StringComparison.Ordinal)
+                ? "state saved, snapshot budget used up"
+                : "state saved, too large to record";
+        }
+
+        return string.Create(CultureInfo.InvariantCulture, $"state saved, {Encoding.UTF8.GetByteCount(payloadJson)} bytes");
+    }
 }

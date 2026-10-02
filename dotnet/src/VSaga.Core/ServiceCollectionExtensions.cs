@@ -66,8 +66,13 @@ public sealed class SagaEngineBuilder(IServiceCollection services)
     }
 
     /// <summary>
-    /// Configures engine-wide orchestrator behavior (currently just
-    /// <see cref="SagaOrchestratorOptions.MaxDeliveryAttempts"/>). <c>AddVSagaEngine</c> already
+    /// Configures engine-wide orchestrator behavior: <see cref="SagaOrchestratorOptions.MaxDeliveryAttempts"/>
+    /// and the state snapshots (<see cref="SagaOrchestratorOptions.RecordStateSnapshots"/>,
+    /// <see cref="SagaOrchestratorOptions.MaxStateSnapshotBytes"/>,
+    /// <see cref="SagaOrchestratorOptions.MaxStateSnapshotBytesPerSaga"/>,
+    /// <see cref="SagaOrchestratorOptions.StateSnapshotTimeout"/>). A host can bind a configuration
+    /// section here, e.g. <c>ConfigureOrchestrator(o =&gt; configuration.GetSection("Orchestrator").Bind(o))</c>.
+    /// <c>AddVSagaEngine</c> already
     /// registers a default-valued <see cref="SagaOrchestratorOptions"/> via <c>TryAddSingleton</c>
     /// before this delegate runs, so calling this here overrides it -- order relative to
     /// <see cref="AddSaga{TDefinition, TState}"/> doesn't matter, only that it's called somewhere
