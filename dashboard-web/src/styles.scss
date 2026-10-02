@@ -55,3 +55,29 @@ button {
 code, .mono {
   font-family: var(--font-mono);
 }
+
+.muted {
+  color: var(--text-muted);
+}
+
+/* A small caps label in front of a value: "Step 3", "Recorded at". */
+.micro-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* Read by screen readers, not shown. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

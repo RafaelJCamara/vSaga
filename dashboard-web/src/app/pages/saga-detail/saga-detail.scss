@@ -184,58 +184,6 @@
   border-bottom-color: var(--accent);
 }
 
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-.timeline-entry {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 6px;
-  padding: 0.6rem 0.9rem;
-}
-
-.timeline-entry--error {
-  border-left-color: var(--status-failed);
-}
-
-.timeline-entry-header {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.78rem;
-}
-
-.entry-type {
-  font-weight: 600;
-}
-
-.entry-transition {
-  margin-top: 0.3rem;
-  font-size: 0.85rem;
-}
-
-.arrow {
-  color: var(--text-muted);
-}
-
-.entry-message {
-  margin-top: 0.2rem;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-
-.entry-error {
-  margin-top: 0.3rem;
-  font-size: 0.8rem;
-  color: var(--status-failed);
-}
-
 .data-json {
   background: var(--bg-elevated);
   border: 1px solid var(--border);

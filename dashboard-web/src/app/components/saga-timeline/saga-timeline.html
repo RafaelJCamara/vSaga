@@ -1,0 +1,48 @@
+<p class="tl-hint muted">
+  Times show when the engine recorded each entry, in your local time ({{ zone() }}).
+  Hover a time for UTC. The offset counts from the saga's first entry.
+</p>
+<ol class="tl">
+  @for (t of history().transitions; track t.ordinal) {
+    <li class="tl-step" [class]="'tl-step--' + t.outcome">
+      <div class="tl-head">
+        <span class="micro-label">Step {{ t.ordinal }}</span>
+        <span class="tl-title">{{ t.title }}</span>
+        <span class="tl-outcome">· {{ outcomeLabel(t) }}</span>
+      </div>
+      @if (t.rows.length > 0) {
+        <ol class="tl-rows">
+          @for (row of t.rows; track row.ordinal) {
+            @let e = row.entry;
+            @let time = at(row);
+            <li class="tl-row" [class.tl-row--error]="e.errorMessage" [class.tl-row--focused]="e.sequenceNumber === focusedSequence()">
+              <span class="mono muted">#{{ row.ordinal }}</span>
+              <span class="tl-what">
+                <span class="entry-type">{{ label(e.entryType) }}</span>
+                @if (e.fromState || e.toState) {
+                  <span>{{ e.fromState ?? '—' }} &rarr; {{ e.toState ?? '—' }}</span>
+                }
+                @if (e.messageType) {
+                  <span class="mono muted">{{ e.messageType }}</span>
+                }
+                @if (service(e); as s) {
+                  <span class="muted">{{ s }}</span>
+                }
+                @if (e.errorMessage) {
+                  <span class="tl-error">{{ e.errorMessage }}</span>
+                }
+              </span>
+              <span class="tl-when">
+                <span class="micro-label">Recorded at</span>
+                <time [attr.datetime]="e.occurredAtUtc" [attr.title]="time.utc">{{ time.local }}</time>
+                @if (time.offset) {
+                  <span class="tl-offset muted" title="Since the saga's first entry">{{ time.offset }}<span class="sr-only"> since the saga's first entry</span></span>
+                }
+              </span>
+            </li>
+          }
+        </ol>
+      }
+    </li>
+  }
+</ol>

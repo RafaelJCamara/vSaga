@@ -1,0 +1,203 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { SagaLogEntry } from '../../models/saga.model';
+import {
+  deliveryExhausted,
+  failed,
+  httpCall,
+  httpReply,
+  numbered,
+  persisted,
+  received,
+  retryRequested,
+  sagaCompleted,
+  started,
+  succeeded,
+  T0,
+} from '../../testing/timeline-fixtures';
+import { foldTimeline } from '../../util/saga-transitions';
+import { formatRecordedAt, timezoneLabel } from '../../util/time-format';
+import { SagaTimeline } from './saga-timeline';
+
+// Local texts depend on the zone of the machine running the spec (CI runs in UTC, developer
+// machines do not), so they are compared with the formatter's own output; the datetime attribute,
+// the UTC title and the offset are exact.
+describe('SagaTimeline', () => {
+  function render(
+    entries: SagaLogEntry[],
+    inputs: { live?: boolean; focusedSequence?: number | null } = {},
+  ): ComponentFixture<SagaTimeline> {
+    const fixture = TestBed.createComponent(SagaTimeline);
+    fixture.componentRef.setInput('history', foldTimeline(entries));
+    if (inputs.live !== undefined) fixture.componentRef.setInput('live', inputs.live);
+    if (inputs.focusedSequence !== undefined) {
+      fixture.componentRef.setInput('focusedSequence', inputs.focusedSequence);
+    }
+    fixture.detectChanges();
+    return fixture;
+  }
+
+  const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+  /** A started saga with one more message: two steps, five rows, two snapshots. */
+  function twoSteps(): SagaLogEntry[] {
+    return numbered([
+      started('m0'),
+      received('m0', 'OrderSubmitted'),
+      succeeded('m0', 'Initial', 'Submitted'),
+      persisted('m0'),
+      received('m1', 'PaymentCaptured', { sourceService: 'payments' }),
+      succeeded('m1', 'Submitted', 'Paid'),
+      persisted('m1'),
+    ]);
+  }
+
+  it('heads every step with its number, its title and how it ended', () => {
+    const el: HTMLElement = render(twoSteps()).nativeElement;
+
+    const heads = Array.from(el.querySelectorAll('.tl-head')).map(text);
+    expect(heads).toEqual([
+      'Step 1 Started by OrderSubmitted · succeeded',
+      'Step 2 PaymentCaptured · succeeded',
+    ]);
+  });
+
+  it('labels each row with its ordinal, type, states, message, service and recorded time', () => {
+    const entries = twoSteps();
+    const el: HTMLElement = render(entries).nativeElement;
+
+    const row = el.querySelectorAll('.tl-row')[3];
+    const received = entries[4];
+    const expected = formatRecordedAt(received.occurredAtUtc, T0);
+    expect(text(row)).toBe(
+      `#4 MessageReceived PaymentCaptured from payments Recorded at ${expected.local} +0.400 s since the saga's first entry`,
+    );
+
+    const time = row.querySelector('time')!;
+    expect(time.getAttribute('datetime')).toBe(received.occurredAtUtc);
+    expect(time.getAttribute('title')).toBe('2026-01-01 00:00:00.400 UTC');
+    expect(text(row.querySelector('.tl-offset'))).toBe("+0.400 s since the saga's first entry");
+    expect(row.querySelector('.tl-offset')?.getAttribute('title')).toBe("Since the saga's first entry");
+
+    expect(text(el.querySelectorAll('.tl-row')[2])).toContain('Initial → Submitted');
+  });
+
+  it('reads the terminal entry as SagaFinalized', () => {
+    const el: HTMLElement = render(
+      numbered([started('m0'), succeeded('m0', 'Initial', 'Done'), sagaCompleted('Done', 'm0')]),
+    ).nativeElement;
+
+    const types = Array.from(el.querySelectorAll('.entry-type')).map(text);
+    expect(types).toEqual(['SagaStarted', 'StepSucceeded', 'SagaFinalized']);
+  });
+
+  it('never lists a state snapshot as a row', () => {
+    const el: HTMLElement = render(twoSteps()).nativeElement;
+
+    expect(el.querySelectorAll('.tl-row').length).toBe(5);
+    expect(el.textContent).not.toContain('StatePersisted');
+    const ordinals = Array.from(el.querySelectorAll('.tl-row .mono:first-child')).map(text);
+    expect(ordinals).toEqual(['#1', '#2', '#3', '#4', '#5']);
+  });
+
+  it('keeps a .CallHttp request and its reply inside the step that made the call', () => {
+    const el: HTMLElement = render(
+      numbered([
+        started('m0', 'LookingUp'),
+        received('m0', 'OrderSubmitted'),
+        httpCall('c1', 'm0'),
+        httpReply('r1', 'c1'),
+        succeeded('m0', 'LookingUp', 'Done'),
+      ]),
+    ).nativeElement;
+
+    expect(el.querySelectorAll('.tl-step').length).toBe(1);
+    const rows = Array.from(el.querySelectorAll('.tl-row')).map(text);
+    expect(rows[2]).toContain('POST http://loyalty/lookup');
+    expect(rows[2]).toContain('to loyalty');
+    expect(rows[3]).toContain('200 OK');
+  });
+
+  it('names the viewer zone once, in the hint above the steps', () => {
+    const el: HTMLElement = render(twoSteps()).nativeElement;
+
+    const hints = el.querySelectorAll('.tl-hint');
+    expect(hints.length).toBe(1);
+    expect(text(hints[0])).toBe(
+      `Times show when the engine recorded each entry, in your local time (${timezoneLabel(new Date(T0))}). ` +
+        "Hover a time for UTC. The offset counts from the saga's first entry.",
+    );
+  });
+
+  it('has no controls yet: rows are not buttons and there is no data toggle', () => {
+    const el: HTMLElement = render(twoSteps()).nativeElement;
+
+    expect(el.querySelectorAll('button').length).toBe(0);
+    expect(el.textContent).not.toMatch(/\bData\b/);
+  });
+
+  it('marks the focused entry', () => {
+    const el: HTMLElement = render(twoSteps(), { focusedSequence: 5 }).nativeElement;
+
+    const focused = el.querySelectorAll('.tl-row--focused');
+    expect(focused.length).toBe(1);
+    expect(text(focused[0])).toMatch(/^#4 /);
+  });
+
+  it('calls a final step without an outcome in progress only while the saga is live', () => {
+    const entries = numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), persisted('m0'), received('m1')]);
+
+    const live: HTMLElement = render(entries, { live: true }).nativeElement;
+    expect(text(live.querySelectorAll('.tl-head')[1])).toBe('Step 2 PaymentCaptured · in progress');
+
+    TestBed.resetTestingModule();
+    const finished: HTMLElement = render(entries, { live: false }).nativeElement;
+    expect(text(finished.querySelectorAll('.tl-head')[1])).toBe('Step 2 PaymentCaptured · no outcome recorded');
+  });
+
+  it('says who asked for a manual retry and styles a failed step and its error', () => {
+    const el: HTMLElement = render(
+      numbered([
+        started('m0'),
+        succeeded('m0', 'Initial', 'Submitted'),
+        received('m1'),
+        failed('m1', 'Submitted', { errorMessage: 'card declined' }),
+        retryRequested(null, { sourceService: 'dashboard:alice' }),
+      ]),
+    ).nativeElement;
+
+    const steps = el.querySelectorAll('.tl-step');
+    expect(steps[1].classList).toContain('tl-step--failed');
+    expect(steps[1].classList).toContain('tl-step');
+    expect(text(steps[2].querySelector('.tl-head'))).toBe(
+      'Step 3 Manual retry of PaymentCaptured · requested by alice',
+    );
+
+    const rows = steps[1].querySelectorAll('.tl-row');
+    const failedRow = rows[rows.length - 1];
+    expect(text(failedRow.querySelector('.entry-type'))).toBe('StepFailed');
+    expect(text(failedRow)).toContain('Submitted → —');
+    expect(text(failedRow.querySelector('.tl-error'))).toBe('card declined');
+    expect(failedRow.classList).toContain('tl-row--error');
+    expect(rows[0].classList).not.toContain('tl-row--error');
+    expect(rows[0].querySelector('.tl-error')).toBeNull();
+  });
+
+  it('heads a step opened by a dead letter without saying dead-lettered twice', () => {
+    const el: HTMLElement = render(
+      numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), deliveryExhausted('m1')]),
+    ).nativeElement;
+
+    const heads = Array.from(el.querySelectorAll('.tl-head')).map(text);
+    expect(heads[1]).toBe('Step 2 PaymentCaptured dead-lettered · never handled');
+  });
+
+  it('calls a received message that was then dead-lettered dead-lettered', () => {
+    const el: HTMLElement = render(
+      numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), received('m1'), deliveryExhausted('m1')]),
+    ).nativeElement;
+
+    const heads = Array.from(el.querySelectorAll('.tl-head')).map(text);
+    expect(heads[1]).toBe('Step 2 PaymentCaptured · dead-lettered');
+  });
+});
+

@@ -1,5 +1,4 @@
-import { Component, OnDestroy, OnInit, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { SagaApiService } from '../../services/saga-api.service';
@@ -8,14 +7,23 @@ import { SagaDetail as SagaDetailModel, SagaLogEntry, SagaMap as SagaMapModel, S
 import { KindBadge } from '../../components/kind-badge/kind-badge';
 import { StatusBadge } from '../../components/status-badge/status-badge';
 import { SagaMap } from '../../components/saga-map/saga-map';
+import { LocalTime } from '../../components/local-time/local-time';
+import { SagaTimeline } from '../../components/saga-timeline/saga-timeline';
 import { formatStateJson } from '../../util/state-json';
-import { entryTypeLabel as labelEntryType } from '../../util/entry-type-label';
+import { foldTimeline } from '../../util/saga-transitions';
+import { timezoneLabel, toMillis } from '../../util/time-format';
 
 type Tab = 'timeline' | 'data' | 'map';
 
+/** `UTC+02:00` as of `iso` (a zone's offset changes with daylight saving); now when unparseable. */
+function zoneAt(iso: string | null | undefined): string {
+  const at = toMillis(iso);
+  return timezoneLabel(at === null ? new Date() : new Date(at));
+}
+
 @Component({
   selector: 'app-saga-detail',
-  imports: [CommonModule, RouterLink, KindBadge, StatusBadge, SagaMap],
+  imports: [RouterLink, KindBadge, StatusBadge, SagaMap, LocalTime, SagaTimeline],
   templateUrl: './saga-detail.html',
   styleUrl: './saga-detail.scss',
 })
@@ -39,6 +47,17 @@ export class SagaDetail implements OnInit, OnDestroy {
   readonly confirmingRetry = signal(false);
   readonly connectionState = signal<SagaHubConnectionState>('disconnected');
   readonly hasEverConnected = signal(false);
+
+  /** The timeline as steps, each with the state it committed (see saga-transitions). */
+  readonly history = computed(() => foldTimeline(this.timeline()));
+  /** A saga that can still change: its final step without an outcome is in progress. */
+  readonly live = computed(() => {
+    const status = this.detail()?.summary.status;
+    return status === 'Running' || status === 'Compensating';
+  });
+  /** The viewer's zone at each summary time, for the "Created (UTC+02:00)" labels. */
+  readonly createdZone = computed(() => zoneAt(this.detail()?.summary.createdAtUtc));
+  readonly updatedZone = computed(() => zoneAt(this.detail()?.summary.updatedAtUtc));
 
   private subs: Subscription[] = [];
   /** Whether we've ever joined a hub group yet — guards the unsubscribe-previous-saga step below,
@@ -223,11 +242,6 @@ export class SagaDetail implements OnInit, OnDestroy {
   /** The saga's raw persisted state, pretty-printed with Kind and Status as names (see state-json). */
   get prettyDataJson(): string {
     return formatStateJson(this.detail()?.dataJson);
-  }
-
-  /** The entry type as the timeline reads it (see entry-type-label). */
-  entryTypeLabel(entryType: string): string {
-    return labelEntryType(entryType);
   }
 
   askRetryConfirmation(): void {

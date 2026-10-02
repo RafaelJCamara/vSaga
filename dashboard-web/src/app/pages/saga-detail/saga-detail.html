@@ -28,10 +28,10 @@
       <dd>{{ d.summary.currentState }}</dd>
       <dt>Version</dt>
       <dd>{{ d.summary.version }}</dd>
-      <dt>Created</dt>
-      <dd>{{ d.summary.createdAtUtc | date: "M/d/yy, HH:mm:ss" }}</dd>
-      <dt>Updated</dt>
-      <dd>{{ d.summary.updatedAtUtc | date: "M/d/yy, HH:mm:ss" }}</dd>
+      <dt>Created ({{ createdZone() }})</dt>
+      <dd><app-local-time [value]="d.summary.createdAtUtc" format="datetime" /></dd>
+      <dt>Updated ({{ updatedZone() }})</dt>
+      <dd><app-local-time [value]="d.summary.updatedAtUtc" format="datetime" /></dd>
     </dl>
 
     @if (related().length > 0) {
@@ -113,30 +113,10 @@
       <div class="empty">Loading map…</div>
     }
   } @else if (tab() === 'timeline') {
-    @if (timeline().length === 0) {
+    @if (history().rowCount === 0) {
       <div class="empty">No events recorded yet.</div>
     } @else {
-      <ol class="timeline">
-        @for (entry of timeline(); track entry.sequenceNumber) {
-          <li class="timeline-entry" [class.timeline-entry--error]="entry.errorMessage">
-            <div class="timeline-entry-header">
-              <span class="entry-type">{{ entryTypeLabel(entry.entryType) }}</span>
-              <span class="muted">{{ entry.occurredAtUtc | date: 'HH:mm:ss.SSS' }}</span>
-            </div>
-            @if (entry.fromState || entry.toState) {
-              <div class="entry-transition">
-                {{ entry.fromState ?? '—' }} <span class="arrow">&rarr;</span> {{ entry.toState ?? '—' }}
-              </div>
-            }
-            @if (entry.messageType) {
-              <div class="entry-message mono">{{ entry.messageType }}</div>
-            }
-            @if (entry.errorMessage) {
-              <div class="entry-error">{{ entry.errorMessage }}</div>
-            }
-          </li>
-        }
-      </ol>
+      <app-saga-timeline [history]="history()" [live]="live()" />
     }
   } @else {
     @if (prettyDataJson) {

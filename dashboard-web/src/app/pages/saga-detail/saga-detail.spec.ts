@@ -5,6 +5,7 @@ import { vi } from 'vitest';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import { SagaDetail as SagaDetailModel, SagaLogEntry, SagaMap as SagaMapModel, SagaStatus, SagaSummary } from '../../models/saga.model';
+import { timezoneLabel } from '../../util/time-format';
 import { SagaDetail } from './saga-detail';
 
 function makeDetail(overrides: Partial<SagaSummary> = {}): SagaDetailModel {
@@ -385,10 +386,69 @@ describe('SagaDetail', () => {
     expect(entryText).not.toContain('SagaCompleted');
   });
 
-  it('leaves every other entry type unchanged', () => {
+  it('shows the timeline as steps and never lists a state snapshot as an entry', () => {
+    const fixture = setup(makeDetail({ status: 'Completed' }), [
+      makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageId: 'm0' }),
+      makeEntry({ sequenceNumber: 2, entryType: 'MessageReceived', messageId: 'm0' }),
+      makeEntry({ sequenceNumber: 3, entryType: 'StepSucceeded', messageId: 'm0', fromState: 'Initial', toState: 'Submitted' }),
+      makeEntry({ sequenceNumber: 4, entryType: 'StatePersisted', messageId: 'm0', payloadJson: '{"Status":0}' }),
+    ]);
+    fixture.componentInstance.setTab('timeline');
+    fixture.detectChanges();
+
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('app-saga-timeline')).not.toBeNull();
+    expect(el.querySelectorAll('.tl-step').length).toBe(1);
+    expect(el.querySelectorAll('.tl-row').length).toBe(3);
+    expect(el.textContent).not.toContain('StatePersisted');
+  });
+
+  // The page decides whether the saga is live; the timeline only words the final step from it.
+  it.each<[SagaStatus, string]>([
+    ['Running', '· in progress'],
+    ['Compensating', '· in progress'],
+    ['Completed', '· no outcome recorded'],
+    ['Failed', '· no outcome recorded'],
+  ])('words the final step without an outcome of a %s saga as "%s"', (status, outcome) => {
+    const fixture = setup(makeDetail({ status }), [
+      makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageId: 'm0', messageType: 'OrderSubmitted' }),
+      makeEntry({ sequenceNumber: 2, entryType: 'StepSucceeded', messageId: 'm0', fromState: 'Initial', toState: 'Submitted' }),
+      makeEntry({ sequenceNumber: 3, entryType: 'MessageReceived', messageId: 'm1', messageType: 'PaymentCaptured' }),
+    ]);
+    fixture.componentInstance.setTab('timeline');
+    fixture.detectChanges();
+
+    const heads = Array.from(fixture.nativeElement.querySelectorAll('.tl-head') as NodeListOf<Element>).map((h) =>
+      (h.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    );
+    expect(heads.length).toBe(2);
+    expect(heads[1]).toBe(`Step 2 PaymentCaptured ${outcome}`);
+  });
+
+  it('says no events were recorded when the timeline holds nothing but snapshots', () => {
+    const fixture = setup(makeDetail(), [makeEntry({ entryType: 'StatePersisted', payloadJson: '{}' })]);
+    fixture.componentInstance.setTab('timeline');
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('app-saga-timeline')).toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('No events recorded yet.');
+  });
+
+  // The local text depends on the zone of the machine running the spec; the zone label, the
+  // datetime attribute and the UTC title do not.
+  it('labels Created and Updated with the viewer zone and shows UTC on hover', () => {
     const fixture = setup(makeDetail());
-    expect(fixture.componentInstance.entryTypeLabel('StepFailed')).toBe('StepFailed');
-    expect(fixture.componentInstance.entryTypeLabel('MessageReceived')).toBe('MessageReceived');
+    const el: HTMLElement = fixture.nativeElement;
+
+    const labels = Array.from(el.querySelectorAll('.summary-grid dt')).map((dt) => dt.textContent?.trim());
+    expect(labels).toContain(`Created (${timezoneLabel(new Date('2026-01-01T00:00:00Z'))})`);
+    expect(labels).toContain(`Updated (${timezoneLabel(new Date('2026-01-01T00:00:01Z'))})`);
+
+    const times = el.querySelectorAll('.summary-grid time');
+    expect(times.length).toBe(2);
+    expect(times[0].getAttribute('datetime')).toBe('2026-01-01T00:00:00Z');
+    expect(times[0].getAttribute('title')).toBe('2026-01-01 00:00:00.000 UTC');
+    expect(times[1].getAttribute('title')).toBe('2026-01-01 00:00:01.000 UTC');
   });
 
   it('prettyDataJson pretty-prints valid JSON', () => {
