@@ -108,7 +108,7 @@ underlying issue before committing, not after.
   against `docker compose up` (and the chaos overlay, where relevant) — not just unit tests.
 - New reference behaviour is documented in `docs/`, not left only in a commit message or code comment.
 
-CI (`.github/workflows/ci.yml`) runs two independent jobs on every push/PR to `main`, and both must
+CI (`.github/workflows/ci.yml`) runs three independent jobs on every push/PR to `main`, and all must
 pass:
 
 - `.NET build & test`: `dotnet restore`, then `dotnet build` and `dotnet test` on `dotnet/VSaga.slnx`
@@ -119,5 +119,18 @@ pass:
   handler (the dashboard-web image's CSP forbids them), then `npx ng test --watch=false`. `npm ci`
   only reports known vulnerabilities;
   the `npm audit` step fails the job on **any** advisory rated `low` through `critical`, in dev
-  dependencies too. Neither job is
+  dependencies too. No job is
   path-filtered, so a newly published advisory can fail a PR that never touched `dashboard-web/`.
+- `Compose build & smoke`: `docker compose config` on the base file and the chaos overlay, then on
+  the base file with each of the six transport and persistence overlays, asserting the dashboard ports
+  (base 5080/4200; each overlay replaces both port lists, UI port = API port minus 880, all on
+  `127.0.0.1`); then `docker compose build`, `nginx -t` on the rendered dashboard-web configuration,
+  and `docker compose up --wait`. Through the UI's origin (port 4200, with the demo API key) it checks
+  a deep link, an API call, a missing bundle (404), an encoded saga type that must answer exactly as
+  it does straight from the API on port 5080, and the SignalR negotiate plus WebSocket upgrade (101).
+  It prints the compose logs on failure and always ends with `docker compose down -v`. If you change
+  a compose file, a Dockerfile or the nginx template, run the same steps locally (the job's `run`
+  blocks are plain bash; `jq` is required), with two differences: stop any demo stack you have running
+  first, because the job binds the same ports (5433, 5672, 15672, 5080, 4200), and end with
+  `docker compose down` rather than `down -v` unless you want the stack's volumes, and with them your
+  local saga data, deleted.
