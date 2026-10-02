@@ -81,12 +81,12 @@ never echoed, so the response can't be used to probe whether a guessed key was c
 
 **Client wiring.** The Angular app sends the key via an `HttpInterceptorFn`
 (`dashboard-web/src/app/interceptors/api-key.interceptor.ts`) on ordinary HTTP calls, and
-via the hub connection's own `accessTokenFactory` for SignalR. Both the key it sends
-(`DASHBOARD_API_KEY`) and the API it sends it to (`API_BASE_URL`, which `HUB_URL` is derived from)
-are plain compile-time constants in `dashboard-web/src/app/api-config.ts` — not
-environment variables and not Angular environment files — so pointing the SPA at a non-default API,
-or at a server whose `Dashboard:ApiKey` isn't the compose dev value, means editing that file and
-rebuilding.
+via the hub connection's own `accessTokenFactory` for SignalR. The key it sends
+(`DASHBOARD_API_KEY`) is a plain compile-time constant in `dashboard-web/src/app/api-config.ts` — not
+an environment variable and not an Angular environment file — so a server whose `Dashboard:ApiKey`
+isn't the compose dev value means editing that file and rebuilding the SPA (in compose, rebuilding
+the `dashboard-web` image). Which API it talks to is not configured in the SPA at all: it calls its
+own origin, and whatever serves the page forwards `/api` and `/hubs` (see [The SPA](#the-spa)).
 
 **Known limitation, accepted as part of this choice:** a key embedded in a compiled SPA bundle is
 visible via browser devtools. This closes off unauthenticated direct API access; it is not per-user
@@ -138,14 +138,79 @@ instance's own summary, and a "Started N sub-sagas" strip from
 `GET /api/sagas/{sagaType}/{correlationId}/children`, refreshed on the same snapshot terms as the
 sibling strip.
 
-It is not part of `docker-compose.yml`: run it with `npx ng serve` (see ["Run the demo"](../README.md#run-the-demo)
-in the root README) against the containerized API.
+### How it is served
 
-**The API only accepts one browser origin.** Its CORS policy is built from `Dashboard:WebOrigin`
-(default `http://localhost:4200`) and allows credentials, so it is a single exact origin, not a
-wildcard — serve the SPA on any other port and every call fails in the browser as a CORS error while
-the same request from `curl` succeeds. Serving on a different origin means setting that key; see
-[`configuration.md`](configuration.md).
+The SPA runs as the compose service `dashboard-web` (see ["Run the demo"](../README.md#run-the-demo)
+in the root README): an nginx container built from `dashboard-web/Dockerfile`, published on
+`127.0.0.1:4200` in the base stack and on the dashboard API's host port minus 880 in every overlay
+(4300 to 4800, see [`transports/index.md`](transports/index.md#running-an-adapters-own-overlay)). It
+starts once `dashboard-api` reports healthy; its own healthcheck (`/healthz`, answered by nginx)
+reports on nginx alone.
+
+**Same origin.** The SPA's URLs are relative (`API_BASE_URL` is `''`, so the hub is `/hubs/saga`), so
+the browser only ever talks to the origin that served the page. nginx proxies `/api/` and `/hubs/`
+(WebSocket upgrades included) to `dashboard-api:8080`, and serves everything else from the build:
+`index.html` revalidates on every load, content-hashed bundles are cached for a year, a missing hashed
+bundle is a `404` rather than `index.html`, and any other path falls back to `index.html`, so deep
+links work. Nothing is cross-origin, so no CORS policy is involved and compose leaves
+`Dashboard:WebOrigin` unset. The API's own `/health` is not proxied; read it on the API port.
+
+A few properties of the proxy that matter when changing it (the template,
+`dashboard-web/nginx/default.conf.template`, says the same next to each rule):
+
+- **The upstream is resolved per request** (Docker's DNS, cached 10 s), not once at start. Each compose
+  project's nginx reaches its own `dashboard-api`, nginx starts while the API is still down, and the UI
+  recovers by itself when the API container is recreated with a new address.
+- **The request line is forwarded untouched** (`proxy_pass` has no URI part), so an encoded saga type
+  such as `Order%2FSaga` reaches the API still encoded. The CI smoke test compares such a request
+  through port 4200 with the same request on port 5080.
+- **The `Host` header is passed through** as the browser sent it (`localhost:4200`, port included).
+- **`X-Forwarded-For` and `X-Forwarded-Proto`** are added; compose's
+  [`Dashboard:TrustedProxies`](configuration.md#dashboardtrustedproxies) makes the API honour them.
+- **No query string is logged.** The access log records the path only, so the API key that SignalR
+  clients send as `?access_token=` on the hub upgrade, the SPA's own connection included, never reaches
+  it, and nginx's error log is raised to `crit`, because its
+  request-time error lines (an unreachable API, a timeout) quote the full request line; the access log
+  still records those requests by path with their `502` or `504`.
+
+**Content Security Policy.** Every response carries `default-src 'self'; script-src 'self'; style-src
+'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://<host>
+wss://<host>; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'` (`<host>`
+is the request's `Host`), plus `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and
+`Referrer-Policy: same-origin`; the `Server` header carries no version. So the SPA must not use
+inline `<script>`, `on*=` handler attributes, `eval` or any third-party origin for scripts, styles,
+fonts, images or requests. Inline styles are allowed because Angular injects component styles as
+`<style>` elements. The production build turns critical-CSS inlining off, because it writes an
+`onload` handler onto the stylesheet link that this policy would block, and CI fails if the built
+`index.html` contains an inline script or handler. `Referrer-Policy: same-origin` rather than
+`no-referrer`, because under `no-referrer` browsers send `Origin: null` on same-origin `POST`s.
+
+**The dev server.** `npx ng serve` in `dashboard-web/` runs on http://localhost:4201, beside the compose
+UI, and proxies `/api` and `/hubs` the same way through `dashboard-web/proxy.conf.mjs`, to
+`VSAGA_API_URL` (default `http://localhost:5080`, the compose stack's API). It has neither the CSP nor
+nginx's caching and routing rules, so check a UI change in the container before relying on it; see
+[`dashboard-web/README.md`](../dashboard-web/README.md#run-it).
+
+### Behind your own proxy or TLS
+
+The demo binds the dashboard ports to `127.0.0.1`. To put the UI behind your own reverse proxy or TLS
+terminator:
+
+- **Forward WebSocket upgrades on `/hubs/`** (HTTP/1.1 with the `Upgrade` and `Connection` headers, and
+  read timeouts long enough for a connection that stays open). Without them the hub falls back to
+  server-sent events or long polling, or fails.
+- **Pass `Host` through unchanged.** nginx forwards it to the API and builds the CSP's `connect-src`
+  from it, so the browser's WebSocket to `wss://<host>` is allowed only when `Host` is the name the
+  browser used.
+- **`X-Forwarded-Proto`.** The image sends the API its own scheme (`http`) and ignores a client's
+  header, so a client that reaches the container directly cannot claim `https`. Set
+  `DASHBOARD_OUTER_PROXY=true` on `dashboard-web` when a TLS terminator sits in front and the container
+  is reachable only through it; nginx then passes that proxy's `http` or `https` value on. See
+  [`configuration.md`](configuration.md#the-dashboard-uis-container-and-dev-server).
+- **`Dashboard:TrustedProxies`** on the API must cover the address the API sees nginx connect from, and
+  nothing wider than you need: any peer in that list can assert a client address and scheme. The API
+  honours only the last hop, which nginx appends, so behind a further proxy the client address the API
+  sees is that proxy's. See [`configuration.md`](configuration.md#dashboardtrustedproxies).
 
 ## Saga Map
 

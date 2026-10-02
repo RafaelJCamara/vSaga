@@ -5,8 +5,9 @@
 - **.NET SDK** matching `dotnet/global.json` (currently `10.0.301`, `rollForward: latestFeature` — an
   older SDK scaffolds/targets the wrong framework and every `dotnet` command below fails from the
   start).
-- **Node.js ≥ 22**, for the Angular dashboard SPA only (`dashboard-web/package.json`'s `engines` field;
-  also what CI's `setup-node` installs).
+- **Node.js ≥ 22**, only for developing the Angular dashboard SPA (`dashboard-web/package.json`'s
+  `engines` field; also what CI's `setup-node` installs). The compose stack builds the SPA inside its
+  `dashboard-web` image, so running the demo needs only Docker.
 - **Docker**: seven `dotnet/tests/*` suites use Testcontainers (RabbitMQ, MassTransit, Wolverine,
   Brighter, Postgres, Redis, MongoDB — see the Test section below). Without Docker, those suites fail
   outright rather than skip.
@@ -66,6 +67,14 @@ docker compose -p vsaga-brighter -f docker-compose.yml -f docker-compose.brighte
 docker compose -p vsaga-http -f docker-compose.yml -f docker-compose.http.yml up -d --build
 ```
 
+Each of these also serves that stack's dashboard UI: http://localhost:4200 for the base and chaos
+stacks, and the API port minus 880 for each overlay (Redis 4800, MongoDB 4700, Wolverine 4300,
+MassTransit 4400, Brighter 4500, HTTP 4600). Verify a UI change there, in the container, not only
+under `ng serve`: the Content Security Policy and the nginx proxy in front of the API exist only in
+the `dashboard-web` image, so a page can work on the dev server's port 4201 and still break in the
+stack. Load each page you touched through the stack's UI port with the browser's devtools open and
+check the console for CSP violations.
+
 Filter queries by `createdAtUtc`/`updatedAtUtc` after the container's own start timestamp — the named
 Postgres volume is **not** reset by `docker compose up` (see
 [`docs/persistence.md`](docs/persistence.md#the-volume-caveat)). Use `docker compose down -v` for a
@@ -104,6 +113,10 @@ underlying issue before committing, not after.
   also run `! grep -Eq '<script>| on[a-z]+=' dist/dashboard-web/browser/index.html` after the build:
   the container image's CSP forbids inline scripts and `on*=` handlers, and `ng serve` has no CSP to
   show it.
+- If you touched `dashboard-web` (its sources, `Dockerfile`, `.dockerignore` or
+  `nginx/default.conf.template`) or a compose file: `docker compose build dashboard-web` and
+  `docker compose run --rm --no-deps dashboard-web nginx -t` succeed, and the pages you changed load
+  through the stack's UI port (http://localhost:4200) with no CSP violation in the browser console.
 - If your change touches message flow, headers, correlation, or timing, you've live-verified it
   against `docker compose up` (and the chaos overlay, where relevant) — not just unit tests.
 - New reference behaviour is documented in `docs/`, not left only in a commit message or code comment.

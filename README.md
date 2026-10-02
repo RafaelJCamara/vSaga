@@ -63,12 +63,22 @@ sagas.
 
 ## Run the demo
 
-The full reference stack — Postgres, RabbitMQ, the dashboard API, and a continuously-submitting
-`OrderProcessing` sample exercising orchestration, choreography, sub-sagas, parallel fan-out, and
-`.CallHttp` all at once:
+The full reference stack — Postgres, RabbitMQ, the dashboard API, the dashboard UI, and a
+continuously-submitting `OrderProcessing` sample exercising orchestration, choreography, sub-sagas,
+parallel fan-out, and `.CallHttp` all at once — is one command, and Docker is all it needs:
 
 ```bash
-docker compose up -d --build     # Postgres + RabbitMQ + dashboard API + OrderProcessing sample
+docker compose up -d --build     # Postgres + RabbitMQ + dashboard API + dashboard UI + OrderProcessing sample
+```
+
+Then open **http://localhost:4200**. The UI starts once the dashboard API reports healthy (both show
+as `healthy` in `docker compose ps`), and the first `--build` also installs the SPA's npm packages and
+builds it inside the `dashboard-web` image, so it takes longer than later runs, which reuse the build
+cache. There is no sign-in yet: the UI authenticates with the demo API key compiled into the SPA.
+
+From a terminal, talk to the dashboard API directly:
+
+```bash
 curl http://localhost:5080/health
 curl -H "X-Api-Key: dev-local-only-change-me" http://localhost:5080/api/sagas
 ```
@@ -76,35 +86,20 @@ curl -H "X-Api-Key: dev-local-only-change-me" http://localhost:5080/api/sagas
 > In Windows PowerShell (not PowerShell 7+), `curl` is aliased to `Invoke-WebRequest`, which rejects
 > `-H`. Call `curl.exe` explicitly (Windows 10+ ships a real curl) or use PowerShell 7+/Git Bash instead.
 
-To run the same stack on MongoDB or Redis persistence instead of Postgres, layer that provider's overlay
-(its dashboard API listens on `localhost:5580` and `localhost:5680` respectively; see
-[`docs/persistence.md`](docs/persistence.md) for what each one requires or trades away):
+To run the same stack on MongoDB or Redis persistence instead of Postgres, layer that provider's overlay.
+Each overlay serves its own dashboard UI, at http://localhost:4700 and http://localhost:4800
+respectively, in front of its own dashboard API (`localhost:5580` and `localhost:5680`); see
+[`docs/persistence.md`](docs/persistence.md) for what each provider requires or trades away:
 
 ```bash
 docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
 ```
 
-The dashboard UI below proxies to the plain stack's API on `5080` by default. To browse an overlay's
-sagas instead, start it with `VSAGA_API_URL` set to that overlay's API, e.g.
-`VSAGA_API_URL=http://localhost:5580 npx ng serve` — see
-[`dashboard-web/README.md`](dashboard-web/README.md#run-it), and
-["Running an adapter's own overlay"](docs/transports/index.md#running-an-adapters-own-overlay) for each
-overlay's ports.
-
-Then serve the dashboard UI — a dev server, deliberately not part of `docker-compose.yml`:
-
-```bash
-cd dashboard-web && npm install && npx ng serve     # http://localhost:4201
-```
-
-> This command chains with `&&`, which Windows PowerShell 5.1 (`powershell.exe`) can't parse. Use
-> PowerShell 7+ (`pwsh`) or Git Bash/WSL, or just run each command on its own line.
-
 | What | Where | Notes |
 | --- | --- | --- |
-| Dashboard UI | http://localhost:4201 | `ng serve`; proxies `/api` and `/hubs` to the API (`VSAGA_API_URL`, default `http://localhost:5080`) |
-| Dashboard API | http://localhost:5080 | API key `dev-local-only-change-me` — see [`docs/dashboard.md`](docs/dashboard.md#authentication) |
+| Dashboard UI | http://localhost:4200 | No sign-in yet: the UI uses the demo API key built into the SPA (`dashboard-web/src/app/api-config.ts`), which the dashboard's authentication work replaces with per-user sign-in. Served by nginx in the `dashboard-web` container, which proxies `/api` and `/hubs` to the API — see [`docs/dashboard.md`](docs/dashboard.md#the-spa) |
+| Dashboard API | http://localhost:5080 | For `curl` and machine clients: API key `dev-local-only-change-me` — see [`docs/dashboard.md`](docs/dashboard.md#authentication). The UI does not use this port |
 | RabbitMQ management | http://localhost:15672 | `guest` / `guest` |
 | RabbitMQ (AMQP) | `localhost:5672` | `guest` / `guest`, i.e. `amqp://guest:guest@localhost:5672/` |
 | Postgres | `localhost:5433` | `postgres`/`postgres`, database `vsaga` (port 5433, not 5432, to avoid clashing with a local Postgres) |
@@ -116,6 +111,7 @@ run alongside it:
 
 | Service | MongoDB overlay (`-p vsaga-mongo`) | Redis overlay (`-p vsaga-redis`) |
 | --- | --- | --- |
+| Dashboard UI | `localhost:4700` | `localhost:4800` |
 | Dashboard API | `localhost:5580` | `localhost:5680` |
 | RabbitMQ (AMQP / management) | `localhost:6172` / `16172` | `localhost:6272` / `16272` |
 | Postgres (running, unused by that overlay) | `localhost:5448` | `localhost:5447` |
@@ -126,11 +122,28 @@ to trigger by hand. Try the chaos overlay for fault injection
 [`docs/chaos.md`](docs/chaos.md)), or one of the other transport adapters via their own overlay — these
 need a `-p <project-name>` flag and use different, remapped ports so they can run alongside the plain
 stack; see ["Running an adapter's own overlay"](docs/transports/index.md#running-an-adapters-own-overlay)
-for the exact commands and ports.
+for the exact commands and ports. Every stack serves its own dashboard UI; open that stack's UI port,
+there is nothing to edit.
+
+> **The demo's credentials are public.** The API key `dev-local-only-change-me` is committed in
+> `docker-compose.yml` and compiled into the SPA, so the dashboard ports (UI and API, in every stack)
+> are bound to `127.0.0.1` and only this machine can reach them. To expose the dashboard deliberately,
+> change the bind address in the compose file together with `Dashboard__ApiKey` (and the SPA's
+> `DASHBOARD_API_KEY`, which must match it), put TLS in front, and narrow `Dashboard__TrustedProxies`
+> to your proxy's address or network, since the compose value trusts every private range — see
+> [`docs/dashboard.md`](docs/dashboard.md#behind-your-own-proxy-or-tls) and
+> [`Dashboard:TrustedProxies`](docs/configuration.md#dashboardtrustedproxies). Until per-user sign-in
+> lands, anyone who can load the UI can read the key from its bundle.
+>
+> If `up` reports port 4200 as already allocated, a dev server is most likely still running on it
+> (4200 is the Angular CLI's default port; this repository's own dev server uses 4201).
 
 > **Postgres volume note:** `docker compose up` reuses the named volume across restarts — it is not
 > reset for you. See [`docs/persistence.md`](docs/persistence.md#the-volume-caveat) if you're
 > comparing before/after counts or your volume predates the EF Core migrations pass.
+
+To work on the SPA itself, run its dev server with hot reload on http://localhost:4201, beside the
+compose UI and against the same API; see [`dashboard-web/README.md`](dashboard-web/README.md#run-it).
 
 ## Persistence samples
 
@@ -160,7 +173,8 @@ dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoD
 dotnet/                  .NET 10 solution — engine, persistence, six transport adapters, dashboard API,
                            samples (the OrderProcessing reference stack, and one per persistence provider)
 dashboard-web/            Angular 21 SPA for the dashboard (built with npm and the Angular CLI, not the
-                           .NET solution — see dashboard-web/README.md)
+                           .NET solution), and the nginx container image compose serves it from — see
+                           dashboard-web/README.md
 docs/                     Reference documentation, design records, and project history — see below
 docker-compose*.yml       The reference stack (RabbitMQ transport, Postgres persistence) plus one
                            overlay each for the Wolverine, MassTransit, Brighter and HTTP adapters,

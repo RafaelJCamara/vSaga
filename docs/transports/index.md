@@ -141,9 +141,10 @@ the chaos overlay, these two things are **not optional**:
   that same default project instead of a distinct one, colliding with any stack already up under the
   plain command.
 - **Every host port is remapped** (`!override` in each overlay file) so the overlay's stack can run
-  *alongside* the plain one rather than fighting it for `5433`/`5672`/`15672`/`5080`. Skip the `-p` flag
-  and you'll bring these containers up fine, then find every URL this repo documents
-  (`localhost:5080`, `localhost:15672`, ...) pointing at whichever stack happened to bind the port first.
+  *alongside* the plain one rather than fighting it for `5433`/`5672`/`15672`/`5080`/`4200`. Skip the
+  `-p` flag and you'll bring these containers up fine, then find every URL this repo documents
+  (`localhost:4200`, `localhost:5080`, `localhost:15672`, ...) pointing at whichever stack happened to
+  bind the port first.
 
 ```bash
 docker compose -p vsaga-wolverine    -f docker-compose.yml -f docker-compose.wolverine.yml    up -d --build
@@ -155,24 +156,27 @@ docker compose -p vsaga-http         -f docker-compose.yml -f docker-compose.htt
 Each overlay remaps a different, non-overlapping port range, so more than one can genuinely run at
 once — see that overlay's own file header for its exact ports:
 
-| Overlay | Postgres | RabbitMQ (AMQP / mgmt) | Dashboard API |
-| --- | --- | --- | --- |
-| `docker-compose.wolverine.yml` | `5443` | `5772` / `15772` | `5180` |
-| `docker-compose.masstransit.yml` | `5444` | `5872` / `15872` | `5280` |
-| `docker-compose.brighter.yml` | `5445` | `5972` / `15972` | `5380` |
-| `docker-compose.http.yml` | `5446` | `6072` / `16072` | `5480` |
-| `docker-compose.redis.yml` (a persistence overlay, not a transport one — see [`../persistence.md`](../persistence.md#redis); adds `redis` on `6479`) | `5447` | `6272` / `16272` | `5680` |
-| `docker-compose.mongo.yml` (a persistence overlay — see [`../persistence.md`](../persistence.md#mongodb); adds `mongo` on `27018`) | `5448` | `6172` / `16172` | `5580` |
+| Overlay | Postgres | RabbitMQ (AMQP / mgmt) | Dashboard API | Dashboard UI |
+| --- | --- | --- | --- | --- |
+| `docker-compose.wolverine.yml` | `5443` | `5772` / `15772` | `5180` | `4300` |
+| `docker-compose.masstransit.yml` | `5444` | `5872` / `15872` | `5280` | `4400` |
+| `docker-compose.brighter.yml` | `5445` | `5972` / `15972` | `5380` | `4500` |
+| `docker-compose.http.yml` | `5446` | `6072` / `16072` | `5480` | `4600` |
+| `docker-compose.redis.yml` (a persistence overlay, not a transport one — see [`../persistence.md`](../persistence.md#redis); adds `redis` on `6479`) | `5447` | `6272` / `16272` | `5680` | `4800` |
+| `docker-compose.mongo.yml` (a persistence overlay — see [`../persistence.md`](../persistence.md#mongodb); adds `mongo` on `27018`) | `5448` | `6172` / `16172` | `5580` | `4700` |
+
+The dashboard ports, API and UI, are bound to `127.0.0.1` in every stack, and the UI's port is always
+the API's minus 880.
 
 Tear one down the same way you brought it up, naming the same `-p` project:
 `docker compose -p vsaga-wolverine down`.
 
-**Viewing an overlay's dashboard.** The dashboard SPA's API base URL is a hardcoded constant, not an
-environment variable — see `API_BASE_URL` (and `DASHBOARD_API_KEY`) in
-[`dashboard-web/src/app/api-config.ts`](../../dashboard-web/src/app/api-config.ts).
-It always points at the plain stack's `5080`. To view a specific overlay's dashboard instead, edit
-`API_BASE_URL` to that overlay's Dashboard API port from the table above (and `DASHBOARD_API_KEY` too, if
-that overlay's `Dashboard__ApiKey` differs from the default dev value) before running `ng serve`.
+**Viewing an overlay's dashboard.** Open that stack's Dashboard UI port from the table above, e.g.
+http://localhost:4300 for the Wolverine overlay; there is nothing to edit. Each stack's UI container
+proxies `/api` and `/hubs` to its own stack's dashboard API, so several stacks' dashboards can be open
+side by side (see [`../dashboard.md`](../dashboard.md#how-it-is-served)). To point the SPA's dev server
+at an overlay instead, start it with `VSAGA_API_URL` set to that overlay's Dashboard API port — see
+[`dashboard-web/README.md`](../../dashboard-web/README.md#run-it).
 
 ## What every adapter guarantees
 

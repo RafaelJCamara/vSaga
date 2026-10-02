@@ -13,8 +13,9 @@ new here; the rest of this index is organized by topic, roughly in the order you
   `ChoreographyEventBuilder`, `TimeoutBuilder`, `RetryPolicy`, `ISagaContext`, and `.CallHttp`.
 - [`configuration.md`](configuration.md) — every options class: `SagaOrchestratorOptions`, the
   outbox, each transport adapter, persistence (the `Persistence:Provider` switch, `VSagaRedisOptions`,
-  `VSagaMongoOptions`, `ConnectionStrings:VSaga`), `.CallHttp`'s `HttpCallOptions`, chaos, dashboard
-  auth, OpenTelemetry wiring.
+  `VSagaMongoOptions`, `ConnectionStrings:VSaga`), `.CallHttp`'s `HttpCallOptions`, chaos, the
+  dashboard's keys (API key, CORS origin, trusted proxies) and the UI container's variables,
+  OpenTelemetry wiring.
 - [`persistence.md`](persistence.md) — EF Core/Postgres (migrations, the Postgres-volume caveat),
   MongoDB (the replica-set prerequisite, pinned write concern, the collections and indexes, supported
   servers), Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
@@ -23,7 +24,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
 - [`observability.md`](observability.md) — the persisted event log, OpenTelemetry traces/metrics,
   and the one-line OTLP exporter wiring.
 - [`dashboard.md`](dashboard.md) — API endpoints, API-key authentication, live updates over SignalR,
-  the Angular SPA, and the Saga Map.
+  the Angular SPA and how it is served (an nginx container in the compose stack, on the API's own
+  origin, and what to keep behind your own proxy or TLS), and the Saga Map.
 - [`testing.md`](testing.md) — `SagaTestHarness`, for unit-testing saga definitions against the real
   engine with no broker/database.
 - [`chaos.md`](chaos.md) — `VSaga.Chaos`'s fault-injection middleware (delay/drop/duplicate).

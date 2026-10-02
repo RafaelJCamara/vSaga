@@ -369,7 +369,8 @@ provider's user to its own commands.
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
 ```
 
-Runs the sample and the dashboard against a Tier A Redis (ports 6479 / 5680; see
+Runs the sample and the dashboard against a Tier A Redis (Redis on port 6479, the dashboard UI on
+http://localhost:4800 and its API on 5680; see
 [`transports/index.md`](transports/index.md#running-an-adapters-own-overlay) for the overlay
 conventions). Its `vsaga-redis-data` volume holds the AOF and, like the Postgres volume, is not reset by
 `up`; use `down -v` for a clean run.
@@ -599,7 +600,8 @@ a version string; the version is parsed only to enforce the 6.0 floor.
 docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
 ```
 
-Runs the sample and the dashboard against a single-member MongoDB 8 replica set (ports 27018 / 5580;
+Runs the sample and the dashboard against a single-member MongoDB 8 replica set (MongoDB on port 27018,
+the dashboard UI on http://localhost:4700 and its API on 5580;
 see [`transports/index.md`](transports/index.md#running-an-adapters-own-overlay) for the overlay
 conventions). The set is initiated idempotently by the container's own healthcheck, which passes only
 once the member reports itself PRIMARY, so a second `up` on the persisted `vsaga-mongo-data` volume

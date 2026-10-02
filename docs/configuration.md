@@ -1,9 +1,10 @@
 # Configuration
 
 This page covers vSaga's options classes. None of them participate in .NET's options-binding pipeline:
-there is no `services.Configure<T>(...)` step anywhere in this library, and calling one yourself is a silent no-op (it registers an `IOptions<T>` nobody reads — every
-options class below is resolved as a plain `T` singleton, with the one `IOptions<T>` exception noted
-under [`Dashboard:ApiKey`](#dashboardapikey)). Every adapter's own options
+there is no `services.Configure<T>(...)` step for any of them anywhere in this library, and calling one yourself is a silent no-op (it registers an `IOptions<T>` nobody reads — every
+options class below is resolved as a plain `T` singleton, with the two ASP.NET Core options classes
+noted under [`Dashboard:ApiKey`](#dashboardapikey) and
+[`Dashboard:TrustedProxies`](#dashboardtrustedproxies) as the only exceptions). Every adapter's own options
 (`RabbitMqOptions`, `HttpTransportOptions`, ...) are set the same way: pass an `Action<TOptions>` to
 that adapter's `AddVSaga*` extension, e.g. `AddVSagaRabbitMq(o => o.ConnectionString = "...")`.
 
@@ -350,21 +351,30 @@ gets no chaos at all no matter what `Chaos__Enabled` says, and no error either.
 
 ## Dashboard
 
-Two plain configuration keys, both read by `VSaga.Dashboard.Api` directly — neither is an options
-class. Both are set as `Dashboard__ApiKey`/`Dashboard__WebOrigin` in `docker-compose.yml`.
+Three plain configuration keys, all read by `VSaga.Dashboard.Api` directly — none is an options
+class. `docker-compose.yml` sets `Dashboard__ApiKey` and `Dashboard__TrustedProxies`; it leaves
+`Dashboard:WebOrigin` empty, because the bundled UI is served on the API's own origin (see
+[`dashboard.md`](dashboard.md#the-spa)).
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `Dashboard:ApiKey` | *(empty in `appsettings.json`)* | The one shared secret `ApiKeyAuthenticationHandler` checks. |
-| `Dashboard:WebOrigin` | `http://localhost:4200` | The single browser origin the CORS policy admits. |
+| `Dashboard:WebOrigin` | *(empty: CORS off)* | Optional. The one browser origin, other than the API's own, that a credentialed CORS policy admits. Validated at startup. |
+| `Dashboard:TrustedProxies` | *(empty: forwarded headers ignored)* | Optional. Comma-separated addresses or CIDR networks whose `X-Forwarded-For`/`X-Forwarded-Proto` the API honours. Validated at startup. |
+
+`Dashboard:WebOrigin` and `Dashboard:TrustedProxies` are read once, while the API composes itself
+(`Hosting/DashboardEdge.cs` is the only code that reads them), so a change needs a restart, and an
+invalid value stops the API from starting with an `InvalidOperationException` that names the key and
+the value, instead of surfacing at the first request.
 
 ### `Dashboard:ApiKey`
 
 See [`dashboard.md`](dashboard.md#authentication) for the full three-places-it-can-arrive model and why
 the dashboard fails closed on an unconfigured key.
 
-This key is also the one place in the codebase where an options class is resolved as `IOptions<T>`
-rather than a plain singleton — but it isn't a vSaga options class. `AddScheme<TOptions, THandler>`
+This key is also one of the two places in the codebase where an options class is resolved as
+`IOptions<T>` rather than a plain singleton (the other is
+[`Dashboard:TrustedProxies`](#dashboardtrustedproxies)) — but it isn't a vSaga options class. `AddScheme<TOptions, THandler>`
 requires a distinct `AuthenticationSchemeOptions` subtype, so
 `ApiKeyAuthenticationSchemeOptions` exists solely to satisfy that signature (it declares no members)
 and is injected into the handler as `IOptionsMonitor<ApiKeyAuthenticationSchemeOptions>` by ASP.NET
@@ -373,17 +383,74 @@ Core's own machinery. It carries no vSaga settings: the handler reads `Dashboard
 
 ### `Dashboard:WebOrigin`
 
-The Angular SPA's origin, fed to a single-origin CORS policy (`WithOrigins(allowedOrigin)
-.AllowAnyHeader().AllowAnyMethod().AllowCredentials()`). It is deliberately one exact origin, not a
-wildcard: `AllowCredentials()` and `AllowAnyOrigin()` are mutually exclusive in ASP.NET Core, and the
-dashboard needs credentials for the SignalR hub connection.
+Not needed by the bundled UI. Both ways of serving it, the `dashboard-web` container and `ng serve`,
+put the SPA and a proxy to the API on one origin, so the browser never makes a cross-origin call. See
+[`dashboard.md`](dashboard.md#the-spa).
 
-A wrong value is the most silent misconfiguration on this page. Nothing fails at startup, `/health`
-stays green, and the API answers `curl` normally — only the browser refuses the responses, so the
-dashboard shows as an empty or perpetually-loading page with CORS errors visible solely in the devtools
-console. Match it exactly, scheme and port included (`http://localhost:4200`, not
-`localhost:4200` or a trailing slash), to wherever the SPA is actually served from — `ng serve`'s own
-port if you changed it. See [`dashboard.md`](dashboard.md#the-spa).
+Set it only for a browser app served from a different origin that must call the API directly. The API
+then registers a single-origin CORS policy, `WithOrigins(origin).AllowAnyHeader().AllowAnyMethod()
+.AllowCredentials()`, and applies it before authentication. Empty (the default) registers no policy at
+all, so a cross-origin browser call gets no CORS headers and the browser refuses the response.
+
+The value must be an origin: an absolute `http` or `https` URI with no user info, path, query or
+fragment, such as `https://ops.example.com` or `http://localhost:3000`. A trailing slash is dropped,
+and scheme and host are lower-cased and a default port removed, giving the form a browser sends in its
+`Origin` header. Anything else (`localhost:4200`, `http://localhost:4200/app`, `ftp://x`) stops the API
+at startup. There is no wildcard: `AllowCredentials()` and `AllowAnyOrigin()` are mutually exclusive in
+ASP.NET Core.
+
+The default is empty on purpose, not `http://localhost:4200` as it once was. Browsers scope cookies by
+host, not port, and every compose stack's UI runs on its own `localhost` port, so a credentialed policy
+for a fixed localhost port would admit whatever happens to run there (another stack's UI, any dev
+server), not only this stack's UI.
+
+### `Dashboard:TrustedProxies`
+
+The peers whose forwarded headers the API believes. Behind a reverse proxy every browser request
+arrives from the proxy's address, over the proxy's scheme; listing the proxy here makes the API take
+the client's address from `X-Forwarded-For` and the scheme from `X-Forwarded-Proto`, so anything that
+reads the request's remote address or scheme sees the client's. `Host` is not taken from a header: the
+bundled proxies pass the browser's `Host` through unchanged.
+
+- **Format.** A comma-separated list of IPv4 or IPv6 addresses (`10.0.0.5`) or CIDR networks
+  (`10.0.0.0/8`); whitespace around entries is ignored. IPv4 must be written in canonical dotted-decimal
+  form, a network must have no host bits set (`10.0.0.1/8` is refused rather than guessed), and scoped
+  IPv6 addresses are refused. A malformed entry stops the API at startup and is named in the message.
+- **Off by default, never "everyone".** Empty means forwarded headers are ignored from every peer, and
+  there is no value that trusts all peers.
+- **Only the last hop.** The API reads one entry, the right-most, which the trusted proxy itself
+  appended; anything to its left was written by the client and could be forged. Behind two proxies in a
+  row the address the API sees is therefore the outer proxy's.
+- **Untrusted peers are reported.** When a request carries `X-Forwarded-For` or `X-Forwarded-Proto`
+  from a peer that is not listed (including when the list is empty), the API ignores the headers and
+  logs a Warning naming the peer and this key, at most once every 5 minutes per peer and at most 20
+  times in 5 minutes overall, then one line saying further warnings are suppressed until the window
+  ends. A proxy you forgot to list shows up there rather than failing silently.
+- **How it is applied.** The parsed list feeds ASP.NET Core's own `ForwardedHeadersOptions`
+  (`XForwardedFor | XForwardedProto`, `ForwardLimit = 1`, the default loopback entries cleared, the
+  networks added to `KnownIPNetworks`) through `services.Configure` — the second framework options class
+  on this page, not a vSaga one — and only when the list is non-empty.
+
+**Do not trust more than your proxy.** A listed peer can assert any client address and scheme, so a
+client that can reach the API directly from inside a trusted range can spoof both. `docker-compose.yml`
+sets `Dashboard__TrustedProxies` to the private ranges `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`,
+because the `dashboard-web` container's address is assigned dynamically inside the compose network.
+That is acceptable for the demo only because the dashboard ports are bound to `127.0.0.1`: on Docker
+Desktop even a request from the host to `localhost:5080` arrives from the compose network's gateway,
+which lies inside `172.16.0.0/12`, so any local process can set those headers. Narrow the list to your
+proxy's address or network in a real deployment.
+
+### The dashboard UI's container and dev server
+
+Two environment variables configure the `dashboard-web` image; the image's entrypoint substitutes them
+(and only them, plus the resolver it reads from the container) into the nginx configuration at
+start. A third configures the dev server.
+
+| Variable | Default | Where | Meaning |
+| --- | --- | --- | --- |
+| `DASHBOARD_API_UPSTREAM` | `dashboard-api:8080` | `dashboard-web` image | `host:port` that nginx proxies `/api/` and `/hubs/` to, resolved per request. The default is the compose service name, which each compose project resolves to its own API. |
+| `DASHBOARD_OUTER_PROXY` | `false` | `dashboard-web` image | `true` when a TLS terminator in front of the container sets `X-Forwarded-Proto`: nginx then passes its `http` or `https` value to the API. Otherwise nginx sends its own scheme and a client cannot claim `https`. |
+| `VSAGA_API_URL` | `http://localhost:5080` | `ng serve` (`dashboard-web/proxy.conf.mjs`) | The API the dev server proxies `/api` and `/hubs` to: an overlay's API port (5180 to 5680) or `http://localhost:5275` for `dotnet run`. |
 
 ## OpenTelemetry: `AddVSagaOpenTelemetry`
 

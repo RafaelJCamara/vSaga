@@ -88,7 +88,9 @@ docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
 
 `docker-compose.chaos.yml` is an overlay that turns all three faults on with sample-tuned
 probabilities against the `OrderProcessing` sample (`Chaos:Enabled` config; the sample's
-`appsettings.json` leaves it `false`, and the base compose file does not set it).
+`appsettings.json` leaves it `false`, and the base compose file does not set it). The overlay remaps no
+ports, so the dashboard stays where the base file puts it: the UI on http://localhost:4200 and the API
+on `localhost:5080`.
 
 **A caution on tuning `Delay` against a single-consumer subscription.** `RabbitMqTransport` gives each
 `SubscribeAsync` call one channel with a single sequential consumer — an inbound delay doesn't just
