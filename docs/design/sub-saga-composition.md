@@ -405,8 +405,9 @@ calculus, that is a new design question, not a resumption of this checklist.
 - **Parent retried from the dashboard** → children are *not* re-run; the reset replays the parent's
   own message only. [2026-10-02: still true of existing children, but the retry now re-runs the
   parent's failed step rather than resetting to the start (ADR 0008), so a re-run step that calls
-  `StartChildAsync` starts a second child: retrying a timed-out `InvoiceFollowUpSaga` started a new
-  `InvoiceArchivalSaga` beside the first. See `docs/dashboard.md`, "Manual retry".]
+  `StartChildAsync` starts its child again, and a second one when the first already exists: retrying
+  a timed-out `InvoiceFollowUpSaga` re-ran its InvoiceIssued step and started an
+  `InvoiceArchivalSaga`. See `docs/dashboard.md`, "Manual retry".]
 - **Adding a timeout to an existing state does not rescue in-flight instances** — timeouts are scheduled
   on entry to a state. Same trap as the 60 stranded sagas in
   `docs/history/timeout-coverage-every-awaiting-state.md` (formerly a README section).

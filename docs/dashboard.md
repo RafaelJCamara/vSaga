@@ -168,8 +168,9 @@ and `toState` null, `messageType`/`messageId` naming the step's inbound message)
 the state's JSON or a marker in its place:
 
 - `{"$vsagaStateOmitted":true,"bytes":N,"limit":L}`: the state was larger than the per-snapshot cap.
-- `{"$vsagaStateOmitted":true,"bytes":N,"budget":B}`: the saga's snapshots had used up its per-saga
-  budget (a successful step or a timeout past it; failure snapshots are kept in full).
+- `{"$vsagaStateOmitted":true,"bytes":N,"budget":B}`: recording the state would have taken the saga's
+  snapshots past its per-saga budget (a successful step or a timeout; failure snapshots are kept in
+  full).
 
 The SPA folds each snapshot into the step it follows and treats any object with a `$vsaga…Omitted`
 key set to `true` as a marker (MongoDB's `$vsagaPayloadOmitted` included). `/map` skips them
@@ -191,6 +192,9 @@ may read a saga's data. For a caller who may not, `payloadJson` (message bodies 
 caller. Today every caller holds the one API key and every endpoint passes "include data"; per-caller
 gating arrives with sign-in, as the `sagas.data` permission. The SignalR push of a single entry already
 carries neither field, for everyone (see [Live updates](#live-updates-signalr)).
+
+Upgrade the dashboard API before the engine hosts: an API older than `StatePersisted` returns the entry
+type as `21` and serves snapshot payloads unredacted (compose builds both together).
 
 ## Authentication
 

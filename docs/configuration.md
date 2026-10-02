@@ -54,7 +54,7 @@ Five tunables. None is validated:
 | `MaxDeliveryAttempts` | `5` | How many times an **infrastructure-level** failure (a deserialize error, a persistence-store exception — distinct from a saga step's own thrown exception, which `HandleStepFailureAsync` already handles by marking the saga `Failed`) redelivers the same message, with an incremented `x-vsaga-delivery-attempt` header, before it is routed to the dead-letter queue instead of requeued forever. |
 | `RecordStateSnapshots` | `true` | Whether the engine appends a `StatePersisted` entry, carrying the state exactly as it was stored, after each committed step, step failure, timeout and delivery exhaustion (see [`observability.md`](observability.md#state-snapshots)). `false` records none, and the dashboard then shows no per-step data. |
 | `MaxStateSnapshotBytes` | `262144` (256 KiB) | The largest state, in UTF-8 bytes of its JSON, recorded in full. A larger one is recorded as `{"$vsagaStateOmitted":true,"bytes":N,"limit":L}`. `0` records size-only markers, which keeps state out of the log while still showing where each step committed. |
-| `MaxStateSnapshotBytesPerSaga` | `1048576` (1 MiB) | The per-instance budget for the snapshots one saga's timeline holds, since the engine reads them all back before every step. Past it, the snapshots after a successful step or a timeout become `{"$vsagaStateOmitted":true,"bytes":N,"budget":B}`; those after a step failure or a delivery exhaustion are still recorded in full (up to `MaxStateSnapshotBytes`). `0` or less means unlimited. |
+| `MaxStateSnapshotBytesPerSaga` | `1048576` (1 MiB) | The per-instance budget for the snapshots one saga's timeline holds, since the engine reads them all back before every step. A snapshot after a successful step or a timeout that would take the recorded total past it becomes `{"$vsagaStateOmitted":true,"bytes":N,"budget":B}`; those after a step failure or a delivery exhaustion are still recorded in full (up to `MaxStateSnapshotBytes`). `0` or less means unlimited. |
 | `StateSnapshotTimeout` | `00:00:05` | How long one snapshot append may take before it is abandoned and logged as a Warning, like any other failed append. The append sits between the commit and the step's deferred publishes and acknowledgement, so a stalled event-log write must not hold them back; 5 s sits well under the outbox's 30 s `DispatchGracePeriod`. |
 
 The snapshot options interact with one persistence option: on MongoDB a `PayloadJson` above
@@ -154,8 +154,9 @@ format, and the RabbitMQ-family adapters do not all share one (see
 lower-kebab-case routing keys `RabbitMq` publishes, so a `RabbitMq` dashboard's redrive routes to a
 Brighter saga host's queues. Wolverine and MassTransit bind the raw PascalCase type name and wrap each
 message in their own envelope, so on those two tracks the redrive is unroutable and `/retry` answers
-`502` — after it has already recorded a `ManualRetryRequested` timeline entry and, when the retry resets
-state, moved the saga back to `Running`. `Http` has no broker in the middle at all, so there the
+`502` — after it has already recorded a `ManualRetryRequested` timeline entry and reset the saga to the
+step's from-state; the API then puts the state and status back as it found them (best effort, see
+[Manual retry](dashboard.md#manual-retry)) and the 502 says whether it did (`restored`). `Http` has no broker in the middle at all, so there the
 dashboard has to run it too: `docker-compose.http.yml` sets `Transport__Provider` on `dashboard-api` as
 well, while `docker-compose.wolverine.yml`/`.brighter.yml`/`.masstransit.yml` set it on
 `order-processing` only.

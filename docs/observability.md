@@ -57,18 +57,19 @@ equals the stored blob). The decision and its alternatives are in
   null after a timeout or a dashboard reset). `FromState` and `ToState` are always null, because the
   compensation set is read from `ToState` and a snapshot must not add to it.
 - **Two markers instead of the state.** A state larger than `MaxStateSnapshotBytes` (UTF-8 bytes of its
-  JSON, 256 KiB by default) is recorded as `{"$vsagaStateOmitted":true,"bytes":N,"limit":L}`. A saga
-  whose snapshots already add up to `MaxStateSnapshotBytesPerSaga` (1 MiB by default) records the
-  snapshots of later successful steps and timeouts as `{"$vsagaStateOmitted":true,"bytes":N,"budget":B}`;
-  the snapshots after a step failure or a delivery exhaustion are still recorded in full (up to the
+  JSON, 256 KiB by default) is recorded as `{"$vsagaStateOmitted":true,"bytes":N,"limit":L}`. A
+  snapshot of a successful step or a timeout that would take the saga's recorded snapshots past
+  `MaxStateSnapshotBytesPerSaga` (1 MiB by default) is recorded as
+  `{"$vsagaStateOmitted":true,"bytes":N,"budget":B}`; the snapshots after a step failure or a delivery exhaustion are still recorded in full (up to the
   per-snapshot cap), because those are the ones an investigation needs. The budget exists because the
   engine reads every snapshot back before every step (below).
 - **Best effort, with its own deadline.** A failed append, cancellation and timeouts included, is logged
   as a Warning ("Could not record the state snapshot for saga …") and the step carries on: the only
   effect is a step with no snapshot. The append runs under `StateSnapshotTimeout` (5 s by default), so a
   stalled event-log write cannot hold back the step's deferred publishes and acknowledgement.
-- **Not a correctness input.** `StatePersisted` is the one entry type the engine never reads for a
-  decision: neither the compensation set nor the duplicate check looks at it, and the Saga Map skips it.
+- **Not a correctness input.** `StatePersisted` is the one entry type no correctness decision depends
+  on: neither the compensation set nor the duplicate check looks at it (the engine reads only its
+  payload length, for the per-saga budget), and the Saga Map skips it.
   It is still part of the log, so it shares the log's no-retention rule above: snapshots, business data
   included, stay as long as the saga's history does.
 - **Cost.** One more serialisation and one more append per committed transition, and the storage of
@@ -77,6 +78,9 @@ equals the stored blob). The decision and its alternatives are in
   [`persistence.md`](persistence.md#mongodb)). `GetVisitedStatesAsync` reads the whole timeline,
   snapshots included, before every message and timeout, so the read volume grows with the square of the
   step count; the per-saga budget bounds it.
+- **Upgrade order.** A dashboard API older than this entry type returns it as the number `21` and serves
+  its payload like any other, unredacted; deploy the dashboard before the engine hosts (compose builds
+  both together). See [ADR 0007](adr/0007-state-snapshots-in-the-event-log.md).
 
 The options are listed in [`configuration.md`](configuration.md#sagaorchestratoroptions);
 `RecordStateSnapshots = false` turns the entry off.
