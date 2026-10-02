@@ -1,6 +1,10 @@
 namespace VSaga.Core.Runtime;
 
-/// <summary>Public entry point (e.g. for VSaga.Dashboard.Api) to trigger a manual whole-saga retry without depending on any single saga's generic TState.</summary>
+/// <summary>
+/// Public entry point to the in-process manual retry, which redrives the message of a Failed saga's last
+/// StepFailed, without depending on any single saga's generic TState. The dashboard's Retry does not go
+/// through it: that resets the saga to the failed step's from-state and republishes the step's message.
+/// </summary>
 public interface ISagaRetryDispatcher
 {
     Task RetryAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default);

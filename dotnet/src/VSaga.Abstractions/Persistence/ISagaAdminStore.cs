@@ -5,9 +5,9 @@ namespace VSaga.Abstractions.Persistence;
 /// <summary>
 /// Narrow administrative write, separate from <see cref="ISagaSnapshotStore{TState}"/>: resets a
 /// saga's CurrentState/Status without needing to know the concrete TState type. Used by the
-/// dashboard's whole-saga retry when a Failed saga has no specific technical step failure to
-/// redrive (e.g. it reached Failed via a normal business transition or a timeout) — the saga is
-/// reset to an earlier state and the message that produced that state is replayed.
+/// dashboard's retry: before redriving the step that failed, it resets the Failed or TimedOut saga
+/// to that step's from-state with status Running, and when the redrive cannot be published it
+/// resets the saga back to the state and status it had before, as far as the version check allows.
 /// </summary>
 public interface ISagaAdminStore
 {

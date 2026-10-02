@@ -1,10 +1,16 @@
 ﻿using System.Net;
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using VSaga.Abstractions.Persistence;
 using VSaga.Abstractions.Sagas;
+using VSaga.Abstractions.Transport;
 using VSaga.Dashboard.Api.Endpoints;
+using VSaga.Persistence.InMemory;
+using VSaga.Transport.InMemory;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -360,117 +366,503 @@ public sealed class SagaEndpointsTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Retry_WithNoTimelineHistory_Returns422()
+    public async Task Retry_WithNoFailedStepInTheTimeline_Returns422WithTheReason()
     {
-        var (sagaType, correlationId) = await SeedSagaAsync("OrderSaga", "Failed", SagaStatus.Failed);
+        // Only the start is recorded: the reset-to-start retry this endpoint used to make is gone.
+        var correlationId = await SeedInAsync(_factory, "Failed", SagaStatus.Failed,
+            Log(SagaEntryType.SagaStarted, toState: "Submitted", messageType: nameof(OrderSubmitted), messageId: "m0", payload: "{\"OrderId\":\"X\"}"));
 
-        var response = await _client.PostAsync($"/api/sagas/{sagaType}/{correlationId}/retry", null);
+        var response = await _client.PostAsync($"/api/sagas/OrderSaga/{correlationId}/retry", null);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(SagaRetryPlanner.NoStepReason, await ReadErrorAsync(response));
+        Assert.Empty(_factory.Transport.GetPublished());
+        Assert.Equal(SagaStatus.Failed, (await GetDetailAsync(_factory, correlationId)).Summary.Status);
     }
 
     [Fact]
-    public async Task Retry_TechnicalFailure_RedrivesTheExactFailedMessageWithAFreshId()
+    public async Task Retry_OfASagaRecordedBeforeStepBodiesWereStored_Returns422WithThePlainWordsReason()
     {
-        var (sagaType, correlationId) = await SeedSagaAsync("OrderSaga", "AwaitingInventory", SagaStatus.Failed);
-        await AppendLogAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.SagaStarted,
-            toState: "Submitted", messageType: "OrderSubmitted", messageId: "m0", payloadJson: "{\"OrderId\":\"X\"}"));
-        await AppendLogAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.StepFailed,
-            fromState: "AwaitingInventory", messageType: "ReserveInventory", messageId: "m1",
-            payloadJson: "{\"OrderId\":\"X\"}", errorMessage: "boom"));
+        var correlationId = await SeedInAsync(_factory, "Failed", SagaStatus.Failed,
+            Log(SagaEntryType.MessageReceived, messageType: nameof(PaymentFailed), messageId: "c3"),
+            Log(SagaEntryType.StepSucceeded, fromState: "Gathering", toState: "Failed", messageType: nameof(PaymentFailed), messageId: "c3"),
+            Log(SagaEntryType.SagaCompleted, toState: "Failed"));
 
-        var response = await _client.PostAsync($"/api/sagas/{sagaType}/{correlationId}/retry", null);
+        var response = await _client.PostAsync($"/api/sagas/OrderSaga/{correlationId}/retry", null);
 
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        Assert.Contains(_factory.Transport.GetPublished(), p =>
-            string.Equals(p.MessageTypeName, "ReserveInventory", StringComparison.Ordinal) &&
-            p.Envelope.CorrelationId == correlationId &&
-            !string.Equals(p.Envelope.MessageId, "m1", StringComparison.Ordinal)); // fresh id, not a re-delivery of the original
-
-        var timeline = await _client.GetFromJsonAsync<List<SagaLogEntry>>($"/api/sagas/{sagaType}/{correlationId}/timeline", JsonOptions);
-        Assert.Contains(timeline!, e => e.EntryType == SagaEntryType.ManualRetryRequested);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(
+            "This saga was recorded before vSaga stored the message of every step, so the PaymentFailed message that ran the step to re-run cannot be replayed.",
+            await ReadErrorAsync(response));
+        Assert.DoesNotContain(await ReadTimelineAsync(_factory, correlationId), e => e.EntryType == SagaEntryType.ManualRetryRequested);
     }
 
     [Fact]
-    public async Task Retry_BusinessFailureWithNoStepFailed_ResetsToInitialStateAndReplaysTheStartingMessage()
+    public async Task Retry_TechnicalFailure_ResetsAtTheReadVersionAndRepublishesTheFailedMessageTargetedAtTheSagaType()
     {
-        // No StepFailed entry at all — this saga reached Failed via a normal, successful business
-        // transition (e.g. "payment declined"), exactly the case that originally 422'd before the fix.
-        var (sagaType, correlationId) = await SeedSagaAsync("OrderSaga", "Failed", SagaStatus.Failed);
-        await AppendLogAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.SagaStarted,
-            toState: "Submitted", messageType: "OrderSubmitted", messageId: "m0", payloadJson: "{\"OrderId\":\"X\"}"));
-        await AppendLogAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.StepSucceeded,
-            fromState: "AwaitingInventory", toState: "Failed", messageType: "InventoryReservationFailed", messageId: "m1"));
+        await using var host = Host(services => ReplaceAdminStore<RecordingAdminStore>(services));
+        var correlationId = await SeedInAsync(host, "AwaitingInventory", SagaStatus.Failed,
+            Log(SagaEntryType.SagaStarted, toState: "Submitted", messageType: nameof(OrderSubmitted), messageId: "m0", payload: "{\"OrderId\":\"X\"}"),
+            Log(SagaEntryType.MessageReceived, messageType: nameof(ReserveInventory), messageId: "m1", payload: "{\"Sku\":\"A\"}"),
+            Log(SagaEntryType.StepFailed, fromState: "AwaitingInventory", messageType: nameof(ReserveInventory), messageId: "m1",
+                payload: "{\"Sku\":\"A\"}", error: "boom"));
+        await AdvanceAsync(host, correlationId, times: 2);
+        var received = new ConcurrentQueue<ReceivedMessage>();
+        using var subscription = await CaptureRedrivesAsync(host, received);
 
-        var response = await _client.PostAsync($"/api/sagas/{sagaType}/{correlationId}/retry", null);
+        var response = await PostRetryAsync(host, correlationId);
+
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
 
-        var detail = await _client.GetFromJsonAsync<SagaDetail>($"/api/sagas/{sagaType}/{correlationId}", JsonOptions);
-        Assert.Equal("Submitted", detail!.Summary.CurrentState);
-        Assert.Equal(SagaStatus.Running, detail.Summary.Status);
+        // Always reset, even though the state does not change: the version the handler read (2, not the
+        // insert's 0) is the concurrency guard.
+        var reset = Assert.Single(host.Services.GetRequiredService<RecordingAdminStore>().Calls);
+        Assert.Equal(("OrderSaga", correlationId, "AwaitingInventory", SagaStatus.Running, 2), reset);
 
-        Assert.Contains(_factory.Transport.GetPublished(), p =>
-            string.Equals(p.MessageTypeName, "OrderSubmitted", StringComparison.Ordinal) &&
-            p.Envelope.CorrelationId == correlationId &&
-            !string.Equals(p.Envelope.MessageId, "m0", StringComparison.Ordinal));
+        var redrive = Assert.Single(received);
+        Assert.Equal(nameof(ReserveInventory), redrive.MessageTypeName);
+        Assert.Equal(correlationId, redrive.CorrelationId);
+        Assert.NotEqual("m1", redrive.MessageId, StringComparer.Ordinal); // a fresh id, so the engine's dedupe lets it through
+        Assert.Equal("{\"Sku\":\"A\"}", Encoding.UTF8.GetString(redrive.Body.Span));
+        Assert.Equal("OrderSaga", redrive.Headers[MessageEnvelope.TargetSagaTypeHeader]);
+
+        var retry = Assert.Single(await ReadTimelineAsync(host, correlationId), e => e.EntryType == SagaEntryType.ManualRetryRequested);
+        Assert.Equal(("AwaitingInventory", "AwaitingInventory", nameof(ReserveInventory), "m1"),
+            (retry.FromState, retry.ToState, retry.MessageType, retry.MessageId));
     }
 
     [Fact]
-    public async Task Retry_TimedOutSaga_IsAllowed()
+    public async Task Retry_BusinessFailure_ResetsToTheFailingStepsFromStateAndReplaysOnlyThatStep()
     {
-        var (sagaType, correlationId) = await SeedSagaAsync("OrderSaga", "Failed", SagaStatus.TimedOut);
-        await AppendLogAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.SagaStarted,
-            toState: "Submitted", messageType: "OrderSubmitted", messageId: "m0", payloadJson: "{\"OrderId\":\"X\"}"));
+        var correlationId = await SeedInAsync(_factory, "Failed", SagaStatus.Failed,
+            Log(SagaEntryType.SagaStarted, toState: "Submitted", messageType: nameof(OrderSubmitted), messageId: "m0", payload: "{\"OrderId\":\"X\"}"),
+            Log(SagaEntryType.MessageReceived, messageType: nameof(OrderSubmitted), messageId: "m0", payload: "{\"OrderId\":\"X\"}"),
+            Log(SagaEntryType.StepSucceeded, fromState: "Submitted", toState: "Gathering", messageType: nameof(OrderSubmitted), messageId: "m0"),
+            Log(SagaEntryType.MessageReceived, messageType: nameof(PaymentFailed), messageId: "c3", payload: "{\"Reason\":\"declined\"}"),
+            Log(SagaEntryType.StepSucceeded, fromState: "Gathering", toState: "Failed", messageType: nameof(PaymentFailed), messageId: "c3"),
+            Log(SagaEntryType.SagaCompleted, toState: "Failed", messageId: "c3"));
+        var received = new ConcurrentQueue<ReceivedMessage>();
+        using var subscription = await CaptureRedrivesAsync(_factory, received);
 
-        var response = await _client.PostAsync($"/api/sagas/{sagaType}/{correlationId}/retry", null);
+        var response = await _client.PostAsync($"/api/sagas/OrderSaga/{correlationId}/retry", null);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var detail = await GetDetailAsync(_factory, correlationId);
+        Assert.Equal(("Gathering", SagaStatus.Running, 1), (detail.Summary.CurrentState, detail.Summary.Status, detail.Summary.Version));
+
+        var redrive = Assert.Single(received);
+        Assert.Equal(nameof(PaymentFailed), redrive.MessageTypeName);
+        Assert.Equal("{\"Reason\":\"declined\"}", Encoding.UTF8.GetString(redrive.Body.Span));
+        Assert.Equal("OrderSaga", redrive.Headers[MessageEnvelope.TargetSagaTypeHeader]);
+    }
+
+    [Fact]
+    public async Task Retry_TimedOutSaga_ResetsToTheStateBeforeTheStepThatEnteredTheTimedOutState()
+    {
+        var correlationId = await SeedInAsync(_factory, "Abandoned", SagaStatus.TimedOut,
+            Log(SagaEntryType.SagaStarted, toState: "Requested", messageType: nameof(InvoiceIssued), messageId: "e5", payload: "{\"Invoice\":1}"),
+            Log(SagaEntryType.MessageReceived, messageType: nameof(InvoiceIssued), messageId: "e5", payload: "{\"Invoice\":1}"),
+            Log(SagaEntryType.StepSucceeded, fromState: "Requested", toState: "AwaitingArchival", messageType: nameof(InvoiceIssued), messageId: "e5"),
+            Log(SagaEntryType.TimeoutFired, fromState: "AwaitingArchival"),
+            Log(SagaEntryType.StepSucceeded, fromState: "AwaitingArchival", toState: "Abandoned"));
+        var received = new ConcurrentQueue<ReceivedMessage>();
+        using var subscription = await CaptureRedrivesAsync(_factory, received);
+
+        var response = await _client.PostAsync($"/api/sagas/OrderSaga/{correlationId}/retry", null);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var detail = await GetDetailAsync(_factory, correlationId);
+        Assert.Equal(("Requested", SagaStatus.Running), (detail.Summary.CurrentState, detail.Summary.Status));
+        Assert.Equal(nameof(InvoiceIssued), Assert.Single(received).MessageTypeName);
     }
 
     [Fact]
     public async Task Retry_WhenTheResetLosesAConcurrentWriteRace_Returns409()
     {
-        // The stub stands in for a saga that advanced between the handler's summary read and its
-        // reset. Neither shipped provider throws SagaConcurrencyException from ResetStateAsync yet
-        // (the conformance fixes F3/F4 land that), but the endpoint's mapping contract exists now —
-        // without it, the first provider to honour the version guard would turn a raced retry into
-        // an unhandled 500.
-        await using var raced = _factory.WithWebHostBuilder(b => b.ConfigureServices(services =>
-        {
-            services.RemoveAll<ISagaAdminStore>();
-            services.AddSingleton<ISagaAdminStore, RacedAdminStore>();
-        }));
-        using var client = raced.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Api-Key", DashboardApiFactory.TestApiKey);
+        // The stub stands in for a saga that advanced between the handler's summary read and its reset:
+        // every retry now resets, so a StepFailed retry reaches it too.
+        await using var host = Host(services => ReplaceAdminStore<RacedAdminStore>(services));
+        var correlationId = await SeedInAsync(host, "AwaitingInventory", SagaStatus.Failed, TechnicalFailure());
 
-        var correlationId = Guid.NewGuid();
-        await raced.Services.GetRequiredService<ISagaSnapshotStore<DashboardTestState>>().InsertAsync(new DashboardTestState
-        {
-            CorrelationId = correlationId,
-            SagaType = "OrderSaga",
-            CurrentState = "Failed",
-            Status = SagaStatus.Failed,
-            CreatedAtUtc = DateTimeOffset.UtcNow,
-            UpdatedAtUtc = DateTimeOffset.UtcNow,
-        });
-        // Only a SagaStarted entry, no StepFailed: the business-failure shape, whose retry resets to
-        // the initial state and therefore actually reaches ResetStateAsync.
-        await raced.Services.GetRequiredService<ISagaEventLogStore>().AppendAsync(
-            SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.SagaStarted,
-                toState: "Submitted", messageType: "OrderSubmitted", messageId: "m0", payloadJson: "{\"OrderId\":\"X\"}"));
-
-        var response = await client.PostAsync($"/api/sagas/OrderSaga/{correlationId}/retry", null);
+        var response = await PostRetryAsync(host, correlationId);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         // The not-Failed status guard also returns 409 — the body text is what proves this one came
         // from the concurrency mapping.
         Assert.Contains("modified concurrently", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Empty(host.Services.GetRequiredService<InMemoryMessageTransport>().GetPublished());
+    }
+
+    [Fact]
+    public async Task Retry_WhenTheRedriveCannotBePublished_RestoresTheStateAndStatusAndAnswers502()
+    {
+        await using var host = Host(services => ReplaceTransport(services));
+        var correlationId = await SeedInAsync(host, "AwaitingInventory", SagaStatus.Failed,
+            [.. TechnicalFailure(), Log(SagaEntryType.StatePersisted, payload: "{\"Version\":0}")]);
+
+        var response = await PostRetryAsync(host, correlationId);
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(problem.GetProperty("restored").GetBoolean());
+        Assert.Contains("restored to state 'AwaitingInventory' with status 'Failed'", problem.GetProperty("detail").GetString(), StringComparison.Ordinal);
+
+        var detail = await GetDetailAsync(host, correlationId);
+        Assert.Equal(("AwaitingInventory", SagaStatus.Failed, 2), (detail.Summary.CurrentState, detail.Summary.Status, detail.Summary.Version));
+
+        // The reset's snapshot (version 1) and the restored state's (version 2), both after ManualRetryRequested.
+        var timeline = await ReadTimelineAsync(host, correlationId);
+        var retry = Assert.Single(timeline, e => e.EntryType == SagaEntryType.ManualRetryRequested);
+        var recorded = timeline.Where(e => e.EntryType == SagaEntryType.StatePersisted && e.SequenceNumber > retry.SequenceNumber).ToList();
+        Assert.Equal([1, 2], recorded.Select(e => ReadVersion(e.PayloadJson!)));
+        Assert.Contains("\"Status\":2", recorded[^1].PayloadJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Retry_WhenTheTransportThrowsAnUnwrappedException_StillRestoresAtTheResetVersionAndAnswers502()
+    {
+        // RabbitMqTransport lets a TaskCanceledException out of opening a channel on a broker that stopped
+        // answering. The reset is committed by then, so it must be undone as for a refused publish, or the
+        // saga stays Running with no redrive and the status guard refuses every further retry.
+        await using var host = Host(services =>
+        {
+            ReplaceTransport<UnwrappedFailureTransport>(services);
+            ReplaceAdminStore<RecordingAdminStore>(services);
+        });
+        var correlationId = await SeedInAsync(host, "AwaitingInventory", SagaStatus.Failed,
+            [.. TechnicalFailure(), Log(SagaEntryType.StatePersisted, payload: "{\"Version\":0}")]);
+        await AdvanceAsync(host, correlationId, times: 2);
+
+        var response = await PostRetryAsync(host, correlationId);
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(problem.GetProperty("restored").GetBoolean());
+        Assert.Contains("(TaskCanceledException)", problem.GetProperty("detail").GetString(), StringComparison.Ordinal);
+        Assert.Contains("restored to state 'AwaitingInventory' with status 'Failed'", problem.GetProperty("detail").GetString(), StringComparison.Ordinal);
+
+        // The reset at the read version 2, then the restore at 3, the version the reset wrote.
+        Assert.Equal(
+            [("AwaitingInventory", SagaStatus.Running, 2), ("AwaitingInventory", SagaStatus.Failed, 3)],
+            host.Services.GetRequiredService<RecordingAdminStore>().Calls.Select(c => (c.State, c.Status, c.ExpectedVersion)));
+        var detail = await GetDetailAsync(host, correlationId);
+        Assert.Equal(("AwaitingInventory", SagaStatus.Failed, 4), (detail.Summary.CurrentState, detail.Summary.Status, detail.Summary.Version));
+
+        var timeline = await ReadTimelineAsync(host, correlationId);
+        var retry = Assert.Single(timeline, e => e.EntryType == SagaEntryType.ManualRetryRequested);
+        var recorded = timeline.Where(e => e.EntryType == SagaEntryType.StatePersisted && e.SequenceNumber > retry.SequenceNumber);
+        Assert.Equal([3, 4], recorded.Select(e => ReadVersion(e.PayloadJson!)));
+
+        // Past the reset nothing listens to the request's token, so a client that hangs up cannot cut the
+        // redrive or the restore short.
+        Assert.False(Assert.Single(host.Services.GetRequiredService<UnwrappedFailureTransport>().TokensSeen).CanBeCanceled);
+    }
+
+    [Fact]
+    public async Task Retry_WhenTheRestoreAfterAFailedPublishLosesARace_Answers502SayingTheSagaWasNotRestored()
+    {
+        await using var host = Host(services =>
+        {
+            ReplaceTransport(services);
+            ReplaceAdminStore<FirstResetOnlyAdminStore>(services);
+        });
+        var correlationId = await SeedInAsync(host, "Failed", SagaStatus.Failed,
+            Log(SagaEntryType.MessageReceived, messageType: nameof(PaymentFailed), messageId: "c3", payload: "{}"),
+            Log(SagaEntryType.StepSucceeded, fromState: "Gathering", toState: "Failed", messageType: nameof(PaymentFailed), messageId: "c3"),
+            Log(SagaEntryType.SagaCompleted, toState: "Failed", messageId: "c3"));
+
+        var response = await PostRetryAsync(host, correlationId);
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(problem.GetProperty("restored").GetBoolean());
+        Assert.Contains("could not be restored", problem.GetProperty("detail").GetString(), StringComparison.Ordinal);
+        var detail = await GetDetailAsync(host, correlationId);
+        Assert.Equal(("Gathering", SagaStatus.Running), (detail.Summary.CurrentState, detail.Summary.Status));
+    }
+
+    [Fact]
+    public async Task Retry_WhenTheRestoreAfterAFailedPublishFailsForAnotherReason_Answers502SayingWhereTheSagaWasLeft()
+    {
+        // A store outage during the restore must not escape as a bare 500: the caller still learns the saga
+        // was not restored, and the detail does not blame a concurrent modification or leak the exception.
+        await using var host = Host(services =>
+        {
+            ReplaceTransport(services);
+            ReplaceAdminStore<FirstResetThenOutageAdminStore>(services);
+        });
+        var correlationId = await SeedInAsync(host, "Failed", SagaStatus.Failed,
+            Log(SagaEntryType.MessageReceived, messageType: nameof(PaymentFailed), messageId: "c3", payload: "{}"),
+            Log(SagaEntryType.StepSucceeded, fromState: "Gathering", toState: "Failed", messageType: nameof(PaymentFailed), messageId: "c3"),
+            Log(SagaEntryType.SagaCompleted, toState: "Failed", messageId: "c3"));
+
+        var response = await PostRetryAsync(host, correlationId);
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(problem.GetProperty("restored").GetBoolean());
+        var text = problem.GetProperty("detail").GetString();
+        Assert.Contains("could not be restored to its previous state; it is Running in state 'Gathering' with no redrive in flight", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("concurrently", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(FirstResetThenOutageAdminStore.InternalText, text, StringComparison.Ordinal);
+        var detail = await GetDetailAsync(host, correlationId);
+        Assert.Equal(("Gathering", SagaStatus.Running), (detail.Summary.CurrentState, detail.Summary.Status));
+    }
+
+    [Fact]
+    public async Task GetRetryPlan_UnknownSaga_Returns404()
+    {
+        var response = await _client.GetAsync($"/api/sagas/OrderSaga/{Guid.NewGuid()}/retry-plan");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetRetryPlan_RetryableSaga_ReturnsThePlanInCamelCaseWithoutTheMessageBody()
+    {
+        var correlationId = await SeedInAsync(_factory, "AwaitingInventory", SagaStatus.Failed, TechnicalFailure());
+        var timeline = await ReadTimelineAsync(_factory, correlationId);
+        var received = timeline.Single(e => e.EntryType == SagaEntryType.MessageReceived).SequenceNumber;
+        var failed = timeline.Single(e => e.EntryType == SagaEntryType.StepFailed).SequenceNumber;
+
+        var body = await _client.GetStringAsync($"/api/sagas/OrderSaga/{correlationId}/retry-plan");
+
+        var plan = JsonDocument.Parse(body).RootElement;
+        Assert.True(plan.GetProperty("retryable").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, plan.GetProperty("reason").ValueKind);
+        Assert.Equal("StepFailed", plan.GetProperty("failureKind").GetString());
+        Assert.Equal(failed, plan.GetProperty("failureSequenceNumber").GetInt64());
+        var step = plan.GetProperty("step");
+        Assert.Equal(received, step.GetProperty("sequenceNumber").GetInt64());
+        Assert.Equal(nameof(ReserveInventory), step.GetProperty("messageType").GetString());
+        Assert.Equal("m1", step.GetProperty("messageId").GetString());
+        Assert.Equal("AwaitingInventory", step.GetProperty("fromState").GetString());
+        Assert.Equal(5, plan.EnumerateObject().Count());
+        Assert.DoesNotContain("Sku", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetRetryPlan_SagaThatCannotBeRetried_Returns200WithTheReason()
+    {
+        var correlationId = await SeedInAsync(_factory, "AwaitingInventory", SagaStatus.Running, TechnicalFailure());
+
+        var response = await _client.GetAsync($"/api/sagas/OrderSaga/{correlationId}/retry-plan");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var plan = await response.Content.ReadFromJsonAsync<SagaRetryPlan>(JsonOptions);
+        Assert.Equal(new SagaRetryPlan(false, SagaRetryPlanner.NotFailedReason, null, null, null), plan);
+    }
+
+    // Message types the redrive tests subscribe to: the in-memory transport matches subscriptions by type name.
+    private sealed record OrderSubmitted(string Id);
+
+    private sealed record ReserveInventory(string Id);
+
+    private sealed record PaymentFailed(string Id);
+
+    private sealed record InvoiceIssued(string Id);
+
+    /// <summary>A step that threw on ReserveInventory (id m1) in AwaitingInventory, with its message recorded.</summary>
+    private static SagaLogEntry[] TechnicalFailure() =>
+    [
+        Log(SagaEntryType.MessageReceived, messageType: nameof(ReserveInventory), messageId: "m1", payload: "{\"Sku\":\"A\"}"),
+        Log(SagaEntryType.StepFailed, fromState: "AwaitingInventory", messageType: nameof(ReserveInventory), messageId: "m1",
+            payload: "{\"Sku\":\"A\"}", error: "boom"),
+    ];
+
+    private static SagaLogEntry Log(SagaEntryType type, string? fromState = null, string? toState = null, string? messageType = null,
+        string? messageId = null, string? payload = null, string? error = null) =>
+        SagaLogEntry.Create(Guid.Empty, "OrderSaga", type, fromState, toState, messageType, messageId, payload, error);
+
+    private WebApplicationFactory<Program> Host(Action<IServiceCollection> services) =>
+        _factory.WithWebHostBuilder(builder => builder.ConfigureServices(services));
+
+    private static void ReplaceAdminStore<TStore>(IServiceCollection services)
+        where TStore : class, ISagaAdminStore
+    {
+        services.RemoveAll<ISagaAdminStore>();
+        services.AddSingleton<TStore>();
+        services.AddSingleton<ISagaAdminStore>(sp => sp.GetRequiredService<TStore>());
+    }
+
+    private static void ReplaceTransport(IServiceCollection services) => ReplaceTransport<RefusingTransport>(services);
+
+    private static void ReplaceTransport<TTransport>(IServiceCollection services)
+        where TTransport : class, IMessageTransport
+    {
+        services.RemoveAll<IMessageTransport>();
+        services.AddSingleton<TTransport>();
+        services.AddSingleton<IMessageTransport>(sp => sp.GetRequiredService<TTransport>());
+    }
+
+    /// <summary>Moves the seeded OrderSaga on by <paramref name="times"/> versions through ordinary updates.</summary>
+    private static async Task AdvanceAsync(WebApplicationFactory<Program> host, Guid correlationId, int times)
+    {
+        var store = host.Services.GetRequiredService<ISagaSnapshotStore<DashboardTestState>>();
+        for (var i = 0; i < times; i++)
+        {
+            var state = (await store.FindAsync("OrderSaga", correlationId))!;
+            await store.UpdateAsync(state, state.Version);
+        }
+    }
+
+    /// <summary>Inserts an OrderSaga at version 0 and appends <paramref name="entries"/> under its correlation id.</summary>
+    private static async Task<Guid> SeedInAsync(WebApplicationFactory<Program> host, string currentState, SagaStatus status, params SagaLogEntry[] entries)
+    {
+        var correlationId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        await host.Services.GetRequiredService<ISagaSnapshotStore<DashboardTestState>>().InsertAsync(new DashboardTestState
+        {
+            CorrelationId = correlationId,
+            SagaType = "OrderSaga",
+            CurrentState = currentState,
+            Status = status,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now,
+        });
+
+        var log = host.Services.GetRequiredService<ISagaEventLogStore>();
+        foreach (var entry in entries)
+            await log.AppendAsync(entry with { CorrelationId = correlationId });
+
+        return correlationId;
+    }
+
+    private static Task<IDisposable> CaptureRedrivesAsync(WebApplicationFactory<Program> host, ConcurrentQueue<ReceivedMessage> received) =>
+        host.Services.GetRequiredService<InMemoryMessageTransport>().SubscribeAsync(
+            new TransportSubscription("retry-test",
+                [typeof(OrderSubmitted), typeof(ReserveInventory), typeof(PaymentFailed), typeof(InvoiceIssued)], "retry-test"),
+            (message, _) =>
+            {
+                received.Enqueue(message);
+                return Task.CompletedTask;
+            });
+
+    private static async Task<HttpResponseMessage> PostRetryAsync(WebApplicationFactory<Program> host, Guid correlationId)
+    {
+        using var client = AuthenticatedClient(host);
+        return await client.PostAsync($"/api/sagas/OrderSaga/{correlationId}/retry", null);
+    }
+
+    private static async Task<SagaDetail> GetDetailAsync(WebApplicationFactory<Program> host, Guid correlationId)
+    {
+        using var client = AuthenticatedClient(host);
+        return (await client.GetFromJsonAsync<SagaDetail>($"/api/sagas/OrderSaga/{correlationId}", JsonOptions))!;
+    }
+
+    private static async Task<List<SagaLogEntry>> ReadTimelineAsync(WebApplicationFactory<Program> host, Guid correlationId)
+    {
+        using var client = AuthenticatedClient(host);
+        return (await client.GetFromJsonAsync<List<SagaLogEntry>>($"/api/sagas/OrderSaga/{correlationId}/timeline", JsonOptions))!;
+    }
+
+    private static HttpClient AuthenticatedClient(WebApplicationFactory<Program> host)
+    {
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Api-Key", DashboardApiFactory.TestApiKey);
+        return client;
+    }
+
+    private static async Task<string?> ReadErrorAsync(HttpResponseMessage response) =>
+        (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString();
+
+    private static int ReadVersion(string stateJson)
+    {
+        using var document = JsonDocument.Parse(stateJson);
+        return document.RootElement.GetProperty("Version").GetInt32();
     }
 
     private sealed class RacedAdminStore : ISagaAdminStore
     {
         public Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default) =>
             throw new SagaConcurrencyException(sagaType, correlationId, expectedVersion);
+    }
+
+    /// <summary>The in-memory reset, recording each call's arguments.</summary>
+    private sealed class RecordingAdminStore(InMemorySagaStore inner) : ISagaAdminStore
+    {
+        private readonly ConcurrentQueue<(string, Guid, string, SagaStatus, int)> _calls = new();
+
+        public IReadOnlyCollection<(string SagaType, Guid CorrelationId, string State, SagaStatus Status, int ExpectedVersion)> Calls => _calls;
+
+        public Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default)
+        {
+            _calls.Enqueue((sagaType, correlationId, currentState, status, expectedVersion));
+            return inner.ResetStateAsync(sagaType, correlationId, currentState, status, expectedVersion, updatedAtUtc, cancellationToken);
+        }
+    }
+
+    /// <summary>Lets the retry's reset through, then refuses the restore as a saga that moved on after the reset would.</summary>
+    private sealed class FirstResetOnlyAdminStore(InMemorySagaStore inner) : ISagaAdminStore
+    {
+        private int _calls;
+
+        public Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default) =>
+            Interlocked.Increment(ref _calls) == 1
+                ? inner.ResetStateAsync(sagaType, correlationId, currentState, status, expectedVersion, updatedAtUtc, cancellationToken)
+                : throw new SagaConcurrencyException(sagaType, correlationId, expectedVersion);
+    }
+
+    /// <summary>Lets the retry's reset through, then fails the restore as a store that stopped answering would.</summary>
+    private sealed class FirstResetThenOutageAdminStore(InMemorySagaStore inner) : ISagaAdminStore
+    {
+        public const string InternalText = "store-internal-detail";
+
+        private int _calls;
+
+        public Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default) =>
+            Interlocked.Increment(ref _calls) == 1
+                ? inner.ResetStateAsync(sagaType, correlationId, currentState, status, expectedVersion, updatedAtUtc, cancellationToken)
+                : throw new TimeoutException(InternalText);
+    }
+
+    /// <summary>A transport whose broker refuses every publish.</summary>
+    private sealed class RefusingTransport : IMessageTransport
+    {
+        public Task PublishAsync<TMessage>(TMessage message, MessageEnvelope envelope, CancellationToken cancellationToken = default)
+            where TMessage : notnull =>
+            throw Refused(message.GetType().Name, envelope);
+
+        public Task SendAsync<TMessage>(string destination, TMessage message, MessageEnvelope envelope, CancellationToken cancellationToken = default)
+            where TMessage : notnull =>
+            throw Refused(message.GetType().Name, envelope);
+
+        public Task PublishRawAsync(string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken cancellationToken = default) =>
+            throw Refused(messageTypeName, envelope);
+
+        public Task<IDisposable> SubscribeAsync(TransportSubscription subscription, Func<ReceivedMessage, CancellationToken, Task> handler, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        private static MessageTransportPublishException Refused(string messageTypeName, MessageEnvelope envelope) =>
+            new(messageTypeName, envelope.CorrelationId, isUnroutable: false, detail: "refused by the test", new InvalidOperationException("refused"));
+    }
+
+    /// <summary>
+    /// A transport whose raw publish fails with an exception it does not wrap in MessageTransportPublishException,
+    /// as RabbitMqTransport does when opening a channel times out. Records the token each publish was given.
+    /// </summary>
+    private sealed class UnwrappedFailureTransport : IMessageTransport
+    {
+        private readonly ConcurrentQueue<CancellationToken> _tokens = new();
+
+        public IReadOnlyCollection<CancellationToken> TokensSeen => _tokens;
+
+        public Task PublishAsync<TMessage>(TMessage message, MessageEnvelope envelope, CancellationToken cancellationToken = default)
+            where TMessage : notnull =>
+            throw new NotSupportedException();
+
+        public Task SendAsync<TMessage>(string destination, TMessage message, MessageEnvelope envelope, CancellationToken cancellationToken = default)
+            where TMessage : notnull =>
+            throw new NotSupportedException();
+
+        public Task PublishRawAsync(string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, CancellationToken cancellationToken = default)
+        {
+            _tokens.Enqueue(cancellationToken);
+            throw new TaskCanceledException("opening a channel timed out in the test");
+        }
+
+        public Task<IDisposable> SubscribeAsync(TransportSubscription subscription, Func<ReceivedMessage, CancellationToken, Task> handler, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     [Fact]

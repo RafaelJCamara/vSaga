@@ -102,9 +102,12 @@ one on an earlier attempt makes the next redelivery a duplicate that is acknowle
   rolled back; the reset changes only `CurrentState`, `Status`, `Version` (+1) and `UpdatedAtUtc`, under
   its unchanged contract. The reset's snapshot is recorded (ADR 0007), then the message is republished
   with a fresh message id and the target header set to the saga's type. 202 on success.
-- If the publish throws `MessageTransportPublishException`, the endpoint restores `CurrentState` and
-  `Status` as it found them (best effort; a concurrent change is logged as a warning and left alone),
-  records a snapshot of the restored state, and answers 502 saying whether the saga was restored.
+- If the publish throws, whether a `MessageTransportPublishException` or an exception the transport did
+  not wrap, the endpoint restores `CurrentState` and `Status` as it found them (best effort and
+  version-checked; a concurrent change is logged as a warning and left alone), records a snapshot of the
+  restored state, and answers 502 saying whether the saga was restored. Everything after the reset runs
+  without the request's cancellation token, so a client that disconnects cannot strand the saga
+  `Running` with no redrive.
 - `SagaMapBuilder` is unchanged. The planner is the authority for which step failed: the SPA marks that
   step "Failed here" in the timeline, opens the map focused on it, and its confirmation reads
   `Re-run step N (<message type>, <from state>) for this saga only`, adding that other services consuming

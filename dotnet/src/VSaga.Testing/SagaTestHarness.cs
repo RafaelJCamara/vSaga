@@ -110,7 +110,11 @@ public sealed class SagaTestHarness<TDefinition, TState> : IAsyncDisposable
         return this;
     }
 
-    /// <summary>Triggers the same manual whole-saga retry the dashboard's Retry button would (only valid while the saga is Failed).</summary>
+    /// <summary>
+    /// Triggers the in-process manual retry, which redrives the message of the saga's last StepFailed (only valid
+    /// while the saga is Failed). Narrower than the dashboard's Retry, which also re-runs the step behind a
+    /// business failure, a dead-letter or a timeout.
+    /// </summary>
     public async Task<SagaTestHarness<TDefinition, TState>> RetryAsync(CancellationToken cancellationToken = default)
     {
         var dispatcher = _provider.GetRequiredService<ISagaRetryDispatcher>();

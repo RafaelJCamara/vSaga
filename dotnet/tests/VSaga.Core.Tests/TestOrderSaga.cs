@@ -49,7 +49,7 @@ public sealed class TestOrderSaga : OrchestratedSagaDefinition<TestOrderSagaStat
     /// <summary>Shared across replays so a test can make a step fail once then succeed on manual retry.</summary>
     public int FlakyStepAttempts { get; set; }
 
-    /// <summary>Attempt counter for the in-process, step-level RetryPolicy tests (distinct from manual whole-saga retry above).</summary>
+    /// <summary>Attempt counter for the in-process, step-level RetryPolicy tests (distinct from the manual retry above).</summary>
     public int FlakyWithPolicyAttempts { get; set; }
 
     public int AlwaysFailsWithPolicyAttempts { get; set; }

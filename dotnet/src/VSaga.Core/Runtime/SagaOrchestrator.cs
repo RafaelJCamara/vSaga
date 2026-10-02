@@ -221,9 +221,9 @@ public sealed class SagaOrchestrator<TState>(
                        ?? throw new SagaNotFoundException(SagaType, correlationId);
 
         // Note: this in-process path only redrives a recorded technical failure (StepFailed) — unlike
-        // VSaga.Dashboard.Api's /retry endpoint, it doesn't yet have the reset-and-replay-from-start
-        // fallback for sagas that reached Failed via a normal business transition, so it deliberately
-        // stays narrower (Failed only, not TimedOut) to match what it can actually redrive.
+        // VSaga.Dashboard.Api's /retry endpoint, which also re-runs the step behind a business failure,
+        // a dead-letter or a timeout (resetting the state first), it deliberately stays narrower (Failed
+        // only, not TimedOut) to match what it can actually redrive.
         if (existing.Status != SagaStatus.Failed)
             throw new SagaRetryNotAllowedException(SagaType, correlationId, existing.Status.ToString());
 
@@ -433,10 +433,9 @@ public sealed class SagaOrchestrator<TState>(
 
         if (isNew)
         {
-            // PayloadJson is recorded here (not just on StepFailed) so a saga that later reaches a
-            // terminal Failed state through a normal business transition — no exception, so no
-            // StepFailed entry to redrive — can still be retried by the dashboard: it replays this
-            // exact initiating message against the saga once reset back to its initial state.
+            // PayloadJson is recorded here as well as on the first step's MessageReceived: a saga recorded
+            // before MessageReceived carried bodies still has its initiating message here, so the
+            // dashboard's retry can replay the first step for it.
             await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.SagaStarted,
                 toState: existing.CurrentState, messageType: received.MessageTypeName, messageId: received.MessageId,
                 payloadJson: System.Text.Encoding.UTF8.GetString(received.Body.Span),

@@ -564,7 +564,7 @@ already replays only the failed step in the one orchestrator it runs in.
 
 ### 7.2 The retry plan
 
-`VSaga.Dashboard.Api/SagaRetryPlanner.cs`: a pure static
+`VSaga.Dashboard.Api/Endpoints/SagaRetryPlanner.cs`: a pure static
 `SagaRetryPlan Plan(SagaSummary summary, IReadOnlyList<SagaLogEntry> timeline)`, unit-tested directly
 and used by both endpoints. It ignores `StatePersisted` entries.
 
@@ -592,13 +592,23 @@ and used by both endpoints. It ignores `StatePersisted` entries.
    `BusinessFailure`; only a timeout that fired is `TimedOut`.
 
 4. No recorded body for the step's message: not retryable, with a reason in plain words: "This saga was
-   recorded before vSaga stored the message of every step, so the message that ran step N cannot be
-   replayed." For `DeliveryExhausted` the reason adds that the message may have been dead-lettered
-   before it was recorded at all. That is the usual case: a `MessageReceived` with the dead-lettered id
-   exists only when its append succeeded on the final delivery attempt, because a durable
-   `MessageReceived` on any earlier attempt makes the next redelivery a duplicate, which
-   `HandleCoreAsync` acks rather than dead-letters. `StepFailed` always carries its body, and a step run by the initiating
-   message finds it on `SagaStarted`, so those stay retryable for sagas recorded before C23.
+   recorded before vSaga stored the message of every step, so the `<MessageType>` message that ran the
+   step to re-run cannot be replayed." (the step's message type, for example "so the PaymentFailed
+   message that ran the step to re-run"). For `DeliveryExhausted` the reason adds that the message may
+   have been dead-lettered before it was recorded at all. That is the usual case: a `MessageReceived`
+   with the dead-lettered id exists only when its append succeeded on the final delivery attempt,
+   because a durable `MessageReceived` on any earlier attempt makes the next redelivery a duplicate,
+   which `HandleCoreAsync` acks rather than dead-letters. `StepFailed` always carries its body, and a
+   step run by the initiating message finds it on `SagaStarted`, so those stay retryable for sagas
+   recorded before C23.
+
+   MongoDB's size marker (`{"$vsagaPayloadOmitted":true,"bytes":N,"limit":L}`, stored in place of a
+   payload above `MaxPayloadJsonBytes`) is not a body either: replayed, it would deserialise into a
+   message whose every field is default, and the step would re-run, side effects included, on that. A
+   payload starting with that key counts as no body. The body search prefers an entry with a real body
+   over one with the marker, a `StepFailed` whose own payload is the marker falls back to its
+   `MessageReceived`, and when only the marker exists the reason is "The message that ran this step was
+   too large to be recorded, so it cannot be replayed."
 
 **Wire shape** of `GET /api/sagas/{sagaType}/{correlationId}/retry-plan` (camelCase, `failureKind`
 as the C# member name through the global `JsonStringEnumConverter`, like `entryType`):
@@ -623,7 +633,9 @@ as the C# member name through the global `JsonStringEnumConverter`, like `entryT
   mark the failed step even when it cannot offer a retry. Both are null only when no F exists.
 - `step` is present whenever the step was identified, even when its body is missing. Its
   `sequenceNumber` is the step's inbound entry: the latest `MessageReceived` before F with the step's
-  id, else the latest `SagaStarted` with it, else F itself for `StepFailed`. The SPA maps it to its step ordinal.
+  id, else the latest `SagaStarted` with it, else a fallback by kind: F itself for `StepFailed` and
+  `DeliveryExhausted`, and the step's `StepSucceeded` for `BusinessFailure` and `TimedOut`. The SPA maps
+  it to its step ordinal.
 - `reason` is null when `retryable` is true.
 - The endpoint answers 404 for an unknown saga and 200 with a plan otherwise, never 409 or 422. It is
   read-only and, once authentication lands, requires `sagas.view` on the route's saga type.
@@ -650,12 +662,22 @@ Worked examples follow (§7.6).
 6. Publish: `PublishRawAsync(step.messageType, body, MessageEnvelope.New(correlationId,
    { ["x-vsaga-target-saga-type"] = summary.SagaType }))`. The fresh message id gets past dedupe.
 7. Success: 202.
-8. On `MessageTransportPublishException`: best-effort restore with
+8. On any exception from the publish: best-effort restore with
    `ResetStateAsync(sagaType, correlationId, summary.CurrentState, summary.Status, summary.Version + 1, now)`.
    A `SagaConcurrencyException` here is logged as a Warning and the request continues. When the restore
    commits, record a snapshot of the restored state (version `summary.Version + 2`) with the same
    recorder. Answer 502 as a problem whose detail says whether the saga was restored to its previous
-   state and status, with a `restored` boolean extension.
+   state and status, with a `restored` boolean extension. A `MessageTransportPublishException`'s message
+   goes into the detail; any other exception is logged as an Error and the detail names only its type,
+   because `IMessageTransport` does not promise to wrap every failure (`RabbitMqTransport` lets a
+   `TaskCanceledException` out of opening a channel on a broker that stopped answering). Restoring after
+   an exception whose publish outcome is unknown is still safe: the restore is version-checked, so if
+   the redrive did go out and moved the saga on first, the restore loses and the 502 says so.
+
+Steps 5 to 8 run with `CancellationToken.None`, not the request's token. The reset is committed by then,
+and a client that disconnected or aborted between the reset and the publish would otherwise leave the
+saga `Running` in the step's from-state with no redrive, where the status guard refuses every further
+dashboard retry with 409.
 
 The `ManualRetryRequested` entry is appended before the reset, as today, so a 409 or a 502 leaves it in
 the timeline with no step after it; the retry step in the UI then shows no snapshot and no re-run. The
@@ -784,8 +806,8 @@ id), the plan would be not retryable.
 | --- | --- |
 | Engine (C23), `VSaga.Core.Tests` | a second saga type ignores a targeted message: no entries, no state, message acked; the addressed type processes it; an absent header changes nothing; the header is absent from the redriven step's outbound envelopes; a redelivery after an infrastructure failure keeps it; `MessageReceived` carries the payload on the first and on later steps |
 | Adapters | each wire adapter's header round-trip test includes `x-vsaga-target-saga-type` |
-| Planner (C24) | one case per failure kind; recency across a retried earlier failure; a `DeliveryExhausted` without id after `StepFailed` is skipped; a `.CallHttp` mid-step reply is not chosen; a `TimedOut` status reached through `SagaCompleted` is `BusinessFailure`; a timed-out state entered by a timeout is not retryable; missing payload (old saga) is not retryable while a first-step failure stays retryable; not `Failed`/`TimedOut`; no F; `StatePersisted` ignored |
-| Endpoints (C24) | `retry-plan` 404 and 200 shapes; the republished envelope carries the target header, the step's type and body; the reset goes to `step.fromState`/`Running` at the read version, also for `StepFailed`; 409 on a raced reset; 422 with the reason text; 502 with `restored` true after a restore, false when the restore races; the reset snapshot follows `ManualRetryRequested`; the old reset-to-start tests are replaced |
+| Planner (C24) | one case per failure kind; recency across a retried earlier failure; a `DeliveryExhausted` without id after `StepFailed` is skipped; a `.CallHttp` mid-step reply is not chosen; a `TimedOut` status reached through `SagaCompleted` is `BusinessFailure`; a timed-out state entered by a timeout is not retryable; missing payload (old saga) is not retryable while a first-step failure stays retryable; a MongoDB `$vsagaPayloadOmitted` marker is no body ("too large to be recorded"); not `Failed`/`TimedOut`; no F; `StatePersisted` ignored |
+| Endpoints (C24) | `retry-plan` 404 and 200 shapes; the republished envelope carries the target header, the step's type and body; the reset goes to `step.fromState`/`Running` at the read version (a saga seeded past version 0), also for `StepFailed`; 409 on a raced reset; 422 with the reason text; 502 with `restored` true after a restore, false when the restore races; a non-transport exception from the publish restores too, at the reset's version, and the publish never gets the request's token; the reset snapshot follows `ManualRetryRequested`; the old reset-to-start tests are replaced |
 | SPA (C28) | the marker on the step holding `failureSequenceNumber`; "Re-run starts here" only when different; the map opens on the failure without `?entry` and on `?entry` when given; the confirmation text names step, type and state; a non-retryable plan disables the button and shows the reason; the plan reloads after a status change |
 
 ---
@@ -1127,7 +1149,8 @@ edited.
 | Dashboard API older than the engine | Entry type `21`, unredacted snapshots | Deploy the dashboard first; compose builds both together |
 | Failed saga with no replayable step | Retry disabled with the reason; 422 | Planner explains in plain words |
 | Saga changed during retry | 409 "reload and try again" | Version-checked reset |
-| Republish fails | 502 saying whether the saga was restored | Best-effort restore and its snapshot |
+| Republish fails, whether the transport wraps the failure or not (a paused RabbitMQ broker throws `TaskCanceledException` from opening a channel) | 502 saying whether the saga was restored | Best-effort, version-checked restore on any exception, and its snapshot |
+| Client disconnects between the reset and the publish | Nothing (the response is lost); the saga is redriven or restored | The work after the reset ignores the request's token |
 | A 409 or 502 retry | A retry step with nothing after it | Visible in the timeline; the saga state says what happened |
 | Host runs an engine older than C23 | Other saga types process the replay | Minimum engine version documented in ADRs 0006 and 0008 and `docs/dashboard.md` |
 | Participants consume the replayed message type | They act on it again | Stated in the confirmation and the guide |
@@ -1277,3 +1300,8 @@ Still open:
 - **Expiry of temporary passwords** (an administrator-set password that must be changed stays valid until
   used).
 - **Single sign-on.**
+- **`RabbitMqTransport` wrapping channel-open failures in `MessageTransportPublishException`.** A broker
+  that stops answering makes `CreateChannelAsync` throw `TaskCanceledException` after about 25 seconds,
+  outside the adapter's wrapping. The retry endpoint restores on any exception (§7.3), so the dashboard
+  no longer depends on it, but the engine's own publish paths and the 502 detail would name the cause
+  better with it.

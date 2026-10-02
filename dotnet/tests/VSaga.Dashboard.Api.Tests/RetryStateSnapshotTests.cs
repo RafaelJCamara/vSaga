@@ -19,8 +19,8 @@ namespace VSaga.Dashboard.Api.Tests;
 
 /// <summary>
 /// The StatePersisted entry a dashboard retry reset records (SagaResetSnapshotRecorder): the stored state
-/// after the reset, with no message identity, sequenced after ManualRetryRequested; nothing when there is no
-/// reset, the reset lost its race, the saga has no snapshot yet or a step already moved it on; the
+/// after the reset, with no message identity, sequenced after ManualRetryRequested, for every kind of retry;
+/// nothing when the reset lost its race, the saga has no snapshot yet or a step already moved it on; the
 /// dashboard's cap and the engine host's smaller one; and a failed append that still lets the redrive go out.
 /// Each test runs in its own host, so DI and settings overrides cannot leak between them.
 /// </summary>
@@ -62,8 +62,10 @@ public sealed class RetryStateSnapshotTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Retry_OfATechnicalFailure_MakesNoResetAndRecordsNoSnapshot()
+    public async Task Retry_OfATechnicalFailure_ResetsTooAndRecordsTheSnapshotAfterManualRetryRequested()
     {
+        // The state does not change, but the reset still runs (it is the concurrency guard and takes the
+        // saga out of Failed), so the version moves and the snapshot records it.
         await using var host = Host();
         var correlationId = await SeedSagaAsync(host, "AwaitingInventory",
             SagaLogEntry.Create(Guid.Empty, SagaType, SagaEntryType.SagaStarted,
@@ -77,7 +79,12 @@ public sealed class RetryStateSnapshotTests : IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var timeline = await ReadTimelineAsync(host, correlationId);
-        Assert.Single(timeline, e => e.EntryType == SagaEntryType.StatePersisted);
+        var retry = Assert.Single(timeline, e => e.EntryType == SagaEntryType.ManualRetryRequested);
+        var snapshot = timeline[^1];
+        Assert.Equal(SagaEntryType.StatePersisted, snapshot.EntryType);
+        Assert.True(snapshot.SequenceNumber > retry.SequenceNumber);
+        Assert.Equal(1, ReadVersion(snapshot.PayloadJson!));
+        Assert.Equal(2, timeline.Count(e => e.EntryType == SagaEntryType.StatePersisted));
     }
 
     [Fact]
@@ -228,7 +235,7 @@ public sealed class RetryStateSnapshotTests : IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Contains(host.Services.GetRequiredService<InMemoryMessageTransport>().GetPublished(), p =>
-            string.Equals(p.MessageTypeName, "OrderSubmitted", StringComparison.Ordinal) && p.Envelope.CorrelationId == correlationId);
+            string.Equals(p.MessageTypeName, "InventoryReservationFailed", StringComparison.Ordinal) && p.Envelope.CorrelationId == correlationId);
         var timeline = await ReadTimelineAsync(host, correlationId);
         Assert.Contains(timeline, e => e.EntryType == SagaEntryType.ManualRetryRequested);
         Assert.Single(timeline, e => e.EntryType == SagaEntryType.StatePersisted);
@@ -282,9 +289,9 @@ public sealed class RetryStateSnapshotTests : IAsyncDisposable
         });
 
     /// <summary>
-    /// A saga that failed for a business reason: no StepFailed, so the retry resets it to the start state,
-    /// which is what reaches ResetStateAsync and the recorder. <paramref name="laterEntries"/> follow the
-    /// seeded snapshot.
+    /// A saga that failed for a business reason: its InventoryReservationFailed step (id m1) moved it from
+    /// AwaitingInventory to Failed, so the retry resets it to AwaitingInventory, which is what reaches
+    /// ResetStateAsync and the recorder. <paramref name="laterEntries"/> follow the seeded snapshot.
     /// </summary>
     private static Task<Guid> SeedBusinessFailureAsync(WebApplicationFactory<Program> host, bool withSnapshot,
         string snapshotPayload = "{\"Version\":0,\"CurrentState\":\"Failed\"}", params SagaLogEntry[] laterEntries)
@@ -293,8 +300,11 @@ public sealed class RetryStateSnapshotTests : IAsyncDisposable
         {
             SagaLogEntry.Create(Guid.Empty, SagaType, SagaEntryType.SagaStarted,
                 toState: "Submitted", messageType: "OrderSubmitted", messageId: "m0", payloadJson: "{\"OrderId\":\"X\"}"),
+            SagaLogEntry.Create(Guid.Empty, SagaType, SagaEntryType.MessageReceived,
+                messageType: "InventoryReservationFailed", messageId: "m1", payloadJson: "{\"OrderId\":\"X\"}"),
             SagaLogEntry.Create(Guid.Empty, SagaType, SagaEntryType.StepSucceeded,
                 fromState: "AwaitingInventory", toState: "Failed", messageType: "InventoryReservationFailed", messageId: "m1"),
+            SagaLogEntry.Create(Guid.Empty, SagaType, SagaEntryType.SagaCompleted, toState: "Failed", messageId: "m1"),
         };
         if (withSnapshot)
             entries.Add(SagaLogEntry.Create(Guid.Empty, SagaType, SagaEntryType.StatePersisted, payloadJson: snapshotPayload));

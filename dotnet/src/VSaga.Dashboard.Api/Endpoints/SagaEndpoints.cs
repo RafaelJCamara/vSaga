@@ -55,6 +55,9 @@ public static class SagaEndpoints
             Results.Ok(await reader.FindChildrenAsync(sagaType, correlationId, ct)))
         .WithName("GetSagaChildren");
 
+        group.MapGet("/{sagaType}/{correlationId:guid}/retry-plan", GetRetryPlanAsync)
+        .WithName("GetSagaRetryPlan");
+
         group.MapPost("/{sagaType}/{correlationId:guid}/retry", RetrySagaAsync)
         .WithName("RetrySaga");
 
@@ -134,7 +137,30 @@ public static class SagaEndpoints
         return Results.Ok(SagaTimelineRedaction.Apply(timeline, includeData: true));
     }
 
-    private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider, SagaResetSnapshotRecorder snapshots, CancellationToken ct)
+    /// <summary>
+    /// What a retry of this saga would re-run, or why it cannot (<see cref="SagaRetryPlanner"/>). Read-only and
+    /// never 409/422: a saga that cannot be retried answers 200 with <c>retryable: false</c> and the reason, so
+    /// the SPA can still mark the failed step. The plan carries no message body.
+    /// </summary>
+    private static async Task<IResult> GetRetryPlanAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, CancellationToken ct)
+    {
+        var summary = await reader.GetAsync(sagaType, correlationId, ct);
+        if (summary is null)
+            return Results.NotFound();
+
+        var timeline = await log.GetTimelineAsync(sagaType, correlationId, ct);
+        return Results.Ok(SagaRetryPlanner.Plan(summary, timeline));
+    }
+
+    /// <summary>
+    /// Re-runs the step the saga failed in, for this saga type only (docs/design/dashboard-usability-and-access.md
+    /// §7.3, ADR 0008): resets CurrentState/Status to what they were before that step, then republishes only that
+    /// step's message with a fresh id (so dedupe lets it through) and the target-saga-type header, which every
+    /// other saga type subscribed to the message type acknowledges and ignores. Business fields inside the
+    /// stored state are not rolled back.
+    /// </summary>
+    private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin,
+        IMessageTransport transport, TimeProvider timeProvider, SagaResetSnapshotRecorder snapshots, ILoggerFactory loggerFactory, CancellationToken ct)
     {
         var summary = await reader.GetAsync(sagaType, correlationId, ct);
         if (summary is null)
@@ -144,87 +170,119 @@ public static class SagaEndpoints
             return Results.Conflict(new { error = $"Saga '{sagaType}' instance '{correlationId}' cannot be retried while its status is '{summary.Status}'; only 'Failed' or 'TimedOut' sagas can be retried." });
 
         var timeline = await log.GetTimelineAsync(sagaType, correlationId, ct);
+        var plan = SagaRetryPlanner.Plan(summary, timeline);
+        if (plan is not { Retryable: true, Step: { } step, MessageBody: { } body })
+            return Results.UnprocessableEntity(new { error = plan.Reason });
 
-        // Two distinct redrive shapes:
-        //  1. A technical failure (an action threw) — StepFailed carries the exact message that
-        //     failed; replay just that one message against the saga's current (unchanged) state.
-        //  2. A business failure or timeout — the saga reached Failed/TimedOut through a normal,
-        //     successful step (e.g. "payment declined"), so there is no StepFailed entry at all.
-        //     Retry here means starting over: reset the saga back to its initial state and replay
-        //     the message that originally started it (SagaStarted carries that payload).
-        var lastFailure = timeline.LastOrDefault(e => e.EntryType == SagaEntryType.StepFailed);
-        var redrive = lastFailure is { MessageType: not null, PayloadJson: not null } ? lastFailure : null;
-        var resetToState = summary.CurrentState;
-
-        if (redrive is null)
-        {
-            var start = timeline.FirstOrDefault(e => e.EntryType == SagaEntryType.SagaStarted);
-            if (start is not { MessageType: not null, PayloadJson: not null, ToState: not null })
-                return Results.UnprocessableEntity(new { error = $"Saga '{sagaType}' instance '{correlationId}' has no recorded failure or start to retry from." });
-
-            redrive = start;
-            resetToState = start.ToState;
-        }
-
+        // Appended before the reset, so a 409 or 502 below leaves it in the timeline with no step after it.
         await log.AppendAsync(SagaLogEntry.Create(correlationId, summary.SagaType, SagaEntryType.ManualRetryRequested,
-            fromState: summary.CurrentState, toState: resetToState, messageType: redrive.MessageType, messageId: redrive.MessageId), ct);
-
-        return await ResetAndRedriveAsync(sagaType, correlationId, summary, resetToState, redrive, timeline, admin, transport, timeProvider, snapshots, ct);
-    }
-
-    /// <summary>
-    /// The reset/republish tail of <see cref="RetrySagaAsync"/> — split out to stay under the
-    /// analyzer's method-length cap, the same shape VSaga.Core's orchestrator uses for its own
-    /// persist/dispatch tails.
-    /// </summary>
-    private static async Task<IResult> ResetAndRedriveAsync(string sagaType, Guid correlationId, SagaSummary summary, string resetToState,
-        SagaLogEntry redrive, IReadOnlyList<SagaLogEntry> timeline, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider,
-        SagaResetSnapshotRecorder snapshots, CancellationToken ct)
-    {
-        if (!string.Equals(resetToState, summary.CurrentState, StringComparison.Ordinal))
-        {
-            try
-            {
-                // summary.Version is the version the caller read and validated — passing it is what
-                // makes the 409 below mean "the saga changed since you looked", not "since some
-                // later server-side re-read".
-                await admin.ResetStateAsync(sagaType, correlationId, resetToState, SagaStatus.Running, summary.Version, timeProvider.GetUtcNow(), ct);
-            }
-            catch (SagaConcurrencyException)
-            {
-                // The saga advanced between the summary read and the reset — e.g. a live message
-                // was processed concurrently. Mirrors the status guard's 409: the operator is
-                // acting on a stale view and should reload before retrying again.
-                return Results.Conflict(new { error = $"Saga '{sagaType}' instance '{correlationId}' was modified concurrently with this retry; reload and try again." });
-            }
-
-            // The reset wrote a state no engine snapshot describes; record it before the redrive, so it is
-            // sequenced ahead of the snapshots the redriven step records. Best effort (it never throws), and
-            // it writes nothing for a saga whose timeline holds no StatePersisted yet.
-            await snapshots.RecordAsync(sagaType, correlationId, summary.Version + 1, timeline, ct);
-        }
-
-        // Redrive by re-publishing the message with a fresh message id (so the dedupe check
-        // doesn't discard it) and the same correlation id. This deliberately does not require the
-        // dashboard to know the saga's TState/definition — whichever process actually runs that
-        // saga's engine picks it up through its normal subscription, exactly like any other
-        // delivery, and the orchestrator resumes Running on successful reprocessing.
-        //
-        // Note this republish is still correlation-id-addressed, so every saga type subscribed to
-        // this message type sees it, not only `sagaType` — each one's own dedupe/initiation rules
-        // then decide what to do with it. That is the same fan-out a first-time delivery has.
-        var body = Encoding.UTF8.GetBytes(redrive.PayloadJson!);
+            fromState: summary.CurrentState, toState: step.FromState, messageType: step.MessageType, messageId: step.MessageId), ct);
 
         try
         {
-            await transport.PublishRawAsync(redrive.MessageType!, body, MessageEnvelope.New(correlationId), ct);
+            // Always, even when the state does not change (a StepFailed or DeliveryExhausted retry): the
+            // version the caller read is the concurrency guard, so a saga that moved since answers 409, and
+            // the saga leaves Failed at once, so a second click meets the status guard above.
+            await admin.ResetStateAsync(sagaType, correlationId, step.FromState, SagaStatus.Running, summary.Version, timeProvider.GetUtcNow(), ct);
+        }
+        catch (SagaConcurrencyException)
+        {
+            return Results.Conflict(new { error = $"Saga '{sagaType}' instance '{correlationId}' was modified concurrently with this retry; reload and try again." });
+        }
+
+        // From here on the reset is committed, so nothing below listens to the request's token: a client that
+        // disconnects now must not leave the saga Running in the step's from-state with no redrive, where the
+        // status guard above would refuse every further retry. The work left is a few store calls and one
+        // publish, each bounded by its own client's timeouts.
+        //
+        // The reset wrote a state no engine snapshot describes; record it before the redrive, so it is
+        // sequenced ahead of the snapshots the redriven step records. Best effort (it never throws).
+        await snapshots.RecordAsync(sagaType, correlationId, summary.Version + 1, timeline, CancellationToken.None);
+
+        return await RedriveAsync(summary, step, body, timeline, admin, transport, timeProvider, snapshots,
+            loggerFactory.CreateLogger(typeof(SagaEndpoints).FullName!));
+    }
+
+    /// <summary>
+    /// The publish tail of <see cref="RetrySagaAsync"/>, split out for length. The redrive is a fresh envelope
+    /// under the saga's correlation id carrying only the target-saga-type header. When the publish throws,
+    /// whatever the exception, the reset is undone as far as it can be and the 502 says whether it was.
+    /// </summary>
+    private static async Task<IResult> RedriveAsync(SagaSummary summary, SagaRetryStep step, string body, IReadOnlyList<SagaLogEntry> timeline,
+        ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider, SagaResetSnapshotRecorder snapshots, ILogger logger)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [MessageEnvelope.TargetSagaTypeHeader] = summary.SagaType,
+        };
+
+        string cause;
+        try
+        {
+            await transport.PublishRawAsync(step.MessageType, Encoding.UTF8.GetBytes(body), MessageEnvelope.New(summary.CorrelationId, headers), CancellationToken.None);
+            return Results.Accepted();
         }
         catch (MessageTransportPublishException ex)
         {
-            return Results.Problem(statusCode: StatusCodes.Status502BadGateway,
-                detail: $"Saga '{sagaType}' instance '{correlationId}' could not be retried: {ex.Message}");
+            cause = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            // IMessageTransport does not promise to wrap every failure: RabbitMqTransport, for one, lets a
+            // TaskCanceledException out of opening a channel on a broker that stopped answering. The reset is
+            // committed either way, so it is undone the same way. That is safe even when the publish may have
+            // gone out after all: the restore is version-checked, so if the redrive already moved the saga on,
+            // the restore loses and reports it.
+            logger.LogError(ex, "The retry redrive of {MessageType} for saga {SagaType} correlation {CorrelationId} failed to publish",
+                step.MessageType, summary.SagaType, summary.CorrelationId);
+            cause = $"The message transport failed to publish the {step.MessageType} message ({ex.GetType().Name}); the dashboard API log has the details.";
         }
 
-        return Results.Accepted();
+        var restore = await RestoreAfterFailedRedriveAsync(summary, step, timeline, admin, timeProvider, snapshots, logger);
+
+        return Results.Problem(statusCode: StatusCodes.Status502BadGateway,
+            detail: $"Saga '{summary.SagaType}' instance '{summary.CorrelationId}' could not be retried: {cause} {restore.Outcome}",
+            extensions: new Dictionary<string, object?>(StringComparer.Ordinal) { ["restored"] = restore.Restored });
     }
+
+    /// <summary>
+    /// Best-effort undo of the retry reset after the redrive failed to publish: puts back the state and status
+    /// the caller saw, at the version the reset wrote, and records that state like the reset's own. Not
+    /// restored, after logging a warning, when the saga moved on since the reset (that newer state stands);
+    /// not restored either, after logging an error, when the restore itself fails for any other reason (a store
+    /// outage, a timeout, the saga deleted meanwhile). The outcome text never carries exception text; the log
+    /// does. Runs without the request's token, like the rest of the work after the reset.
+    /// </summary>
+    private static async Task<RedriveRestore> RestoreAfterFailedRedriveAsync(SagaSummary summary, SagaRetryStep step, IReadOnlyList<SagaLogEntry> timeline,
+        ISagaAdminStore admin, TimeProvider timeProvider, SagaResetSnapshotRecorder snapshots, ILogger logger)
+    {
+        try
+        {
+            await admin.ResetStateAsync(summary.SagaType, summary.CorrelationId, summary.CurrentState, summary.Status, summary.Version + 1, timeProvider.GetUtcNow(), CancellationToken.None);
+        }
+        catch (SagaConcurrencyException ex)
+        {
+            logger.LogWarning(ex,
+                "The retry redrive of saga {SagaType} correlation {CorrelationId} failed to publish and the reset could not be undone: the saga was modified after the reset",
+                summary.SagaType, summary.CorrelationId);
+            return new RedriveRestore(false,
+                "The saga could not be restored to its previous state and status because it was modified concurrently after the reset; reload it to see where it is now.");
+        }
+        catch (Exception ex)
+        {
+            // Without this the exception would escape as a bare 500 with no 'restored' flag, hiding that the
+            // saga is left Running in the step's from-state, where every later retry meets the status guard.
+            logger.LogError(ex,
+                "The retry redrive of saga {SagaType} correlation {CorrelationId} failed to publish and the reset could not be undone",
+                summary.SagaType, summary.CorrelationId);
+            return new RedriveRestore(false,
+                $"The saga could not be restored to its previous state; it is Running in state '{step.FromState}' with no redrive in flight. See the dashboard API log.");
+        }
+
+        await snapshots.RecordAsync(summary.SagaType, summary.CorrelationId, summary.Version + 2, timeline, CancellationToken.None);
+        return new RedriveRestore(true, $"The saga was restored to state '{summary.CurrentState}' with status '{summary.Status}'.");
+    }
+
+    /// <summary>Whether the reset was undone after a failed redrive, and the sentence the 502 detail says about it.</summary>
+    private readonly record struct RedriveRestore(bool Restored, string Outcome);
 }
