@@ -403,7 +403,10 @@ calculus, that is a new design question, not a resumption of this checklist.
   entry, not solved.
 - **Parent times out while the child still runs** → orphaned child, still holding whatever it reserved.
 - **Parent retried from the dashboard** → children are *not* re-run; the reset replays the parent's
-  own message only.
+  own message only. [2026-10-02: still true of existing children, but the retry now re-runs the
+  parent's failed step rather than resetting to the start (ADR 0008), so a re-run step that calls
+  `StartChildAsync` starts a second child: retrying a timed-out `InvoiceFollowUpSaga` started a new
+  `InvoiceArchivalSaga` beside the first. See `docs/dashboard.md`, "Manual retry".]
 - **Adding a timeout to an existing state does not rescue in-flight instances** — timeouts are scheduled
   on entry to a state. Same trap as the 60 stranded sagas in
   `docs/history/timeout-coverage-every-awaiting-state.md` (formerly a README section).

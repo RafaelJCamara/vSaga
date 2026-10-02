@@ -76,7 +76,7 @@ poller needs (eight migrations in total).
 | Table | Holds |
 | --- | --- |
 | `SagaInstances` | One row per saga instance (the snapshot), keyed by `(SagaType, CorrelationId)`. `DataJson` holds the whole serialized `TState`; the other columns are a queryable projection of it — see [`adr/0005-saga-state-storage-model.md`](adr/0005-saga-state-storage-model.md). |
-| `SagaEventLog` | The append-only `SagaLogEntry` timeline behind the dashboard (see [`observability.md`](observability.md)). |
+| `SagaEventLog` | The append-only `SagaLogEntry` timeline behind the dashboard (see [`observability.md`](observability.md)). `EntryType` is stored as its number: `21` is `StatePersisted`, whose `PayloadJson` is a copy of `SagaInstances.DataJson` as it stood after a step (see [State snapshots](observability.md#state-snapshots)); `SagaStarted`, `MessageReceived` and `StepFailed` rows carry the inbound message body. |
 | `SagaTimeouts` | Scheduled/fired timeouts, claimed by the dispatcher below. |
 | `SagaOutboxMessages` | Transactional-outbox rows, staged with the snapshot and drained inline or by the poller. |
 | `SagaConsumerRegistrations` | The service topology (`IServiceTopologyStore`), keyed by `(ServiceName, MessageType)`. |
@@ -324,7 +324,13 @@ materialises the candidates server-side (`ZINTER`, read-only) and pages client-s
 Head-of-line blocking is the cost: Redis is single-threaded, so a deep page, a broad search or a
 `LRANGE` over a long timeline stalls every other command, including live `UpdateAsync`s — where Postgres
 runs the dashboard's query on a separate backend. The endpoint's 500-row `pageSize` clamp is a hard
-prerequisite of this provider, not a nicety.
+prerequisite of this provider, not a nicety. The engine's own reads are timelines too:
+`GetVisitedStatesAsync` runs an `LRANGE` over the saga's whole list before every message and timeout,
+and the dashboard reads it again for the timeline and the map on every live update. Since every
+committed step appends a [state snapshot](observability.md#state-snapshots), each of those reads also
+returns every state the saga recorded, so its size grows with steps × state size; the per-saga snapshot
+budget ([`MaxStateSnapshotBytesPerSaga`](configuration.md#sagaorchestratoroptions), 1 MiB by default)
+is what bounds it for a saga with many steps or a large state.
 
 ### Capacity model
 
@@ -338,14 +344,35 @@ Measured with `MEMORY USAGE` against the OrderProcessing sample under `docker-co
 | its dedupe set | 232 |
 | **every provider key, averaged over all 206 sagas** (indexes, timeouts and outbox rows included) | **≈ 5 500 per saga** |
 
-So a completed saga costs **≈ 5–10 KB** and one gigabyte holds on the order of **100 000–180 000
-retained sagas**, growing monotonically: nothing the engine does deletes a saga, and no retention shape
-that keeps compensation and redelivery dedupe correct exists (a TTL would also make keys eviction
-candidates under the `volatile-*` policies managed platforms default to). Set `maxmemory`, budget 20 %
-headroom above the projected dataset, and alert on the health check's `memoryRatio` before it reaches
-`WriteMemoryThreshold` — past it, every persist is refused and the engine dead-letters after its
-redelivery budget. Terminal-saga archival is the only retention shape considered and is deferred with its
-own entry gate (`design/redis-persistence.md` §6.5).
+[2026-10-02: the timeline figures above predate [state snapshots](observability.md#state-snapshots) and
+the message body on every `MessageReceived`, both on by default since; they are superseded by the
+re-measurement below. The snapshot hash, dedupe set and 206-saga average were not re-measured.]
+
+Re-measured on 2026-10-02 with `MEMORY USAGE <key> SAMPLES 0` against the same overlay (completed
+`OrderSaga`s, four handled messages each; the timeline list of every saga measured came out at the same
+size):
+
+| A completed `OrderSaga`'s timeline list | entries | bytes |
+| --- | --- | --- |
+| before snapshots and `MessageReceived` bodies (the figure above, re-measured) | 15 | 7 288 |
+| with `MessageReceived` bodies, snapshots off (`RecordStateSnapshots = false`) | 15 | 8 312 |
+| **with bodies and snapshots, the default** | **19** | **12 528** |
+
+The four snapshots add 4 216 bytes (+51 %) and the bodies another 1 024 (`MEMORY USAGE` moves in
+allocator-sized steps; the list elements themselves grew by about 540 bytes for 360 characters of
+bodies). Each snapshot element is about 1 075 bytes for a 426–433-byte state: the entry's other fields,
+plus the state stored JSON-escaped inside the entry. Added to the hash and dedupe set above, a completed
+sample `OrderSaga` now costs **≈ 14 KB**, so one gigabyte holds on the order of **70 000** of them. A saga
+type with more steps or a larger state pays roughly steps × escaped state size on top, up to the per-saga
+snapshot budget; `RecordStateSnapshots = false` or a small `MaxStateSnapshotBytes` takes most of it back.
+
+Whatever the per-saga cost, retained sagas grow monotonically: nothing the engine does deletes a saga,
+and no retention shape that keeps compensation and redelivery dedupe correct exists (a TTL would also
+make keys eviction candidates under the `volatile-*` policies managed platforms default to). Set
+`maxmemory`, budget 20 % headroom above the projected dataset, and alert on the health check's
+`memoryRatio` before it reaches `WriteMemoryThreshold` — past it, every persist is refused and the
+engine dead-letters after its redelivery budget. Terminal-saga archival is the only retention shape
+considered and is deferred with its own entry gate (`design/redis-persistence.md` §6.5).
 
 ### Supported servers
 
@@ -625,7 +652,27 @@ is in [`history/mongodb-persistence-provider.md`](history/mongodb-persistence-pr
 timeline entry 436 bytes, and the sample's completed sagas write 10–15 entries each, so a completed
 saga costs **≈ 6–8 KB of data plus roughly the same again in indexes** (nine on `sagaInstances`
 and three on `sagaEventLog`, counting `_id` on both) before WiredTiger's compression, which took the
-900 KB of data to 580 KB on disk. Nothing the engine does deletes a saga, and no retention shape that
+900 KB of data to 580 KB on disk. [2026-10-02: those entry counts predate
+[state snapshots](observability.md#state-snapshots) and the message body on every `MessageReceived`, both
+on by default since; superseded for the event log by the re-measurement below.]
+
+Re-measured on 2026-10-02 against the same overlay, as the sum of `$bsonSize` over each completed
+`OrderSaga`'s `sagaEventLog` documents (four handled messages each; every saga measured came within a few
+bytes of the average):
+
+| A completed `OrderSaga`'s event log | documents | BSON bytes |
+| --- | --- | --- |
+| before snapshots and `MessageReceived` bodies | 15 | 6 426 |
+| with `MessageReceived` bodies, snapshots off (`RecordStateSnapshots = false`) | 15 | 6 806 |
+| **with bodies and snapshots, the default** | **19** | **10 040** |
+
+The four `StatePersisted` documents add 3 234 bytes (+48 %), about 808 bytes each for a 426–433-byte
+state, and the four bodies add about 380. A sample `OrderSaga`'s event log is therefore about 10 KB of
+data, before indexes and compression; a saga type with more steps or a larger state pays roughly steps ×
+state size on top, up to the per-saga snapshot budget. A snapshot is never larger than
+`MaxPayloadJsonBytes` either: above it the payload guard stores its own marker.
+
+Nothing the engine does deletes a saga, and no retention shape that
 keeps compensation and redelivery dedupe correct exists; a TTL index on the event log or a naive one on
 the outbox (which would delete Pending rows) is out of scope by design.
 

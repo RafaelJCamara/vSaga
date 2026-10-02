@@ -40,7 +40,7 @@ public interface ISagaSummaryReader
 
     Task<SagaSummary?> GetAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default);
 
-    /// <summary>Raw serialized business state (the TState JSON), for the dashboard's saga detail "Data" tab — generic access without knowing the concrete TState type.</summary>
+    /// <summary>Raw serialized business state (the TState JSON), for the dashboard's saga detail page (the Saga data bar's end state and comparison) — generic access without knowing the concrete TState type.</summary>
     Task<string?> GetDataJsonAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default);
 
     /// <summary>

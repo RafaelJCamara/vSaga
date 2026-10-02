@@ -155,16 +155,18 @@ by both DSLs (constructed internally by `WithTimeout(...)`, never directly).
 | `Finalize` | `Finalize(SagaStatus status)` | Fixed only. |
 | `Compensate` | `Compensate()` | Same semantics as `EventBuilder.Compensate()`. |
 
-**`SagaStatus` values** (`VSaga.Abstractions.Sagas`): `Running`, `Completed`, `Failed`,
-`Compensating`, `Compensated`, `TimedOut`, `Cancelled`. The engine itself only ever writes `Running`
-(a new instance, or a `Failed` one picking a message up again) and `Failed` (a step that threw once
-its `Retry` was exhausted, or a message whose delivery was exhausted); the dashboard's manual retry
-can also reset one to `Running`. Every other value, `TimedOut` included, comes only from a
-`Finalize(...)` your saga declares, so a timeout step with no `.Finalize(...)` leaves the instance
-`Running`. The value you pick matters elsewhere: a timeout fires only for a `Running` instance, the
-dashboard's [manual retry](dashboard.md#manual-retry) accepts only `Failed`/`TimedOut`, the Saga Map
-marks the saga's own node failed only for those two, and `vsaga.saga.completed`/`vsaga.saga.failed`
-count only their own status (see [`observability.md`](observability.md#metrics)).
+**`SagaStatus` values** (`VSaga.Abstractions.Sagas`): `Running`, `Completed`, `Failed`, `Compensating`,
+`Compensated`, `TimedOut`, `Cancelled`. The engine itself only ever writes `Running` (a new instance, or
+a `Failed` one picking a message up again) and `Failed` (a step that threw once its `Retry` was
+exhausted, or a message whose delivery was exhausted); the dashboard's manual retry also resets a
+`Failed` or `TimedOut` one to `Running`, in the state it had before the step it re-runs (and back to its
+previous state and status when the redrive cannot be published). Every other value, `TimedOut` included,
+comes only from a `Finalize(...)` your saga declares, so a timeout step with no `.Finalize(...)` leaves
+the instance `Running`. The value you pick matters elsewhere: a timeout fires only for a `Running`
+instance, the dashboard's [manual retry](dashboard.md#manual-retry) accepts only `Failed`/`TimedOut`,
+the Saga Map marks the saga's own node failed only for those two, and
+`vsaga.saga.completed`/`vsaga.saga.failed` count only their own status (see
+[`observability.md`](observability.md#metrics)).
 
 ## `RetryPolicy`
 

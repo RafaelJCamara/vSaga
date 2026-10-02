@@ -10,7 +10,8 @@ Wolverine owning dispatch to business logic. Full build history and live-verific
   type and invokes a `Handle(T)` discovered by assembly scanning at startup — the opposite of vSaga's
   runtime-registered `SubscribeAsync`. `RawEnvelope` is the fix: every vSaga message travels as this
   one empty marker type, so Wolverine's own discovery only ever needs to know about one static handler.
-  The real message type, correlation id, message id, and all four vSaga headers travel inside a
+  The real message type, correlation id, message id, and all five vSaga headers (see
+  [`index.md`](index.md#what-travels-with-a-message)) travel inside a
   self-describing JSON payload (`WireEnvelope`) carried as `Envelope.Data`, deliberately not relying on
   Wolverine's own header-to-AMQP-property mapping.
 - **Publish/send** funnel through Wolverine's raw-send primitive (`IDestinationEndpoint.SendRawMessageAsync`)

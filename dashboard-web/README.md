@@ -1,7 +1,9 @@
 # vSaga dashboard (Angular SPA)
 
 The web UI for the vSaga ops dashboard: a saga list with filtering and live updates, a per-instance
-detail page with a service map, timeline, and state data, and manual retry for failed sagas. It is
+detail page with two tabs, a service map and a timeline of numbered steps, a Saga data bar (the data at
+start, at end, and a comparison) and each step's data, and a retry that re-runs the step a failed saga
+failed in (see [`docs/dashboard.md`](../docs/dashboard.md#the-saga-detail-page)). It is
 a thin client over the Dashboard API — every screen here is backed by an endpoint documented in
 [`docs/dashboard.md`](../docs/dashboard.md).
 
@@ -159,13 +161,20 @@ nginx/default.conf.template The nginx configuration: static files, the /api and 
 proxy.conf.mjs              The dev server's proxy for /api and /hubs (VSAGA_API_URL)
 src/app/
   pages/saga-list/          The filterable, sortable, paged saga list
-  pages/saga-detail/        One instance: summary, map/timeline/data tabs, retry
-  components/saga-map/      The service-graph renderer and its replay scrubber
+  pages/saga-detail/        One instance: summary, Saga data bar, map/timeline tabs, retry, URL state
+  components/saga-map/      The service-graph renderer, its replay scrubber and the as-of-entry banner
+  components/saga-timeline/ The timeline as numbered steps, with Recorded at times and the failed-step marker
+  components/saga-data-inspector/  One state: changes against an earlier one, full state, message, copy
+  components/saga-data-overview/   The Saga data bar: At start, At end (or Current), Compare
+  components/local-time/    A <time> in the browser's local zone, UTC on hover
   components/kind-badge/    The Orchestrated/Choreographed pill
   components/status-badge/  The saga-status pill
   services/                 HTTP client and the SignalR hub client
   interceptors/             The HTTP interceptor that adds the X-Api-Key header
   models/                   DTOs mirroring the API's response shapes
+  util/                     Pure helpers: the step fold, JSON diff, state JSON and markers, time formats,
+                            entry-type labels
+  testing/                  Spec-only fixtures (timeline entries and steps), excluded from the app build
 ```
 
 Generated with Angular CLI 21.2.10; `npx ng generate component <name>` still works as usual for

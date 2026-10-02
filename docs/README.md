@@ -21,11 +21,13 @@ new here; the rest of this index is organized by topic, roughly in the order you
   servers), Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
   persistence. Each provider has a runnable sample in
   [`dotnet/samples/Persistence/`](../dotnet/samples/Persistence/).
-- [`observability.md`](observability.md) — the persisted event log, OpenTelemetry traces/metrics,
-  and the one-line OTLP exporter wiring.
-- [`dashboard.md`](dashboard.md) — API endpoints, API-key authentication, live updates over SignalR,
-  the Angular SPA and how it is served (an nginx container in the compose stack, on the API's own
-  origin, and what to keep behind your own proxy or TLS), and the Saga Map.
+- [`observability.md`](observability.md) — the persisted event log and its state snapshots,
+  OpenTelemetry traces/metrics, and the one-line OTLP exporter wiring.
+- [`dashboard.md`](dashboard.md) — API endpoints, the manual retry that re-runs the failed step for one
+  saga type, state snapshots, API-key authentication, live updates over SignalR, the Angular SPA (the
+  saga detail page's timeline steps, data views and map jump) and how it is served (an nginx container
+  in the compose stack, on the API's own origin, and what to keep behind your own proxy or TLS), and the
+  Saga Map.
 - [`testing.md`](testing.md) — `SagaTestHarness`, for unit-testing saga definitions against the real
   engine with no broker/database.
 - [`chaos.md`](chaos.md) — `VSaga.Chaos`'s fault-injection middleware (delay/drop/duplicate).

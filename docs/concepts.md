@@ -60,8 +60,9 @@ The default correlation mechanism is the transport-stamped correlation id (`Mess
 the saga instance whose `(SagaType, CorrelationId)` matches. `CorrelateBy` on an `EventBuilder`/
 `ChoreographyEventBuilder` step additionally *assigns* a value extracted from the message onto saga
 state (e.g. stamping `ctx.Saga.OrderId` from an inbound message's own `OrderId` field) — by itself,
-that's just a stored value, visible in the saga's Data tab on the dashboard (dashboard search matches
-only saga type and correlation id), with no effect on message routing.
+that's just a stored value, visible in the saga's data on the dashboard (the Saga data bar under the
+summary, and each timeline step's Data view; dashboard search matches only saga type and correlation
+id), with no effect on message routing.
 
 **Business-key correlation** (`CorrelateOn`) arms a second, fallback lookup. A saga definition that
 calls `CorrelateOn(s => s.OrderId)` in its constructor, ahead of its steps, declares `OrderId` as its

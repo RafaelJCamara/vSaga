@@ -32,7 +32,7 @@ harness.AssertPublished<ChargePayment>(m => m.Amount == 42m);
 | `Given` | `SagaTestHarness<TDefinition, TState> Given(Guid correlationId)` | Sets the correlation id subsequent `When`/assert calls act on. Fluent — returns the harness. |
 | `WhenAsync<TMessage>` | `Task<SagaTestHarness<TDefinition, TState>> WhenAsync<TMessage>(TMessage message, CancellationToken ct = default) where TMessage : notnull` | Publishes under the current correlation id and waits for full processing (the in-memory transport dispatches synchronously). Fluent. |
 | `AdvanceTimeByAsync` | `Task<SagaTestHarness<TDefinition, TState>> AdvanceTimeByAsync(TimeSpan duration, CancellationToken ct = default)` | Advances the fake clock and processes any timeouts now due for this saga type — the deterministic alternative to a real wait. Fluent. |
-| `RetryAsync` | `Task<SagaTestHarness<TDefinition, TState>> RetryAsync(CancellationToken ct = default)` | Fluent. Redrives the last recorded technical failure (a `StepFailed` entry) against the saga's current, unchanged state — the narrower of the dashboard Retry button's two redrive shapes (see [`dashboard.md`](dashboard.md#manual-retry)). Only valid while the saga is `Failed` **with** a `StepFailed` entry; throws otherwise. It does **not** implement the dashboard's other shape — resetting to initial state and replaying the starting message for a business failure/timeout with no `StepFailed` entry — so it can't stand in for a test of that path. |
+| `RetryAsync` | `Task<SagaTestHarness<TDefinition, TState>> RetryAsync(CancellationToken ct = default)` | Fluent. Redrives the last recorded technical failure (a `StepFailed` entry) in process, against the saga's current, unchanged state. Only valid while the saga is `Failed` **with** a `StepFailed` entry; throws otherwise. The dashboard's Retry button covers more (see [`dashboard.md`](dashboard.md#manual-retry)): it also re-runs the step that ended a saga in a business failure, a dead-letter or a timeout, after resetting the saga's state and status to what they were before that step, and it does so by republishing the step's message to the broker. This method does none of that, so it can't stand in for a test of those paths. |
 | `FindStateAsync` | `Task<TState?> FindStateAsync(CancellationToken ct = default)` | Raw snapshot lookup. |
 | `GetTimelineAsync` | `Task<IReadOnlyList<SagaLogEntry>> GetTimelineAsync(CancellationToken ct = default)` | Raw timeline lookup. |
 | `GetPublished` | `IReadOnlyList<object> GetPublished()` | Every message published so far, across every correlation id this harness has touched (publish and send both). |
@@ -45,6 +45,14 @@ harness.AssertPublished<ChargePayment>(m => m.Amount == 42m);
 
 ## Notes
 
+- The harness records [state snapshots](observability.md#state-snapshots) by default, like any engine
+  host, so `GetTimelineAsync` returns a `StatePersisted` entry after every committed step, its
+  `PayloadJson` the state as stored. A test that counts or orders entries, or that should not see them,
+  opts out:
+  `new SagaTestHarness<TDefinition, TState>(s => s.AddSingleton(new SagaOrchestratorOptions { RecordStateSnapshots = false }))`.
+  The registration replaces the engine's default `SagaOrchestratorOptions`, so set any other option you
+  rely on in the same object. A snapshot's `UpdatedAtUtc` follows the `FakeTimeProvider`, while every
+  entry's `OccurredAtUtc` stays wall-clock.
 - `Given`/`WhenAsync`/`AdvanceTimeByAsync`/`RetryAsync` all return the harness (the async three as a
   `Task<...>`), which is what lets the example above chain `.Given(...).WhenAsync(...)` in one
   expression. The assertion and lookup members do not — they return what they assert or read.

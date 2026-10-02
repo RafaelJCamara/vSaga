@@ -240,6 +240,10 @@ already delivers the `ClaimDueAsync` saga-type filter, so R-13 is fixed before t
   million retained sagas, growing monotonically with **no correctness-safe pruning mechanism**, because
   the event log feeds both compensation and dedupe. [2026-09-27: measured at ≈ 5–10 KB per completed
   saga, 100 000–180 000 per GB — [`../persistence.md`](../persistence.md#capacity-model).]
+  [2026-10-02: superseded for sagas recorded with state snapshots and message bodies, both on by
+  default since ADR 0007 and ADR 0008: a completed sample `OrderSaga`'s timeline list re-measured at
+  12 528 bytes instead of 7 288, about 14 KB per saga in all, on the order of 70 000 per GB — same
+  link.]
 - **Eviction is a live hazard**: under any policy but `noeviction`, Redis deletes snapshots, timeout
   members and outbox rows with no error at any call site. And the usual reason a team already runs Redis
   is a cache tuned for eviction — so the most likely deployment is the unsupported one.

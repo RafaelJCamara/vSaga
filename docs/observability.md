@@ -21,7 +21,65 @@ The full `SagaEntryType` set is `SagaStarted`, `StateEntered`, `MessageReceived`
 `MessagePublished`/`MessageSent`, `UnexpectedEvent`, `StepStarted`/`StepSucceeded`/`StepFailed`,
 `CompensationStarted`/`CompensationStepSucceeded`/`CompensationStepFailed`,
 `TimeoutScheduled`/`TimeoutFired`/`TimeoutCancelled`, `ManualRetryRequested`,
-`ChildSagaStarted`/`ChildSagaFinished`, `DeliveryExhausted`, `SagaCompleted`, and `SagaCancelled`.
+`ChildSagaStarted`/`ChildSagaFinished`, `DeliveryExhausted`, `SagaCompleted`, `SagaCancelled`, and
+`StatePersisted` (see [State snapshots](#state-snapshots) below).
+
+**Message bodies.** `SagaStarted`, `MessageReceived` and `StepFailed` carry the inbound message's body
+in `PayloadJson`: the engine serialises the message it received, on every step, the first included.
+That body is what lets the dashboard re-run a failed step (see
+[`dashboard.md`](dashboard.md#manual-retry)); a saga recorded before `MessageReceived` carried it can
+be retried only from a `StepFailed` entry or its first step. On MongoDB a body above
+`MaxPayloadJsonBytes` is stored as a size marker instead (see
+[`configuration.md`](configuration.md#vsagamongooptions-vsagapersistencemongodb)).
+
+### State snapshots
+
+A saga's stored state is overwritten at every persist, so on its own the log says which states a saga
+went through but not what its data was after each step. `StatePersisted` entries fill that gap: right
+after a persist commits, the engine appends one whose `PayloadJson` is the state exactly as the
+snapshot store wrote it (the same `JsonSerializer.Serialize(state)` call on the same object, so the text
+equals the stored blob). The decision and its alternatives are in
+[ADR 0007](adr/0007-state-snapshots-in-the-event-log.md).
+
+- **When one is written.** After a step's persist commits (`PersistAndFinalizeStepSuccessAsync`), after
+  a failed step's persist marks the saga `Failed` (`HandleStepFailureAsync`), after a timeout's final
+  persist (`CommitAndDispatchTimeoutAsync`), and after a redelivery-exhausted message's persist
+  (`RecordDeliveryExhaustedAsync`). Each one goes after the commit and before the step's deferred
+  publishes are drained, so a snapshot never describes a state that was not stored and always precedes
+  anything the step's own publishes cause. The dashboard API also appends one after a
+  [manual retry](dashboard.md#manual-retry) resets the saga, but only for a saga that already has
+  snapshots.
+- **When none is written.** For the timeout claim, the business-key reservation insert, an
+  `UnexpectedEvent`, a duplicate delivery, an unhandled timeout, and any transition that lost its
+  concurrency race; nor when a process dies between the commit and the append. A step can therefore
+  have no snapshot, and the dashboard says so instead of guessing.
+- **Identity.** `MessageType`/`MessageId` name the inbound message whose step the snapshot follows (both
+  null after a timeout or a dashboard reset). `FromState` and `ToState` are always null, because the
+  compensation set is read from `ToState` and a snapshot must not add to it.
+- **Two markers instead of the state.** A state larger than `MaxStateSnapshotBytes` (UTF-8 bytes of its
+  JSON, 256 KiB by default) is recorded as `{"$vsagaStateOmitted":true,"bytes":N,"limit":L}`. A saga
+  whose snapshots already add up to `MaxStateSnapshotBytesPerSaga` (1 MiB by default) records the
+  snapshots of later successful steps and timeouts as `{"$vsagaStateOmitted":true,"bytes":N,"budget":B}`;
+  the snapshots after a step failure or a delivery exhaustion are still recorded in full (up to the
+  per-snapshot cap), because those are the ones an investigation needs. The budget exists because the
+  engine reads every snapshot back before every step (below).
+- **Best effort, with its own deadline.** A failed append, cancellation and timeouts included, is logged
+  as a Warning ("Could not record the state snapshot for saga …") and the step carries on: the only
+  effect is a step with no snapshot. The append runs under `StateSnapshotTimeout` (5 s by default), so a
+  stalled event-log write cannot hold back the step's deferred publishes and acknowledgement.
+- **Not a correctness input.** `StatePersisted` is the one entry type the engine never reads for a
+  decision: neither the compensation set nor the duplicate check looks at it, and the Saga Map skips it.
+  It is still part of the log, so it shares the log's no-retention rule above: snapshots, business data
+  included, stay as long as the saga's history does.
+- **Cost.** One more serialisation and one more append per committed transition, and the storage of
+  roughly steps × state size per saga (measured per provider in
+  [`persistence.md`](persistence.md#capacity-model) and
+  [`persistence.md`](persistence.md#mongodb)). `GetVisitedStatesAsync` reads the whole timeline,
+  snapshots included, before every message and timeout, so the read volume grows with the square of the
+  step count; the per-saga budget bounds it.
+
+The options are listed in [`configuration.md`](configuration.md#sagaorchestratoroptions);
+`RecordStateSnapshots = false` turns the entry off.
 
 ## Traces
 

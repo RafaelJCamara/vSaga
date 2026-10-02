@@ -40,8 +40,10 @@ namespace VSaga.Abstractions.Persistence;
 /// The state blob is <c>System.Text.Json</c> with default options — a stated contract, not an
 /// accident of implementation. The exact text matters, not just round-trip fidelity:
 /// <see cref="ISagaAdminStore"/>'s reset patches the blob by exact (PascalCase) property name, and
-/// the dashboard's Data tab keys on those same names when it renders
-/// <see cref="ISagaSummaryReader.GetDataJsonAsync"/>'s result. Providers
+/// the dashboard's saga data views key on those same names (<c>Status</c>, <c>Kind</c>,
+/// <c>Version</c>, <c>UpdatedAtUtc</c>) when they render <see cref="ISagaSummaryReader.GetDataJsonAsync"/>'s
+/// result and the engine's <see cref="SagaEntryType.StatePersisted"/> snapshots, whose text the engine
+/// writes with the same default-options call and expects to equal the stored blob. Providers
 /// deliberately do not share serialisation code — a shared naming-policy mistake would corrupt every
 /// provider at once, and no fixture could catch it because every fixture would round-trip through
 /// the same code — so the format is pinned per provider by a golden-blob test instead: a known

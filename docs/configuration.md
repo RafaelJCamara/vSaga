@@ -47,11 +47,38 @@ services.AddVSagaEngine(o => o
     .AddSaga<OrderSaga, OrderSagaState>());
 ```
 
-One tunable:
+Five tunables. None is validated:
 
 | Property | Default | Meaning |
 | --- | --- | --- |
 | `MaxDeliveryAttempts` | `5` | How many times an **infrastructure-level** failure (a deserialize error, a persistence-store exception — distinct from a saga step's own thrown exception, which `HandleStepFailureAsync` already handles by marking the saga `Failed`) redelivers the same message, with an incremented `x-vsaga-delivery-attempt` header, before it is routed to the dead-letter queue instead of requeued forever. |
+| `RecordStateSnapshots` | `true` | Whether the engine appends a `StatePersisted` entry, carrying the state exactly as it was stored, after each committed step, step failure, timeout and delivery exhaustion (see [`observability.md`](observability.md#state-snapshots)). `false` records none, and the dashboard then shows no per-step data. |
+| `MaxStateSnapshotBytes` | `262144` (256 KiB) | The largest state, in UTF-8 bytes of its JSON, recorded in full. A larger one is recorded as `{"$vsagaStateOmitted":true,"bytes":N,"limit":L}`. `0` records size-only markers, which keeps state out of the log while still showing where each step committed. |
+| `MaxStateSnapshotBytesPerSaga` | `1048576` (1 MiB) | The per-instance budget for the snapshots one saga's timeline holds, since the engine reads them all back before every step. Past it, the snapshots after a successful step or a timeout become `{"$vsagaStateOmitted":true,"bytes":N,"budget":B}`; those after a step failure or a delivery exhaustion are still recorded in full (up to `MaxStateSnapshotBytes`). `0` or less means unlimited. |
+| `StateSnapshotTimeout` | `00:00:05` | How long one snapshot append may take before it is abandoned and logged as a Warning, like any other failed append. The append sits between the commit and the step's deferred publishes and acknowledgement, so a stalled event-log write must not hold them back; 5 s sits well under the outbox's 30 s `DispatchGracePeriod`. |
+
+The snapshot options interact with one persistence option: on MongoDB a `PayloadJson` above
+[`MaxPayloadJsonBytes`](#vsagamongooptions-vsagapersistencemongodb) (12 MiB) is replaced by
+`{"$vsagaPayloadOmitted":true,…}` whatever `MaxStateSnapshotBytes` says, so raising the snapshot cap
+past it records that marker instead.
+
+**The sample binds them from configuration.** The `OrderProcessing` sample is the one host that passes
+an `Orchestrator` configuration section to `ConfigureOrchestrator`, so a compose file or the
+environment can set any of the five:
+
+```csharp
+builder.Services.AddVSagaEngine(o => o
+    .ConfigureOrchestrator(opt => builder.Configuration.GetSection("Orchestrator").Bind(opt))
+    .AddSaga<OrderSaga, OrderSagaState>());
+```
+
+```
+Orchestrator__RecordStateSnapshots=false
+Orchestrator__MaxStateSnapshotBytes=64
+Orchestrator__StateSnapshotTimeout=00:00:02
+```
+
+None of the compose files sets them, so the stacks run on the defaults.
 
 ## `SagaOutboxOptions`
 
@@ -351,7 +378,7 @@ gets no chaos at all no matter what `Chaos__Enabled` says, and no error either.
 
 ## Dashboard
 
-Three plain configuration keys, all read by `VSaga.Dashboard.Api` directly — none is an options
+Four plain configuration keys, all read by `VSaga.Dashboard.Api` directly — none is an options
 class. `docker-compose.yml` sets `Dashboard__ApiKey` and `Dashboard__TrustedProxies`; it leaves
 `Dashboard:WebOrigin` empty, because the bundled UI is served on the API's own origin (see
 [`dashboard.md`](dashboard.md#the-spa)).
@@ -361,6 +388,7 @@ class. `docker-compose.yml` sets `Dashboard__ApiKey` and `Dashboard__TrustedProx
 | `Dashboard:ApiKey` | *(empty in `appsettings.json`)* | The one shared secret `ApiKeyAuthenticationHandler` checks. |
 | `Dashboard:WebOrigin` | *(empty: CORS off)* | Optional. The one browser origin, other than the API's own, that a credentialed CORS policy admits. Validated at startup. |
 | `Dashboard:TrustedProxies` | *(empty: forwarded headers ignored)* | Optional. Comma-separated addresses or CIDR networks whose `X-Forwarded-For`/`X-Forwarded-Proto` the API honours. Validated at startup. |
+| `Dashboard:StateSnapshots:MaxBytes` | `262144` (256 KiB) | Caps, in UTF-8 bytes, the `StatePersisted` entry the API records after a [manual retry](dashboard.md#manual-retry) resets a saga; a larger state is recorded as the size marker, `0` records size-only markers. The cap actually applied is the smaller of this and the `limit` of the saga's latest `$vsagaStateOmitted` marker, so a host that set [`MaxStateSnapshotBytes`](#sagaorchestratoroptions) lower is not overridden. Must be a non-negative whole number; anything else stops the API at startup. |
 
 `Dashboard:WebOrigin` and `Dashboard:TrustedProxies` are read once, while the API composes itself
 (`Hosting/DashboardEdge.cs` is the only code that reads them), so a change needs a restart, and an

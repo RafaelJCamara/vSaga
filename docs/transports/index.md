@@ -64,8 +64,12 @@ Every adapter carries the same three things per message, though not all in the s
   (the publisher; a saga publishes under its saga type) and, for a publish made while handling an
   inbound message, `x-vsaga-causation-id` (that message's id, which the Saga Map stitches edges with).
   `StartChildAsync` adds `x-vsaga-parent-saga-type`/`x-vsaga-parent-correlation-id` to a child's
-  initiating message. These four are the "four vSaga headers" the adapter pages refer to. Two more
-  travel the same way: `x-vsaga-delivery-attempt`, which the engine adds when it redelivers after an
+  initiating message. The dashboard's [manual retry](../dashboard.md#manual-retry) adds
+  `x-vsaga-target-saga-type` (`MessageEnvelope.TargetSagaTypeHeader`) to the message it republishes:
+  an engine whose saga type is not the named one acknowledges the message and ignores it, so the retry
+  re-runs a step in one saga type only. Nothing else sets it, and it never propagates, because outbound
+  envelopes are built fresh. These five are the "five vSaga headers" the adapter pages refer to. Two
+  more travel the same way: `x-vsaga-delivery-attempt`, which the engine adds when it redelivers after an
   infrastructure failure, and the unprefixed W3C `traceparent`/`tracestate` (see
   [`../observability.md`](../observability.md#traces)).
 - **The body**: the message serialized by `System.Text.Json` with default options, so property names
@@ -180,19 +184,22 @@ at an overlay instead, start it with `VSAGA_API_URL` set to that overlay's Dashb
 
 ## What every adapter guarantees
 
-- **All four vSaga envelope headers round-trip losslessly**: `x-vsaga-source-service`,
-  `x-vsaga-causation-id`, `x-vsaga-parent-saga-type`, `x-vsaga-parent-correlation-id` — plus, since
-  [production-readiness §6](../design/production-readiness.md) (shipped as that plan's §8 item 17), the
-  W3C `traceparent`/`tracestate` pair (bare names, not `x-vsaga-`-prefixed — see
-  [`../observability.md`](../observability.md#traces)). Every adapter that puts a message on a wire —
-  RabbitMQ, Wolverine, MassTransit, Brighter, HTTP — has a dedicated round-trip test for **both** sets
-  in its own suite (`PublishAndSubscribe_PropagatesAllFourVSagaHeadersUnchanged` and its
-  traceparent/tracestate sibling); several were added specifically because an earlier version of this
-  repo shipped header-threading code with tests that hand-built the field and proved nothing (see
-  [`../history/sub-saga-parent-linkage.md`](../history/sub-saga-parent-linkage.md)). The in-memory
-  adapter is the one exception and needs no such test: it hands the publisher's own
-  `MessageEnvelope.Headers` dictionary straight to the subscriber, so there is no encode/decode step
-  for a header to be lost in — which is exactly why a header bug caught only by one of those suites is
+- **All five vSaga envelope headers round-trip losslessly**: `x-vsaga-source-service`,
+  `x-vsaga-causation-id`, `x-vsaga-parent-saga-type`, `x-vsaga-parent-correlation-id` and
+  `x-vsaga-target-saga-type` — plus, since [production-readiness §6](../design/production-readiness.md)
+  (shipped as that plan's §8 item 17), the W3C `traceparent`/`tracestate` pair (bare names, not
+  `x-vsaga-`-prefixed — see [`../observability.md`](../observability.md#traces)). Every adapter that
+  puts a message on a wire — RabbitMQ, Wolverine, MassTransit, Brighter, HTTP — has a dedicated
+  round-trip test for **both** sets in its own suite
+  (`PublishAndSubscribe_PropagatesAllFourVSagaHeadersUnchanged`, whose name predates the target saga
+  type header it now carries as well, and its traceparent/tracestate sibling). The target header matters
+  most here: an adapter that dropped it would turn a targeted dashboard retry back into one every
+  subscribed saga type processes. Several of these tests were added specifically because an earlier
+  version of this repo shipped header-threading code with tests that hand-built the field and proved
+  nothing (see [`../history/sub-saga-parent-linkage.md`](../history/sub-saga-parent-linkage.md)). The
+  in-memory adapter is the one exception and needs no such test: it hands the publisher's own
+  `MessageEnvelope.Headers` dictionary straight to the subscriber, so there is no encode/decode step for
+  a header to be lost in — which is exactly why a header bug caught only by one of those suites is
   invisible under `SagaTestHarness`.
 - **An unroutable publish is detected where the underlying package supports it.** RabbitMQ, MassTransit,
   and HTTP all surface it as `MessageTransportPublishException.IsUnroutable`. Wolverine's and Brighter's

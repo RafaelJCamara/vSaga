@@ -9,7 +9,8 @@ event log, EF Core (Postgres), MongoDB, Redis and in-memory persistence, six int
 adapters, a transport-agnostic `.CallHttp` step for calling plain REST APIs, an in-memory testing
 harness, OpenTelemetry instrumentation, and a chaos-engineering fault-injection package. A
 saga-type-agnostic ops dashboard (ASP.NET Core API + Angular SPA) adds live updates, a per-saga visual
-service map, and manual retry.
+service map, a timeline of steps with the saga's data after each one, and a retry that re-runs the
+step a failed saga failed in.
 
 ## Install
 
@@ -193,10 +194,10 @@ Full index: [`docs/README.md`](docs/README.md). Straight to the reference docs:
 - [`docs/configuration.md`](docs/configuration.md) — every options class, including the
   transactional outbox and transport options.
 - [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, MongoDB, Redis, in-memory, migrations.
-- [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log, OTLP
-  wiring.
-- [`docs/dashboard.md`](docs/dashboard.md) — API endpoints, authentication, live updates over SignalR, the
-  SPA, the Saga Map.
+- [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log and its
+  state snapshots, OTLP wiring.
+- [`docs/dashboard.md`](docs/dashboard.md) — API endpoints, the targeted manual retry, state snapshots,
+  authentication, live updates over SignalR, the SPA and its saga detail page, the Saga Map.
 - [`docs/testing.md`](docs/testing.md) — `SagaTestHarness`.
 - [`docs/chaos.md`](docs/chaos.md) — `VSaga.Chaos` fault injection.
 - [`docs/transports/index.md`](docs/transports/index.md) — the transport contract and all six

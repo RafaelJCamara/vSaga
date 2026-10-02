@@ -24,7 +24,7 @@ detail: [`../history/transport-adapter-masstransit.md`](../history/transport-ada
   diagnosable. Give each track its own `ExchangeName` if they share a broker, and use the PascalCase
   form when binding a non-vSaga AMQP consumer to this adapter's exchange. See
   [`index.md`](index.md#choosing-an-adapter) for the full comparison.
-- **The four vSaga headers ride on MassTransit's own header pipeline** (`SendContext.Headers`/
+- **The five vSaga headers ride on MassTransit's own header pipeline** (`SendContext.Headers`/
   `ConsumeContext.Headers`), not smuggled inside the wrapper record — genuine MassTransit metadata
   making the round trip.
 - **Ack/nack.** MassTransit has no mid-flight ack primitive — a consumer settles only by returning
