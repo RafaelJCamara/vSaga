@@ -351,6 +351,18 @@ export function foldTimeline(entries: readonly SagaLogEntry[]): SagaHistory {
   };
 }
 
+/**
+ * The step whose rows include the entry with this sequence number: how the retry plan's failure
+ * and replay entries become steps. Null for no number, or one that is not a row (a snapshot, an
+ * entry the loaded timeline does not hold yet).
+ */
+export function stepContaining(history: SagaHistory, sequence: number | null | undefined): SagaTransition | null {
+  if (sequence == null) return null;
+  return (
+    history.transitions.find((step) => step.rows.some((row) => row.entry.sequenceNumber === sequence)) ?? null
+  );
+}
+
 function toTransition(
   draft: Draft,
   index: number,

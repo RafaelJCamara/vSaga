@@ -354,6 +354,17 @@ describe('SagaMap', () => {
       expect(cleared).toHaveBeenCalledTimes(1);
     });
 
+    it('tells the page about a take-over even when no focus is active', () => {
+      const fixture = createComponent(makeFinishedMap(), null);
+      const cleared = vi.fn();
+      fixture.componentInstance.focusCleared.subscribe(cleared);
+
+      fixture.componentInstance.stepForward();
+      fixture.componentInstance.restart();
+
+      expect(cleared).toHaveBeenCalledTimes(2);
+    });
+
     it('keeps the focus when the replay is positioned through scrubTo', () => {
       const fixture = createComponent(makeFinishedMap(), 2);
       const cleared = vi.fn();

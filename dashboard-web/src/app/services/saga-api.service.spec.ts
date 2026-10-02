@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { API_BASE_URL } from '../api-config';
-import { PagedResult, SagaDetail, SagaLogEntry, SagaMap, SagaSummary, SagaTypeInfo } from '../models/saga.model';
+import { PagedResult, SagaDetail, SagaLogEntry, SagaMap, SagaRetryPlan, SagaSummary, SagaTypeInfo } from '../models/saga.model';
 import { SagaApiService } from './saga-api.service';
 
 describe('SagaApiService', () => {
@@ -118,6 +118,21 @@ describe('SagaApiService', () => {
     const req = httpMock.expectOne(`${API_BASE_URL}/api/sagas/OrderSaga/abc-123/retry`);
     expect(req.request.method).toBe('POST');
     req.flush(null);
+  });
+
+  it('getRetryPlan() requests the retry-plan endpoint with the saga type encoded', () => {
+    const plan: SagaRetryPlan = {
+      retryable: true,
+      reason: null,
+      failureKind: 'BusinessFailure',
+      failureSequenceNumber: 142,
+      step: { sequenceNumber: 138, messageType: 'PaymentFailed', messageId: 'c3', fromState: 'Gathering' },
+    };
+    service.getRetryPlan('Order/Saga', 'abc-123').subscribe((result) => expect(result).toBe(plan));
+
+    const req = httpMock.expectOne(`${API_BASE_URL}/api/sagas/Order%2FSaga/abc-123/retry-plan`);
+    expect(req.request.method).toBe('GET');
+    req.flush(plan);
   });
 
   it('get() percent-encodes the saga type segment', () => {

@@ -14,6 +14,7 @@ import {
   started,
   succeeded,
   T0,
+  timedOutInvoice,
 } from '../../testing/timeline-fixtures';
 import { PENDING_SNAPSHOT_MS, foldTimeline } from '../../util/saga-transitions';
 import { formatRecordedAt, timezoneLabel } from '../../util/time-format';
@@ -68,6 +69,63 @@ describe('SagaTimeline', () => {
       'Step 1 Started by OrderSubmitted · succeeded',
       'Step 2 PaymentCaptured · succeeded',
     ]);
+  });
+
+  describe('the failed step', () => {
+    function renderMarked(entries: SagaLogEntry[], failure: number | null, replay: number | null) {
+      const fixture = TestBed.createComponent(SagaTimeline);
+      fixture.componentRef.setInput('history', foldTimeline(entries));
+      fixture.componentRef.setInput('failureSequence', failure);
+      fixture.componentRef.setInput('replaySequence', replay);
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+      return Array.from(el.querySelectorAll('.tl-step')).map((step) => ({
+        failedHere: step.classList.contains('tl-step--failed-here'),
+        markers: Array.from(step.querySelectorAll('.tl-head .tl-marker')).map(text),
+      }));
+    }
+
+    /** A business failure: PaymentFailed (#4, step 2) failed the saga, SagaCompleted #6, in the same step. */
+    function businessFailure(): SagaLogEntry[] {
+      return numbered([
+        started('m0'),
+        succeeded('m0', 'Initial', 'Gathering'),
+        persisted('m0'),
+        received('c3', 'PaymentFailed'),
+        succeeded('c3', 'Gathering', 'Failed'),
+        sagaCompleted('Failed', 'c3'),
+        persisted('c3', '{"Status":2}'),
+      ]);
+    }
+
+    it('marks only "Failed here" when the step a retry re-runs is the failed step', () => {
+      expect(renderMarked(businessFailure(), 6, 4)).toEqual([
+        { failedHere: false, markers: [] },
+        { failedHere: true, markers: ['Failed here'] },
+      ]);
+    });
+
+    it('marks the step that entered the timed-out state "Re-run starts here"', () => {
+      expect(renderMarked(timedOutInvoice(), 66, 61)).toEqual([
+        { failedHere: false, markers: ['Re-run starts here'] },
+        { failedHere: true, markers: ['Failed here'] },
+      ]);
+    });
+
+    it('marks nothing without a plan, or for entries the timeline does not hold', () => {
+      expect(renderMarked(timedOutInvoice(), null, null).every((s) => !s.failedHere && s.markers.length === 0)).toBe(true);
+      expect(renderMarked(timedOutInvoice(), 999, 998).every((s) => !s.failedHere && s.markers.length === 0)).toBe(true);
+    });
+
+    it('says "Failed here" in words, inside the step header', () => {
+      const fixture = TestBed.createComponent(SagaTimeline);
+      fixture.componentRef.setInput('history', foldTimeline(timedOutInvoice()));
+      fixture.componentRef.setInput('failureSequence', 66);
+      fixture.detectChanges();
+
+      const heads = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('.tl-head')).map(headText);
+      expect(heads).toEqual(['Step 1 Started by InvoiceIssued · succeeded', 'Step 2 Timeout in AwaitingArchival · succeeded Failed here']);
+    });
   });
 
   it('labels each row with its ordinal, type, states, message, service and recorded time', () => {

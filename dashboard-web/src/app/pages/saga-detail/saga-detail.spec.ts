@@ -1,11 +1,19 @@
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, ParamMap, Router, convertToParamMap, provideRouter } from '@angular/router';
-import { BehaviorSubject, Observable, Subject, of, throwError } from 'rxjs';
+import { BehaviorSubject, EMPTY, Observable, Subject, of, throwError } from 'rxjs';
 import { vi } from 'vitest';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
-import { SagaDetail as SagaDetailModel, SagaLogEntry, SagaMap as SagaMapModel, SagaStatus, SagaSummary } from '../../models/saga.model';
+import {
+  SagaDetail as SagaDetailModel,
+  SagaLogEntry,
+  SagaMap as SagaMapModel,
+  SagaRetryPlan,
+  SagaStatus,
+  SagaSummary,
+} from '../../models/saga.model';
+import { timedOutInvoice } from '../../testing/timeline-fixtures';
 import { timezoneLabel } from '../../util/time-format';
 import { SagaMap } from '../../components/saga-map/saga-map';
 import { PENDING_SNAPSHOT_MS } from '../../util/saga-transitions';
@@ -66,6 +74,7 @@ describe('SagaDetail', () => {
     getTimeline: ReturnType<typeof vi.fn>;
     getMap: ReturnType<typeof vi.fn>;
     retry: ReturnType<typeof vi.fn>;
+    getRetryPlan: ReturnType<typeof vi.fn>;
     findByCorrelationId: ReturnType<typeof vi.fn>;
     getChildren: ReturnType<typeof vi.fn>;
   };
@@ -77,9 +86,14 @@ describe('SagaDetail', () => {
     unsubscribeFromSaga: ReturnType<typeof vi.fn>;
   };
   let navigateSpy: ReturnType<typeof vi.spyOn>;
+  /** What setup's /retry-plan answers; by default nothing, so the page shows no plan. */
+  let retryPlanResponse: Observable<SagaRetryPlan> = EMPTY;
 
   // Only the tests that push use fake timers (the refresh waits REFRESH_AUDIT_MS); none may leak.
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    retryPlanResponse = EMPTY;
+  });
 
   function setup(
     detail: SagaDetailModel = makeDetail(),
@@ -100,6 +114,7 @@ describe('SagaDetail', () => {
       getTimeline: vi.fn().mockReturnValue(of(timeline)),
       getMap: vi.fn().mockReturnValue(of(map)),
       retry: vi.fn(),
+      getRetryPlan: vi.fn().mockReturnValue(retryPlanResponse),
       findByCorrelationId: vi.fn().mockReturnValue(of(related)),
       getChildren: vi.fn().mockReturnValue(of(children)),
     };
@@ -181,6 +196,7 @@ describe('SagaDetail', () => {
       getTimeline: vi.fn().mockReturnValue(of([])),
       getMap: vi.fn().mockReturnValue(of(makeMap())),
       retry: vi.fn(),
+      getRetryPlan: vi.fn().mockReturnValue(EMPTY),
       findByCorrelationId: vi.fn().mockReturnValue(of([])),
       getChildren: vi.fn().mockReturnValue(of([])),
     };
@@ -247,6 +263,7 @@ describe('SagaDetail', () => {
       getTimeline: vi.fn().mockReturnValue(of([])),
       getMap: vi.fn().mockReturnValue(of(makeMap())),
       retry: vi.fn(),
+      getRetryPlan: vi.fn().mockReturnValue(EMPTY),
       findByCorrelationId: vi.fn().mockReturnValue(of([])),
       getChildren: vi.fn().mockReturnValue(of([])),
     };
@@ -394,6 +411,121 @@ describe('SagaDetail', () => {
     expect(apiMock.retry).not.toHaveBeenCalled();
     expect(fixture.componentInstance.confirmingRetry()).toBe(false);
     expect(fixture.nativeElement.querySelector('.retry-row button').textContent).toContain('Retry this saga');
+  });
+
+  // The prompt swaps the buttons out of the DOM; without a focus move the focused one is removed,
+  // focus drops to the body and the next Tab skips the prompt for whatever follows the card.
+  describe('keyboard focus through the retry prompt', () => {
+    const focused = () => document.activeElement as HTMLElement | null;
+
+    it('moves focus to Cancel when the prompt opens, and back to the Retry button on Cancel', () => {
+      const fixture = setup(makeDetail({ status: 'Failed' }));
+      const el: HTMLElement = fixture.nativeElement;
+      const retryButton = el.querySelector('.retry-row button') as HTMLButtonElement;
+      retryButton.focus();
+
+      retryButton.click();
+      fixture.detectChanges();
+
+      expect(focused()).toBe(el.querySelector('.retry-cancel'));
+      // Both buttons carry the prompt as their description, so it is read with the focused one.
+      expect(focused()?.getAttribute('aria-describedby')).toBe('retry-confirm-prompt retry-audience');
+      expect(el.querySelector('.retry-confirm')?.getAttribute('aria-describedby')).toBe(
+        'retry-confirm-prompt retry-audience',
+      );
+
+      (focused() as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      const back = el.querySelector('.retry-row button') as HTMLButtonElement;
+      expect(back.textContent).toContain('Retry this saga');
+      expect(focused()).toBe(back);
+    });
+
+    it.each([
+      ['accepted', () => of(undefined)],
+      ['refused', () => throwError(() => ({ error: { error: 'Saga cannot be retried' } }))],
+    ])('gives focus back to the Retry button once the POST is %s', (_, answer) => {
+      const fixture = setup(makeDetail({ status: 'Failed' }));
+      const el: HTMLElement = fixture.nativeElement;
+      const response = new Subject<void>();
+      apiMock.retry.mockReturnValue(response);
+      fixture.componentInstance.askRetryConfirmation();
+      fixture.detectChanges();
+
+      (el.querySelector('.retry-confirm') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      // The Retry button is back but disabled while the request runs, so focus has nowhere to go.
+      expect((el.querySelector('.retry-row button') as HTMLButtonElement).disabled).toBe(true);
+
+      answer().subscribe({ next: () => response.next(), error: (e: unknown) => response.error(e) });
+      fixture.detectChanges();
+
+      const button = el.querySelector('.retry-row button') as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+      expect(focused()).toBe(button);
+    });
+
+    it('leaves focus where the viewer moved it while the POST ran', () => {
+      const fixture = setup(makeDetail({ status: 'Failed' }));
+      const el: HTMLElement = fixture.nativeElement;
+      const response = new Subject<void>();
+      apiMock.retry.mockReturnValue(response);
+      fixture.componentInstance.askRetryConfirmation();
+      fixture.detectChanges();
+      (el.querySelector('.retry-confirm') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      const timelineTab = el.querySelectorAll<HTMLButtonElement>('.tabs button')[1];
+      timelineTab.focus();
+      response.next();
+      fixture.detectChanges();
+
+      expect(focused()).toBe(timelineTab);
+    });
+
+    // A retried saga runs again; the push that says so takes the whole row, focused button and all.
+    it('moves focus to the saga heading when the saga runs again and the row goes', () => {
+      const fixture = setup(makeDetail({ status: 'Failed' }));
+      const el: HTMLElement = fixture.nativeElement;
+      (el.querySelector('.retry-row button') as HTMLButtonElement).focus();
+
+      hubMock.sagaUpdated$.next({ ...fixture.componentInstance.detail()!.summary, status: 'Running' });
+      fixture.detectChanges();
+
+      expect(el.querySelector('.retry-row')).toBeNull();
+      expect(focused()).toBe(el.querySelector('.summary-top h1'));
+    });
+
+    it('leaves focus alone when the row goes while it was elsewhere', () => {
+      const fixture = setup(makeDetail({ status: 'Failed' }));
+      const el: HTMLElement = fixture.nativeElement;
+      const timelineTab = el.querySelectorAll<HTMLButtonElement>('.tabs button')[1];
+      timelineTab.focus();
+
+      hubMock.sagaUpdated$.next({ ...fixture.componentInstance.detail()!.summary, status: 'Running' });
+      fixture.detectChanges();
+
+      expect(focused()).toBe(timelineTab);
+    });
+
+    it('gives focus to the saga heading when the POST answers after the row went', () => {
+      const fixture = setup(makeDetail({ status: 'Failed' }));
+      const el: HTMLElement = fixture.nativeElement;
+      const response = new Subject<void>();
+      apiMock.retry.mockReturnValue(response);
+      fixture.componentInstance.askRetryConfirmation();
+      fixture.detectChanges();
+      (el.querySelector('.retry-confirm') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      hubMock.sagaUpdated$.next({ ...fixture.componentInstance.detail()!.summary, status: 'Running' });
+      fixture.detectChanges();
+      response.next();
+      fixture.detectChanges();
+
+      expect(focused()).toBe(el.querySelector('.summary-top h1'));
+    });
   });
 
   // The engine logs SagaCompleted for any terminal Finalize, so a failed saga's last entry would
@@ -1388,6 +1520,196 @@ describe('SagaDetail', () => {
       expect(page.timelineError()).toBe(false);
       expect(page.map()).toBeNull();
       expect(page.mapError()).toBe(false);
+    });
+  });
+
+  describe('the failed step', () => {
+    /** The design's timed-out InvoiceFollowUpSaga: failed at #66 (step 2), re-runs step 1 (#61). */
+    function timeoutPlan(overrides: Partial<SagaRetryPlan> = {}): SagaRetryPlan {
+      return {
+        retryable: true,
+        reason: null,
+        failureKind: 'TimedOut',
+        failureSequenceNumber: 66,
+        step: { sequenceNumber: 61, messageType: 'InvoiceIssued', messageId: 'e5', fromState: 'Requested' },
+        ...overrides,
+      };
+    }
+
+    const timedOut = (overrides: Partial<SagaSummary> = {}) =>
+      makeDetail({ status: 'TimedOut', currentState: 'Abandoned', version: 3, ...overrides });
+
+    /** A map holding the timeline's rows (60-64, 66, 67), the snapshots left out. */
+    const invoiceMap = () =>
+      makeMap({
+        nodes: [{ id: 'OrderSaga', displayName: 'OrderSaga', kind: 'Orchestrator', status: 'ok', messagesIn: 0, messagesOut: 0 }],
+        events: [60, 61, 62, 63, 64, 66, 67].map((sequenceNumber) => ({
+          sequenceNumber,
+          edgeId: null,
+          nodeId: null,
+          entryType: 'StepSucceeded' as const,
+          messageType: null,
+          errorMessage: null,
+          occurredAtUtc: '2026-01-01T00:00:00Z',
+        })),
+      });
+
+    const mapComponent = (fixture: ReturnType<typeof setup>): SagaMap =>
+      fixture.debugElement.query(By.directive(SagaMap)).componentInstance as SagaMap;
+
+    const text = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+    it.each<SagaStatus>(['Failed', 'TimedOut'])('loads the retry plan for a %s saga', (status) => {
+      retryPlanResponse = of(timeoutPlan());
+      const fixture = setup(makeDetail({ status }));
+
+      expect(apiMock.getRetryPlan).toHaveBeenCalledTimes(1);
+      expect(apiMock.getRetryPlan).toHaveBeenCalledWith('OrderSaga', 'saga-1');
+      expect(fixture.componentInstance.retryPlan()).toEqual(timeoutPlan());
+    });
+
+    it.each<SagaStatus>(['Running', 'Completed', 'Compensating', 'Compensated', 'Cancelled'])(
+      'loads no retry plan for a %s saga',
+      (status) => {
+        retryPlanResponse = of(timeoutPlan());
+        const fixture = setup(makeDetail({ status }));
+
+        expect(apiMock.getRetryPlan).not.toHaveBeenCalled();
+        expect(fixture.componentInstance.retryPlan()).toBeNull();
+      },
+    );
+
+    it('reloads the plan only when a refresh changes the status or version, and drops it for a running saga', () => {
+      vi.useFakeTimers();
+      retryPlanResponse = of(timeoutPlan());
+      const fixture = setup(timedOut());
+      const push = (overrides: Partial<SagaSummary>) =>
+        hubMock.sagaUpdated$.next({ ...fixture.componentInstance.detail()!.summary, ...overrides });
+      expect(apiMock.getRetryPlan).toHaveBeenCalledTimes(1);
+
+      // A refresh that finds the same failed saga asks for nothing new.
+      push({});
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      expect(apiMock.getRetryPlan).toHaveBeenCalledTimes(1);
+
+      // A retry was accepted: the saga runs again, and the plan goes.
+      apiMock.get.mockReturnValue(of(timedOut({ status: 'Running', version: 4 })));
+      push({ status: 'Running', version: 4 });
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      expect(fixture.componentInstance.retryPlan()).toBeNull();
+      expect(apiMock.getRetryPlan).toHaveBeenCalledTimes(1);
+
+      // It failed again, at a later step.
+      const later = timeoutPlan({ failureSequenceNumber: 80 });
+      apiMock.getRetryPlan.mockReturnValue(of(later));
+      apiMock.get.mockReturnValue(of(timedOut({ version: 6 })));
+      push({ status: 'TimedOut', version: 6 });
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      expect(apiMock.getRetryPlan).toHaveBeenCalledTimes(2);
+      expect(fixture.componentInstance.retryPlan()).toEqual(later);
+    });
+
+    it('marks the failed step and, for a timeout, the step a retry re-runs', () => {
+      retryPlanResponse = of(timeoutPlan());
+      const fixture = setup(timedOut(), timedOutInvoice());
+      fixture.componentInstance.setTab('timeline');
+      fixture.detectChanges();
+
+      const steps = Array.from(fixture.nativeElement.querySelectorAll('.tl-step') as NodeListOf<Element>);
+      expect(steps.length).toBe(2);
+      expect(steps.map((s) => s.classList.contains('tl-step--failed-here'))).toEqual([false, true]);
+      expect(text(steps[1].querySelector('.tl-marker'))).toBe('Failed here');
+      expect(text(steps[0].querySelector('.tl-marker'))).toBe('Re-run starts here');
+    });
+
+    it('opens the map on the failure entry when the URL names none, without writing it to the URL', () => {
+      retryPlanResponse = of(timeoutPlan());
+      const fixture = setup(timedOut(), timedOutInvoice(), invoiceMap());
+
+      const map = mapComponent(fixture);
+      expect(map.focusSequence()).toBe(66);
+      expect(map.currentIndex()).toBe(5);
+      expect(fixture.componentInstance.focusedSequence()).toBeNull();
+      expect(navigateSpy).not.toHaveBeenCalled();
+
+      // Taking over the replay releases it for good, still without touching the URL.
+      map.restart();
+      fixture.detectChanges();
+      expect(fixture.componentInstance.mapFocus()).toBeNull();
+      expect(mapComponent(fixture).focusSequence()).toBeNull();
+      expect(navigateSpy).not.toHaveBeenCalled();
+    });
+
+    it('leaves a replay the viewer took over before the plan arrived where it is', () => {
+      const plan$ = new Subject<SagaRetryPlan>();
+      retryPlanResponse = plan$;
+      const fixture = setup(timedOut(), timedOutInvoice(), invoiceMap());
+      const map = mapComponent(fixture);
+      expect(map.focusSequence()).toBeNull();
+
+      map.stepForward();
+      fixture.detectChanges();
+      expect(map.currentIndex()).toBe(1);
+
+      plan$.next(timeoutPlan());
+      fixture.detectChanges();
+      expect(fixture.componentInstance.retryPlan()).toEqual(timeoutPlan());
+      expect(fixture.componentInstance.mapFocus()).toBeNull();
+      expect(mapComponent(fixture).currentIndex()).toBe(1);
+      expect(navigateSpy).not.toHaveBeenCalled();
+    });
+
+    it('opens the map on the entry the URL names', () => {
+      retryPlanResponse = of(timeoutPlan());
+      const fixture = setup(
+        timedOut(),
+        timedOutInvoice(),
+        invoiceMap(),
+        undefined,
+        [],
+        of(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' })),
+        of(convertToParamMap({ entry: '61' })),
+      );
+
+      expect(mapComponent(fixture).focusSequence()).toBe(61);
+    });
+
+    it('names the step, its message type and its from-state in the retry confirmation', () => {
+      retryPlanResponse = of(timeoutPlan());
+      const fixture = setup(timedOut(), timedOutInvoice());
+
+      fixture.nativeElement.querySelector('.retry-row button').click();
+      fixture.detectChanges();
+
+      const el: HTMLElement = fixture.nativeElement;
+      expect(text(el.querySelector('.retry-confirm-prompt'))).toBe(
+        'Re-run step 1 (InvoiceIssued, Requested) for this saga only?',
+      );
+      expect(text(el.querySelector('.retry-audience'))).toBe(
+        'Other services that consume InvoiceIssued still receive it.',
+      );
+    });
+
+    it('disables Retry and shows the reason when the plan refuses a retry', () => {
+      const reason =
+        'This saga was recorded before vSaga stored the message of every step, so the InvoiceIssued message that ran the step to re-run cannot be replayed.';
+      retryPlanResponse = of(timeoutPlan({ retryable: false, reason }));
+      const fixture = setup(timedOut(), timedOutInvoice());
+
+      const el: HTMLElement = fixture.nativeElement;
+      const button = el.querySelector('.retry-row button') as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(text(el.querySelector('.retry-refusal'))).toBe(reason);
+      expect(button.getAttribute('aria-describedby')).toBe('retry-refusal');
+
+      fixture.componentInstance.askRetryConfirmation();
+      fixture.detectChanges();
+      expect(el.querySelector('.retry-confirm')).toBeNull();
+
+      // The failed step is still marked: the plan names it, retryable or not.
+      fixture.componentInstance.setTab('timeline');
+      fixture.detectChanges();
+      expect(el.querySelectorAll('.tl-step--failed-here').length).toBe(1);
     });
   });
 });

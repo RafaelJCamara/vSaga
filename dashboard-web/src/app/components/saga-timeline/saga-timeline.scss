@@ -34,6 +34,23 @@
   border-left-color: var(--status-compensating);
 }
 
+.tl-step--failed-here {
+  border-color: var(--status-failed);
+}
+
+.tl-marker {
+  padding: 0 0.4rem;
+  border: 1px solid;
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+
+.tl-marker--failed {
+  color: var(--status-failed);
+  font-weight: 600;
+}
+
 .tl-head {
   display: flex;
   flex-wrap: wrap;

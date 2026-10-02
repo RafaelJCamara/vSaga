@@ -175,6 +175,28 @@ export function deliveryExhausted(id: string | null, extra: Extra = {}): SagaLog
   });
 }
 
+/**
+ * The timed-out InvoiceFollowUpSaga of the design's worked example (sequence numbers 60-68): step 1
+ * started by InvoiceIssued (e5) entered AwaitingArchival, step 2 is the timeout that fired there
+ * (#66). Its retry plan fails at 66 and replays the step whose inbound entry is #61.
+ */
+export function timedOutInvoice(): SagaLogEntry[] {
+  return numbered(
+    [
+      started('e5', 'Requested', { messageType: 'InvoiceIssued' }),
+      received('e5', 'InvoiceIssued'),
+      makeEntry({ entryType: 'ChildSagaStarted', messageId: 'child-1', causationId: 'e5' }),
+      succeeded('e5', 'Requested', 'AwaitingArchival'),
+      timeoutScheduled('AwaitingArchival', 'e5'),
+      persisted('e5'),
+      timeoutFired('AwaitingArchival'),
+      succeeded(null, 'AwaitingArchival', 'Abandoned'),
+      persisted(null, '{"Status":5}'),
+    ],
+    { first: 60 },
+  );
+}
+
 /** A step for component specs: one succeeded message step with a recorded snapshot. */
 export function makeTransition(overrides: Partial<SagaTransition> = {}): SagaTransition {
   const entry = received('m1', 'PaymentCaptured');

@@ -19,6 +19,7 @@ import {
   SnapshotState,
   TimelineRow,
   effectiveSnapshotState,
+  stepContaining,
 } from '../../util/saga-transitions';
 import { RecordedAt, formatRecordedAt, timezoneLabel, toMillis } from '../../util/time-format';
 import { SagaDataInspector } from '../saga-data-inspector/saga-data-inspector';
@@ -40,6 +41,9 @@ const OUTCOME_LABELS: Record<Exclude<SagaTransition['outcome'], 'in-flight' | 'r
  *
  * Every row is a native button that asks for the map as of that entry, and a step's title asks for
  * the map as of the step's last entry, which is the state after the step.
+ *
+ * Given the retry plan's entries, the step the saga failed in reads "Failed here" in error styling,
+ * and the step a retry would re-run, when it is another one (a timeout), "Re-run starts here".
  *
  * With `canViewData`, each step header has a Data toggle that opens the step's data inspector below
  * its rows. Which steps are open is `openKeys` (step keys, stable across refreshes), a model the
@@ -64,6 +68,10 @@ export class SagaTimeline {
   readonly live = input(false);
   /** The keys of the steps whose data inspector is open. */
   readonly openKeys = model<ReadonlySet<number>>(new Set());
+  /** The retry plan's failure entry: its step is marked "Failed here". */
+  readonly failureSequence = input<number | null>(null);
+  /** The retry plan's replayed entry: its step is marked "Re-run starts here" when it is another step. */
+  readonly replaySequence = input<number | null>(null);
 
   /** The viewer picked an entry to see on the map; carries its sequence number. */
   readonly entrySelected = output<number>();
@@ -139,6 +147,18 @@ export class SagaTimeline {
       }
     }
     return times;
+  });
+
+  /** The key of the step the saga failed in; null when there is no plan or it names no row. */
+  readonly failedKey = computed(() => stepContaining(this.history(), this.failureSequence())?.key ?? null);
+
+  /**
+   * The key of the step a retry re-runs, when it is not the failed step itself: for a timeout, the
+   * step that entered the timed-out state.
+   */
+  readonly replayKey = computed(() => {
+    const key = stepContaining(this.history(), this.replaySequence())?.key ?? null;
+    return key === this.failedKey() ? null : key;
   });
 
   /** The viewer's zone as of the saga's first entry: `UTC+02:00`. */

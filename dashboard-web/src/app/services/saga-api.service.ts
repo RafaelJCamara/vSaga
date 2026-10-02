@@ -8,6 +8,7 @@ import {
   SagaListFilter,
   SagaLogEntry,
   SagaMap,
+  SagaRetryPlan,
   SagaSummary,
   SagaTypeInfo,
 } from '../models/saga.model';
@@ -51,6 +52,11 @@ export class SagaApiService {
   /** The sagas this one started as sub-sagas. Each has its own correlation id, so this is not the same question as findByCorrelationId. */
   getChildren(sagaType: string, correlationId: string): Observable<SagaSummary[]> {
     return this.http.get<SagaSummary[]>(`${this.instanceUrl(sagaType, correlationId)}/children`);
+  }
+
+  /** What a retry would re-run (the step and its message), or why the saga cannot be retried. */
+  getRetryPlan(sagaType: string, correlationId: string): Observable<SagaRetryPlan> {
+    return this.http.get<SagaRetryPlan>(`${this.instanceUrl(sagaType, correlationId)}/retry-plan`);
   }
 
   retry(sagaType: string, correlationId: string): Observable<void> {

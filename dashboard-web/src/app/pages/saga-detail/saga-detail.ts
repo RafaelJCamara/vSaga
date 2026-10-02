@@ -1,16 +1,35 @@
-import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  Injector,
+  OnDestroy,
+  OnInit,
+  afterNextRender,
+  computed,
+  effect,
+  signal,
+  untracked,
+  viewChild,
+} from '@angular/core';
 import { ActivatedRoute, ParamMap, Router, RouterLink } from '@angular/router';
 import { Subject, Subscription, auditTime } from 'rxjs';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
-import { SagaDetail as SagaDetailModel, SagaLogEntry, SagaMap as SagaMapModel, SagaSummary } from '../../models/saga.model';
+import {
+  SagaDetail as SagaDetailModel,
+  SagaLogEntry,
+  SagaMap as SagaMapModel,
+  SagaRetryPlan,
+  SagaStatus,
+  SagaSummary,
+} from '../../models/saga.model';
 import { KindBadge } from '../../components/kind-badge/kind-badge';
 import { StatusBadge } from '../../components/status-badge/status-badge';
 import { SagaMap } from '../../components/saga-map/saga-map';
 import { LocalTime } from '../../components/local-time/local-time';
 import { SagaTimeline } from '../../components/saga-timeline/saga-timeline';
 import { DATA_VIEWS, DataView, SagaDataOverview } from '../../components/saga-data-overview/saga-data-overview';
-import { PENDING_SNAPSHOT_MS, SagaHistory, foldTimeline } from '../../util/saga-transitions';
+import { PENDING_SNAPSHOT_MS, SagaHistory, foldTimeline, stepContaining } from '../../util/saga-transitions';
 import { timezoneLabel, toMillis } from '../../util/time-format';
 
 /**
@@ -52,6 +71,11 @@ function parseDataView(raw: string | null): DataView | null {
 
 function isEntry(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
+}
+
+/** The statuses a dashboard retry accepts, and so the ones the page loads a retry plan for. */
+function isRetryable(status: SagaStatus | undefined): boolean {
+  return status === 'Failed' || status === 'TimedOut';
 }
 
 /**
@@ -110,6 +134,13 @@ export class SagaDetail implements OnInit, OnDestroy {
   readonly retryMessage = signal<string | null>(null);
   /** Retry re-drives a real saga against real participants, so the button asks before it fires. */
   readonly confirmingRetry = signal(false);
+  /**
+   * What a retry would re-run, or why it cannot: loaded for a Failed or TimedOut saga, null
+   * otherwise and until it arrives. It marks the failed step and words the retry confirmation.
+   */
+  readonly retryPlan = signal<SagaRetryPlan | null>(null);
+  /** The viewer took over the map's replay, so the failed step no longer pins it. */
+  private readonly failureFocusReleased = signal(false);
   readonly connectionState = signal<SagaHubConnectionState>('disconnected');
   readonly hasEverConnected = signal(false);
 
@@ -124,6 +155,49 @@ export class SagaDetail implements OnInit, OnDestroy {
   readonly createdZone = computed(() => zoneAt(this.detail()?.summary.createdAtUtc));
   readonly updatedZone = computed(() => zoneAt(this.detail()?.summary.updatedAtUtc));
 
+  /**
+   * The entry the map opens on: the URL's, else, for a failed saga, its failure entry. The default
+   * is never written to the URL, and once the viewer takes over the replay it stays released.
+   */
+  readonly mapFocus = computed(() => {
+    const explicit = this.focusedSequence();
+    if (explicit !== null || this.failureFocusReleased()) return explicit;
+    return this.retryPlan()?.failureSequenceNumber ?? null;
+  });
+
+  /** The retry plan's entries, as the timeline marks them. */
+  readonly failureSequence = computed(() => this.retryPlan()?.failureSequenceNumber ?? null);
+  readonly replaySequence = computed(() => this.retryPlan()?.step?.sequenceNumber ?? null);
+
+  /** Why the plan refuses a retry; null when it allows one or has not arrived. */
+  readonly retryRefusal = computed(() => {
+    const plan = this.retryPlan();
+    return plan && !plan.retryable ? (plan.reason ?? 'This saga cannot be retried.') : null;
+  });
+
+  /** "Re-run step 1 (InvoiceIssued, Requested) for this saga only?", from the plan and the fold. */
+  readonly retryPrompt = computed(() => {
+    const step = this.retryPlan()?.step;
+    if (!step) return 'Re-run the step that failed for this saga only?';
+    const ordinal = stepContaining(this.history(), step.sequenceNumber)?.ordinal;
+    const which = ordinal === undefined ? 'the step that failed' : `step ${ordinal}`;
+    return `Re-run ${which} (${step.messageType}, ${step.fromState}) for this saga only?`;
+  });
+
+  /** The redrive is targeted at this saga type, but the message itself still goes out to everyone. */
+  readonly retryAudience = computed(() => {
+    const type = this.retryPlan()?.step?.messageType;
+    return `Other services that consume ${type ?? 'that message'} still receive it.`;
+  });
+
+  /** Whether the summary card shows the retry row: only a Failed or TimedOut saga can be retried. */
+  private readonly retryShown = computed(() => isRetryable(this.detail()?.summary.status));
+  /** Where focus goes when the retry row swaps or drops the element that had it (see moveFocus). */
+  private readonly retryRow = viewChild<ElementRef<HTMLElement>>('retryRow');
+  private readonly retryButton = viewChild<ElementRef<HTMLElement>>('retryButton');
+  private readonly retryCancelButton = viewChild<ElementRef<HTMLElement>>('retryCancelButton');
+  private readonly sagaHeading = viewChild<ElementRef<HTMLElement>>('sagaHeading');
+
   private subs: Subscription[] = [];
   /** Whether we've ever joined a hub group yet — guards the unsubscribe-previous-saga step below,
    *  and ngOnDestroy, from firing before there's anything to unsubscribe from. */
@@ -137,13 +211,25 @@ export class SagaDetail implements OnInit, OnDestroy {
   /** The latest timeline and map fetches; an answer to an earlier one is dropped. */
   private timelineRequest = 0;
   private mapRequest = 0;
+  private retryPlanRequest = 0;
+  /** The status and version the current retry plan was asked for; null when none was. */
+  private retryPlanFor: string | null = null;
 
   constructor(
     private readonly route: ActivatedRoute,
     private readonly router: Router,
     private readonly api: SagaApiService,
     private readonly hub: SagaHubService,
-  ) {}
+    private readonly injector: Injector,
+  ) {
+    // A retried saga runs again, and its status hides the retry row with the focused button in it.
+    // The effect runs before the view drops the row, so it can still tell whether focus was there.
+    effect(() => {
+      if (this.retryShown()) return;
+      const row = untracked(this.retryRow)?.nativeElement;
+      if (row?.contains(document.activeElement)) this.moveFocus(false, this.sagaHeading);
+    });
+  }
 
   ngOnInit(): void {
     this.subs.push(
@@ -208,6 +294,7 @@ export class SagaDetail implements OnInit, OnDestroy {
           this.detail.update((current) =>
             current && summary.version >= current.summary.version ? { ...current, summary } : current,
           );
+          this.syncRetryPlan();
           this.refreshRequests.next();
         }
       }),
@@ -248,6 +335,7 @@ export class SagaDetail implements OnInit, OnDestroy {
         if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
         this.detail.set(detail);
         this.loading.set(false);
+        this.syncRetryPlan();
       },
       error: () => {
         if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
@@ -290,8 +378,48 @@ export class SagaDetail implements OnInit, OnDestroy {
         this.detail.update((current) =>
           current && fresh.summary.version >= current.summary.version ? fresh : current,
         );
+        this.syncRetryPlan();
       },
       error: () => undefined,
+    });
+  }
+
+  /**
+   * Keeps the retry plan in step with the summary shown: asked for once per status and version of a
+   * Failed or TimedOut saga (a retry that fails again moves both), dropped for any other status. A
+   * plan already shown stays until the new one arrives.
+   */
+  private syncRetryPlan(): void {
+    const summary = this.detail()?.summary;
+    if (!summary || !isRetryable(summary.status)) {
+      this.retryPlanRequest++;
+      this.retryPlanFor = null;
+      this.retryPlan.set(null);
+      return;
+    }
+    const key = `${summary.status}:${summary.version}`;
+    if (key === this.retryPlanFor) return;
+    this.retryPlanFor = key;
+    this.loadRetryPlan();
+  }
+
+  /** Fetches the retry plan; only the answer to the latest fetch for this saga is applied. */
+  private loadRetryPlan(): void {
+    const sagaType = this.sagaType;
+    const correlationId = this.correlationId;
+    const request = ++this.retryPlanRequest;
+    const stale = () => request !== this.retryPlanRequest || sagaType !== this.sagaType || correlationId !== this.correlationId;
+    this.api.getRetryPlan(sagaType, correlationId).subscribe({
+      next: (plan) => {
+        if (!stale()) this.retryPlan.set(plan);
+      },
+      // Without a plan the retry still works (the API decides and says why not); the next refresh
+      // asks again.
+      error: () => {
+        if (stale()) return;
+        this.retryPlanFor = null;
+        this.retryPlan.set(null);
+      },
     });
   }
 
@@ -350,6 +478,12 @@ export class SagaDetail implements OnInit, OnDestroy {
     this.timelineError.set(false);
     this.map.set(null);
     this.mapError.set(false);
+    this.retryPlanRequest++;
+    this.retryPlanFor = null;
+    this.retryPlan.set(null);
+    this.failureFocusReleased.set(false);
+    this.confirmingRetry.set(false);
+    this.retryMessage.set(null);
   }
 
   /**
@@ -475,8 +609,14 @@ export class SagaDetail implements OnInit, OnDestroy {
     this.syncUrl();
   }
 
-  /** The viewer took over the map's replay: the focus goes, without a history step of its own. */
+  /**
+   * The viewer took over the map's replay: the focus goes, without a history step of its own, and
+   * the failure entry does not take its place. A default focus on the failure was never in the URL.
+   * The map reports every take-over, focused or not, so one made before the retry plan arrives (or
+   * while the saga was still running) is not jumped onto the failure when the plan lands.
+   */
   clearFocus(): void {
+    this.failureFocusReleased.set(true);
     if (this.focusedSequence() === null) return;
     this.focusedSequence.set(null);
     this.syncUrl(true);
@@ -490,12 +630,16 @@ export class SagaDetail implements OnInit, OnDestroy {
   }
 
   askRetryConfirmation(): void {
+    if (this.retryRefusal() !== null) return;
     this.retryMessage.set(null);
     this.confirmingRetry.set(true);
+    // Cancel, not "Yes, retry": a held or repeated Enter must not run the retry it just asked about.
+    this.moveFocus(false, this.retryCancelButton);
   }
 
   cancelRetry(): void {
     this.confirmingRetry.set(false);
+    this.moveFocus(false, this.retryButton);
   }
 
   retry(): void {
@@ -503,15 +647,33 @@ export class SagaDetail implements OnInit, OnDestroy {
     this.retrying.set(true);
     this.retryMessage.set(null);
 
+    // The Retry button is disabled while the request runs, so it can take focus back only after;
+    // when the saga already runs again the row is gone, and the heading above it takes focus.
+    const settle = (message: string) => {
+      this.retrying.set(false);
+      this.retryMessage.set(message);
+      this.moveFocus(true, this.retryButton, this.sagaHeading);
+    };
     this.api.retry(this.sagaType, this.correlationId).subscribe({
-      next: () => {
-        this.retrying.set(false);
-        this.retryMessage.set('Retry accepted — redriving the failed step.');
-      },
-      error: (err) => {
-        this.retrying.set(false);
-        this.retryMessage.set(err?.error?.error ?? 'Retry failed.');
-      },
+      next: () => settle('Retry accepted — redriving the failed step.'),
+      error: (err) => settle(err?.error?.error ?? 'Retry failed.'),
     });
+  }
+
+  /**
+   * Focuses the first of `targets` the next render shows. The retry row swaps its buttons in and
+   * out, and a removed button drops focus to the body, which sends the next Tab past the prompt to
+   * whatever follows the summary card. With `onlyIfLost`, a viewer who moved on while the request
+   * ran keeps the focus they chose.
+   */
+  private moveFocus(onlyIfLost: boolean, ...targets: Array<() => ElementRef<HTMLElement> | undefined>): void {
+    afterNextRender(
+      () => {
+        const active = document.activeElement;
+        if (onlyIfLost && active !== null && active !== document.body) return;
+        targets.map((target) => target()).find((ref) => ref !== undefined)?.nativeElement.focus();
+      },
+      { injector: this.injector },
+    );
   }
 }

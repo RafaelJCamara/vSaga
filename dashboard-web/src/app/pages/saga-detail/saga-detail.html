@@ -14,7 +14,7 @@
   <div class="summary-card">
     <div class="summary-top">
       <div>
-        <h1>{{ d.summary.sagaType }}</h1>
+        <h1 #sagaHeading tabindex="-1">{{ d.summary.sagaType }}</h1>
         <div class="mono muted">{{ d.summary.correlationId }}</div>
       </div>
       <div class="summary-actions">
@@ -83,15 +83,46 @@
     }
 
     @if (d.summary.status === 'Failed' || d.summary.status === 'TimedOut') {
-      <div class="retry-row">
-        @if (confirmingRetry()) {
-          <span class="retry-confirm-prompt">Redrive this saga from its failed step?</span>
-          <button type="button" class="retry-confirm" (click)="retry()">Yes, retry</button>
-          <button type="button" class="retry-cancel" (click)="cancelRetry()">Cancel</button>
+      <div #retryRow class="retry-row">
+        @if (confirmingRetry() && retryRefusal() === null) {
+          <!-- The swap removes whichever button had focus, so the page moves it (see saga-detail.ts):
+               to Cancel when the prompt opens, back to the Retry button when it closes, and to the
+               heading above when the whole row goes because the saga runs again. Both buttons are
+               described by the prompt, so a screen reader reads it with the focused one. -->
+          <span class="retry-confirm-text">
+            <span id="retry-confirm-prompt" class="retry-confirm-prompt">{{ retryPrompt() }}</span>
+            <span id="retry-audience" class="retry-audience">{{ retryAudience() }}</span>
+          </span>
+          <button
+            type="button"
+            class="retry-confirm"
+            aria-describedby="retry-confirm-prompt retry-audience"
+            (click)="retry()"
+          >
+            Yes, retry
+          </button>
+          <button
+            #retryCancelButton
+            type="button"
+            class="retry-cancel"
+            aria-describedby="retry-confirm-prompt retry-audience"
+            (click)="cancelRetry()"
+          >
+            Cancel
+          </button>
         } @else {
-          <button type="button" [disabled]="retrying()" (click)="askRetryConfirmation()">
+          <button
+            #retryButton
+            type="button"
+            [disabled]="retrying() || retryRefusal() !== null"
+            [attr.aria-describedby]="retryRefusal() !== null ? 'retry-refusal' : null"
+            (click)="askRetryConfirmation()"
+          >
             {{ retrying() ? 'Retrying…' : 'Retry this saga' }}
           </button>
+          @if (retryRefusal(); as reason) {
+            <span id="retry-refusal" class="retry-refusal">{{ reason }}</span>
+          }
         }
         @if (retryMessage(); as msg) {
           <span class="retry-message">{{ msg }}</span>
@@ -134,7 +165,7 @@
     @if (map(); as m) {
       <app-saga-map
         [map]="m"
-        [focusSequence]="focusedSequence()"
+        [focusSequence]="mapFocus()"
         (focusCleared)="clearFocus()"
         (timelineRequested)="showInTimeline($event)"
       />
@@ -166,6 +197,8 @@
         [history]="history()"
         [live]="live()"
         [focusedSequence]="focusedSequence()"
+        [failureSequence]="failureSequence()"
+        [replaySequence]="replaySequence()"
         [canViewData]="canViewData"
         [(openKeys)]="openKeys"
         (entrySelected)="showOnMap($event)"

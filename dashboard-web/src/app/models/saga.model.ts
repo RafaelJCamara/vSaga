@@ -84,6 +84,35 @@ export interface SagaLogEntry {
   causationId?: string | null;
 }
 
+/** How a saga failed, named after the timeline entry that records it (the API's enum member names). */
+export type SagaRetryFailureKind = 'StepFailed' | 'BusinessFailure' | 'DeliveryExhausted' | 'TimedOut';
+
+/** The step a dashboard retry re-runs: the message it replays and the state the saga is reset to. */
+export interface SagaRetryStep {
+  /**
+   * The step's inbound timeline entry: its MessageReceived, else its SagaStarted, else the failure
+   * entry (StepFailed, DeliveryExhausted) or the step's StepSucceeded (BusinessFailure, TimedOut).
+   */
+  sequenceNumber: number;
+  messageType: string;
+  messageId: string;
+  fromState: string;
+}
+
+/**
+ * What a retry of one saga would re-run, or why it cannot (GET .../retry-plan). `failureKind` and
+ * `failureSequenceNumber` name the failure entry whenever one was found, retryable or not; `step`
+ * is set whenever the step was identified, even when its message cannot be replayed.
+ */
+export interface SagaRetryPlan {
+  retryable: boolean;
+  /** Why not, in plain words; null when retryable. */
+  reason: string | null;
+  failureKind: SagaRetryFailureKind | null;
+  failureSequenceNumber: number | null;
+  step: SagaRetryStep | null;
+}
+
 export interface PagedResult<T> {
   items: T[];
   page: number;

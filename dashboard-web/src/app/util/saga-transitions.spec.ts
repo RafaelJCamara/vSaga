@@ -14,6 +14,7 @@ import {
   started,
   succeeded,
   T0,
+  timedOutInvoice,
   timeoutFired,
   timeoutScheduled,
   unexpected,
@@ -24,6 +25,7 @@ import {
   PENDING_SNAPSHOT_MS,
   SagaHistory,
   SagaTransition,
+  stepContaining,
 } from './saga-transitions';
 
 const S1 = '{"Status":0,"Total":10}';
@@ -740,6 +742,22 @@ describe('foldTimeline', () => {
 
       expect(history.transitions[0].message).toEqual({ label: 'PaymentCaptured', json: '{"A":1}' });
     });
+  });
+});
+
+describe('stepContaining', () => {
+  const history = foldTimeline(timedOutInvoice());
+
+  it('finds the step whose rows hold the entry', () => {
+    expect(stepContaining(history, 66)?.ordinal).toBe(2);
+    expect(stepContaining(history, 61)?.ordinal).toBe(1);
+    expect(stepContaining(history, 60)?.ordinal).toBe(1);
+  });
+
+  it('finds no step for a snapshot, an entry the timeline lacks, or no number', () => {
+    expect(stepContaining(history, 65)).toBeNull();
+    expect(stepContaining(history, 999)).toBeNull();
+    expect(stepContaining(history, null)).toBeNull();
   });
 });
 

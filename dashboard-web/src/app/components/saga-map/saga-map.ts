@@ -43,7 +43,10 @@ export class SagaMap {
   readonly map = input.required<SagaMapModel>();
   /** The sequence number of the timeline entry to show the map as of; null for a free replay. */
   readonly focusSequence = input<number | null>(null);
-  /** The viewer moved the replay away from the focused entry (play, restart, step or scrub). */
+  /**
+   * The viewer took over the replay (play, restart, step or scrub), whether or not a focus was
+   * active: a focus that arrives afterwards (the page's default failure focus) must not jump it.
+   */
   readonly focusCleared = output<void>();
   /** The viewer asked to see the focused entry in the timeline; carries its sequence number. */
   readonly timelineRequested = output<number>();
@@ -170,9 +173,11 @@ export class SagaMap {
     if (focus) this.timelineRequested.emit(focus.requested);
   }
 
-  /** The viewer took over the replay: drop the focus and tell the page, once. */
+  /**
+   * The viewer took over the replay: drop the focus and tell the page on every take-over, even with
+   * no focus active, so the page can keep a focus it was about to apply from snapping the replay.
+   */
   private releaseFocus(): void {
-    if (this.activeFocus() === null) return;
     this.activeFocus.set(null);
     this.focusCleared.emit();
   }

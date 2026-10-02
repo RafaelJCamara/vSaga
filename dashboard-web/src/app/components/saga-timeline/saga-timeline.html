@@ -4,7 +4,8 @@
 </p>
 <ol class="tl">
   @for (t of history().transitions; track t.ordinal) {
-    <li class="tl-step" [class]="'tl-step--' + t.outcome">
+    @let failedHere = t.key === failedKey();
+    <li class="tl-step" [class]="'tl-step--' + t.outcome" [class.tl-step--failed-here]="failedHere">
       <div class="tl-head">
         <span class="micro-label">Step {{ t.ordinal }}</span>
         @let last = lastSequence(t);
@@ -14,6 +15,12 @@
           <span class="tl-title">{{ t.title }}</span>
         }
         <span class="tl-outcome">· {{ outcomeLabel(t) }}</span>
+        @if (failedHere) {
+          <span class="tl-marker tl-marker--failed">Failed here</span>
+        }
+        @if (t.key === replayKey()) {
+          <span class="tl-marker">Re-run starts here</span>
+        }
         @if (canViewData()) {
           <button
             type="button"
