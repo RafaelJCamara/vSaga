@@ -29,7 +29,7 @@ namespace VSaga.Dashboard.Identity.Services;
 /// probe start another one.
 /// </para>
 /// </remarks>
-public sealed partial class IdentityStartup : IDisposable
+public sealed partial class IdentityStartup : IIdentityReadiness, IDisposable
 {
     /// <summary>How long one attempt may take before it is abandoned and reported.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
@@ -58,6 +58,7 @@ public sealed partial class IdentityStartup : IDisposable
     private DateTimeOffset? _lastAttemptEndedAt;
     private string? _lastLoggedReason;
     private bool _pathLogged;
+    private int _disposeCalled;
 
     public IdentityStartup(IServiceScopeFactory scopes, DashboardIdentitySettings settings, TimeProvider time, ILogger<IdentityStartup> logger)
     {
@@ -133,9 +134,15 @@ public sealed partial class IdentityStartup : IDisposable
         }
     }
 
-    /// <summary>Ends a running attempt; nothing is retried afterwards.</summary>
+    /// <summary>
+    /// Ends a running attempt; nothing is retried afterwards. Idempotent: the container disposes this once as
+    /// itself and once as the <see cref="IIdentityReadiness"/> it is also registered as.
+    /// </summary>
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposeCalled, 1) != 0)
+            return;
+
         _disposed.Cancel();
         _disposed.Dispose();
     }

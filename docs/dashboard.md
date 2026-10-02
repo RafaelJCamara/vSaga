@@ -204,7 +204,8 @@ the right fit for an internal ops dashboard with no existing identity infrastruc
 
 1. The `X-Api-Key` header.
 2. An `Authorization: Bearer <key>` header.
-3. The `?access_token=` query string.
+3. The `?access_token=` query string, on the hub endpoints (`/hubs/...`) only. Anywhere else a cross-site
+   link or form could supply it, so machine clients send the key as `X-Api-Key`.
 
 All three are needed because a SignalR hub connection has two legs with different constraints: the JS
 client's `accessTokenFactory` sends the token as `Authorization: Bearer` on the negotiate HTTP call,

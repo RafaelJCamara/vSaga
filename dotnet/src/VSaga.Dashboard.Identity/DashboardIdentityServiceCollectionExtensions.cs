@@ -36,6 +36,7 @@ public static class DashboardIdentityServiceCollectionExtensions
         services.AddScoped<IDashboardIdentityStore, EfCoreDashboardIdentityStore>();
         services.AddScoped<IDashboardKeyRingStore, EfCoreKeyRingStore>();
         services.AddSingleton<IdentityStartup>();
+        services.AddSingleton<IIdentityReadiness>(provider => provider.GetRequiredService<IdentityStartup>());
         services.AddSingleton<IdentityStoreXmlRepository>();
 
         services.AddDataProtection().SetApplicationName(DataProtectionApplicationName);

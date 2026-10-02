@@ -6,6 +6,7 @@ using VSaga.Persistence.InMemory;
 using VSaga.Transport.InMemory;
 using VSaga.Transport.RabbitMQ;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -49,8 +50,11 @@ public sealed class DashboardApiFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // UseSetting, not ConfigureAppConfiguration: Program.cs reads the identity path while composing.
+        // UseSetting, not ConfigureAppConfiguration: Program.cs reads the identity path and the security
+        // settings while composing. Operator, not the default Viewer, so the key's retries keep the
+        // permission they need once the saga endpoints check it; tests of the default set it back to empty.
         builder.UseSetting(DashboardIdentitySettings.SqlitePathKey, _identity.FilePath);
+        builder.UseSetting(DashboardSecuritySettings.ApiKeyRoleKey, "Operator");
 
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>(StringComparer.Ordinal)
         {
@@ -78,6 +82,9 @@ public sealed class DashboardApiFactory : WebApplicationFactory<Program>
 
             services.AddVSagaInMemoryPersistence();
             services.AddVSagaInMemoryTransport();
+
+            // Few iterations, so hashing a test user's password does not dominate the suite.
+            services.Configure<PasswordHasherOptions>(options => options.IterationCount = 1000);
         });
     }
 }

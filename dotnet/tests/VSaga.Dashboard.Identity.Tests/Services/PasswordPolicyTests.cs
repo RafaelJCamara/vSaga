@@ -93,12 +93,53 @@ public sealed class DashboardSecuritySettingsTests
     [InlineData(DashboardSecuritySettings.LockoutMinutesKey, "1441")]
     [InlineData(DashboardSecuritySettings.LockoutMinutesKey, "fifteen")]
     [InlineData(DashboardSecuritySettings.PasswordMinLengthKey, "12.5")]
-    public void Read_OutOfRange_FailsNamingTheKeyAndTheValue(string key, string value)
+    [InlineData(DashboardSecuritySettings.SessionIdleTimeoutMinutesKey, "0")]
+    [InlineData(DashboardSecuritySettings.SessionIdleTimeoutMinutesKey, "10081")]
+    [InlineData(DashboardSecuritySettings.SessionAbsoluteTimeoutHoursKey, "0")]
+    [InlineData(DashboardSecuritySettings.SessionAbsoluteTimeoutHoursKey, "721")]
+    [InlineData(DashboardSecuritySettings.RequireHttpsKey, "yes")]
+    [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "vsaga session")]
+    [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "vsaga;session")]
+    [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "__Host-vsaga.session")]
+    [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "a0123456789012345678901234567890123456789012345678901234567890123")]
+    [InlineData(DashboardSecuritySettings.ApiKeyRoleKey, "r0123456789012345678901234567890123456789012345678901234567890123")]
+    public void Read_InvalidValue_FailsNamingTheKeyAndTheValue(string key, string value)
     {
         var error = Assert.Throws<InvalidOperationException>(() => DashboardSecuritySettings.Read(Configuration((key, value))));
 
         Assert.Contains(key, error.Message, StringComparison.Ordinal);
         Assert.Contains($"'{value}'", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_WithNothingSet_GivesTheSessionAndApiKeyDefaults()
+    {
+        var settings = DashboardSecuritySettings.Read(Configuration());
+
+        Assert.Equal("vsaga.session", settings.SessionCookieName);
+        Assert.Equal("vsaga.session", settings.EffectiveSessionCookieName);
+        Assert.Equal(TimeSpan.FromMinutes(480), settings.SessionIdleTimeout);
+        Assert.Equal(TimeSpan.FromHours(24), settings.SessionAbsoluteTimeout);
+        Assert.False(settings.RequireHttps);
+        Assert.Equal("Viewer", settings.ApiKeyRole);
+    }
+
+    [Fact]
+    public void Read_TakesTheSessionAndApiKeyKeys()
+    {
+        var settings = DashboardSecuritySettings.Read(Configuration(
+            (DashboardSecuritySettings.SessionCookieNameKey, " vsaga.session.overlay_2 "),
+            (DashboardSecuritySettings.SessionIdleTimeoutMinutesKey, "30"),
+            (DashboardSecuritySettings.SessionAbsoluteTimeoutHoursKey, "8"),
+            (DashboardSecuritySettings.RequireHttpsKey, "True"),
+            (DashboardSecuritySettings.ApiKeyRoleKey, " Operator ")));
+
+        Assert.Equal("vsaga.session.overlay_2", settings.SessionCookieName);
+        Assert.Equal("__Host-vsaga.session.overlay_2", settings.EffectiveSessionCookieName);
+        Assert.Equal(TimeSpan.FromMinutes(30), settings.SessionIdleTimeout);
+        Assert.Equal(TimeSpan.FromHours(8), settings.SessionAbsoluteTimeout);
+        Assert.True(settings.RequireHttps);
+        Assert.Equal("Operator", settings.ApiKeyRole);
     }
 
     private static IConfiguration Configuration(params (string Key, string Value)[] values) =>

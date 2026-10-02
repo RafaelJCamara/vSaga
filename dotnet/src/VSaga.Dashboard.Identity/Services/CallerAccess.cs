@@ -41,8 +41,8 @@ public sealed record CallerAccess(
 }
 
 /// <summary>
-/// Resolves the caller behind an authenticated principal. The implementation reads the claims, loads the
-/// user, their teams and the roles, and evaluates access; it arrives with the authentication wiring.
+/// Resolves the caller behind an authenticated principal. <see cref="CallerAccessResolver"/> reads the
+/// claims, loads the user, their teams and the roles, and evaluates access.
 /// </summary>
 public interface ICallerAccessResolver
 {

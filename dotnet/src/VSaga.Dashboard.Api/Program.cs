@@ -143,9 +143,9 @@ switch (persistenceProvider)
 // Degraded, never Unhealthy: sign-in needs the identity store, the saga views and the saga host do not.
 healthChecks.AddCheck<IdentityHealthCheck>("identity", failureStatus: HealthStatus.Degraded);
 
-builder.Services.AddAuthentication(ApiKeyAuthenticationDefaults.SchemeName)
-    .AddScheme<ApiKeyAuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationDefaults.SchemeName, configureOptions: null);
-builder.Services.AddAuthorization();
+// A session cookie or the API key, through one policy scheme, and every endpoint protected unless it opts
+// out; the security settings (sessions, the API key's role) are read and validated here, once.
+builder.Services.AddDashboardAuth(builder.Configuration, edge);
 
 var app = builder.Build();
 
@@ -171,19 +171,19 @@ using (var scope = app.Services.CreateScope())
 // database (an unset path in a container, a read-only volume, a stale migration lock) leaves sign-in
 // unavailable and the "identity" health check Degraded with the reason, and the check retries it.
 await app.Services.GetRequiredService<IdentityStartup>().EnsureReadyAsync(app.Lifetime.ApplicationStopping);
+await app.WarnAboutApiKeyAsync();
 
 if (app.Environment.IsDevelopment())
-    app.MapOpenApi();
+    app.MapOpenApi().AllowAnonymous();
 
 app.UseDashboardEdge();
-
-app.UseAuthentication();
-app.UseAuthorization();
+app.UseApiResponseHeaders();
+app.UseDashboardAuth();
 
 app.MapSagaEndpoints();
 app.MapHub<SagaHub>("/hubs/saga").RequireAuthorization();
 // Left unauthenticated: infra probes (docker-compose healthcheck, orchestrators) hit this without a key.
-app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = WriteHealthResponseAsync });
+app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = WriteHealthResponseAsync }).AllowAnonymous();
 
 await app.RunAsync();
 
