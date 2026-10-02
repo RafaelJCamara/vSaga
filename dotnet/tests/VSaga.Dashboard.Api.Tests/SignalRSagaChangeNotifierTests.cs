@@ -80,6 +80,32 @@ public sealed class SignalRSagaChangeNotifierTests
     }
 
     /// <summary>
+    /// A hub group is joined per saga, not per permission, so a push cannot be redacted per caller: every
+    /// pushed entry leaves its payload and error message behind, and the detail page's refetch (which goes
+    /// through the timeline's redaction seam) is where a caller allowed to see them gets them.
+    /// </summary>
+    [Fact]
+    public async Task TimelineEntryAdded_PushesTheEntryWithoutItsPayloadOrErrorMessage()
+    {
+        var context = new RecordingHubContext();
+        var notifier = new SignalRSagaChangeNotifier(context);
+        var correlationId = Guid.NewGuid();
+        var entry = SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.StepFailed,
+            fromState: "AwaitingPayment", messageType: "PaymentDeclined", messageId: "m-3",
+            payloadJson: """{"Card":"4111"}""", errorMessage: "Card 4111 declined for customer alice",
+            causationId: "m-2") with { SequenceNumber = 4 };
+
+        await notifier.TimelineEntryAddedAsync("OrderSaga", correlationId, entry);
+
+        var pushed = Assert.Single(context.Recorder.TimelineEntries).Entry;
+        Assert.Null(pushed.PayloadJson);
+        Assert.Null(pushed.ErrorMessage);
+
+        // Only the data goes: the row still says which step failed, and where it sits in the timeline.
+        Assert.Equal(entry with { PayloadJson = null, ErrorMessage = null }, pushed);
+    }
+
+    /// <summary>
     /// Two saga types sharing a correlation id must land in two different groups — the property the whole
     /// composite-key change exists to preserve, asserted here at the notification layer.
     /// </summary>

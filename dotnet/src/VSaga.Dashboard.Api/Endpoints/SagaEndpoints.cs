@@ -40,8 +40,7 @@ public static class SagaEndpoints
         })
         .WithName("GetSaga");
 
-        group.MapGet("/{sagaType}/{correlationId:guid}/timeline", async (string sagaType, Guid correlationId, ISagaEventLogStore log, CancellationToken ct) =>
-            Results.Ok(await log.GetTimelineAsync(sagaType, correlationId, ct)))
+        group.MapGet("/{sagaType}/{correlationId:guid}/timeline", GetSagaTimelineAsync)
         .WithName("GetSagaTimeline");
 
         group.MapGet("/{sagaType}/{correlationId:guid}/map", GetSagaMapAsync)
@@ -122,7 +121,17 @@ public static class SagaEndpoints
         var timeline = await log.GetTimelineAsync(sagaType, correlationId, ct);
         var topology = await topologyStore.GetAllAsync(ct);
 
-        return Results.Ok(SagaMapBuilder.Build(summary, timeline, topology));
+        // Same seam as the timeline: the authentication work supplies the caller's sagas.data answer.
+        return Results.Ok(SagaTimelineRedaction.ApplyToMap(SagaMapBuilder.Build(summary, timeline, topology), includeData: true));
+    }
+
+    private static async Task<IResult> GetSagaTimelineAsync(string sagaType, Guid correlationId, ISagaEventLogStore log, CancellationToken ct)
+    {
+        var timeline = await log.GetTimelineAsync(sagaType, correlationId, ct);
+
+        // includeData is fixed until the authentication work supplies it from the caller's sagas.data
+        // permission; the seam is here now so payloads and error messages have one exit to guard.
+        return Results.Ok(SagaTimelineRedaction.Apply(timeline, includeData: true));
     }
 
     private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin, IMessageTransport transport, TimeProvider timeProvider, CancellationToken ct)
