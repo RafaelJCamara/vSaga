@@ -2,6 +2,7 @@ using VSaga.Abstractions.Persistence;
 using VSaga.Abstractions.Sagas;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace VSaga.Persistence.EFCore.Tests;
 
@@ -442,6 +443,114 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
 
         await using var db2 = NewContext();
         Assert.Empty(db2.SagaOutboxMessages);
+    }
+
+    /// <summary>
+    /// The context is scoped to the whole unit of work, so an append whose save failed must not stay
+    /// Added in it: the next SaveChangesAsync on the same context (the next log entry, MarkDispatchedAsync)
+    /// would write it too, after entries logged later, and the timeline would hold it out of order.
+    /// </summary>
+    [Fact]
+    public async Task EventLog_AppendThatFailedToSave_IsNotWrittenByALaterAppendOnTheSameContext()
+    {
+        var correlationId = Guid.NewGuid();
+        var interceptor = new ThrowOnceSaveInterceptor();
+
+        await using (var db = new VSagaDbContext(new DbContextOptionsBuilder<VSagaDbContext>()
+            .UseSqlite(_connection)
+            .AddInterceptors(interceptor)
+            .Options))
+        {
+            var log = new EfCoreSagaEventLogStore(db);
+
+            var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => log.AppendAsync(
+                SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.StepSucceeded, messageId: "lost")));
+            Assert.Same(interceptor.Thrown, thrown); // rethrown untouched, not wrapped
+
+            await log.AppendAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.MessagePublished, messageId: "later"));
+        }
+
+        await using var db2 = NewContext();
+        var timeline = await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("OrderSaga", correlationId);
+
+        Assert.Equal("later", Assert.Single(timeline).MessageId);
+    }
+
+    /// <summary>
+    /// A row the database rejects on its own would otherwise be re-sent, and rejected again, by every
+    /// later save on the context, failing each later append and the outbox drain with it.
+    /// </summary>
+    [Fact]
+    public async Task EventLog_AppendTheDatabaseRejects_DoesNotFailTheNextAppendOnTheSameContext()
+    {
+        var correlationId = Guid.NewGuid();
+
+        await using (var db = NewContext())
+        {
+            var log = new EfCoreSagaEventLogStore(db);
+
+            // SagaType is a required column, so SQLite's NOT NULL constraint rejects this row.
+            await Assert.ThrowsAsync<DbUpdateException>(() => log.AppendAsync(
+                SagaLogEntry.Create(correlationId, null!, SagaEntryType.StepSucceeded, messageId: "rejected")));
+
+            await log.AppendAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.MessagePublished, messageId: "next"));
+        }
+
+        await using var db2 = NewContext();
+        var timeline = await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("OrderSaga", correlationId);
+
+        // The rejected row can never be stored (NOT NULL), so there is nothing to look for: the point is
+        // that the next append on the same context saved instead of re-sending it and failing too.
+        Assert.Equal("next", Assert.Single(timeline).MessageId);
+    }
+
+    /// <summary>
+    /// The detach drops only the failed log entry. Outbox rows staged earlier in the unit of work stay
+    /// staged and are made durable by the next successful commit (clause 4 of persistence-contracts.md);
+    /// clearing the whole change tracker would silently lose them.
+    /// </summary>
+    [Fact]
+    public async Task EventLog_AppendThatFailedToSave_LeavesStagedOutboxRowsForTheNextCommit()
+    {
+        var correlationId = Guid.NewGuid();
+
+        await using (var db = new VSagaDbContext(new DbContextOptionsBuilder<VSagaDbContext>()
+            .UseSqlite(_connection)
+            .AddInterceptors(new ThrowOnceSaveInterceptor())
+            .Options))
+        {
+            await new EfCoreSagaOutboxStore(db).EnqueueAsync("OrderSaga", correlationId, "staged-1", "InventoryReserved",
+                "{}"u8.ToArray(), destination: null, new Dictionary<string, string>(StringComparer.Ordinal), DateTimeOffset.UtcNow);
+
+            var log = new EfCoreSagaEventLogStore(db);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => log.AppendAsync(
+                SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.StepSucceeded, messageId: "lost")));
+
+            await log.AppendAsync(SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.MessagePublished, messageId: "later"));
+        }
+
+        await using var db2 = NewContext();
+        var timeline = await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("OrderSaga", correlationId);
+
+        Assert.Equal("staged-1", Assert.Single(db2.SagaOutboxMessages).MessageId);
+        Assert.Equal("later", Assert.Single(timeline).MessageId);
+    }
+
+    private sealed class ThrowOnceSaveInterceptor : SaveChangesInterceptor
+    {
+        public InvalidOperationException Thrown { get; } = new("Simulated save failure.");
+
+        private bool _thrown;
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (_thrown)
+                return base.SavingChangesAsync(eventData, result, cancellationToken);
+
+            _thrown = true;
+            throw Thrown;
+        }
     }
 
     [Fact]

@@ -27,7 +27,21 @@ public sealed class EfCoreSagaEventLogStore(VSagaDbContext db) : ISagaEventLogSt
         };
 
         db.SagaEventLog.Add(entity);
-        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            // The context is scoped to the whole unit of work. An entity left Added after a failed save
+            // is re-sent by every later SaveChangesAsync on it (MarkDispatchedAsync, the next log entry):
+            // a row that keeps failing would break the outbox drain, and one that later succeeds would be
+            // resurrected out of order. Detaching drops only this entry: staged outbox rows are left
+            // staged, as clause 4 of docs/design/persistence-contracts.md requires. The exception is
+            // rethrown untouched.
+            db.Entry(entity).State = EntityState.Detached;
+            throw;
+        }
 
         return entity.Id;
     }
