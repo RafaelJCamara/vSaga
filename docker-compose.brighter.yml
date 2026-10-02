@@ -5,12 +5,13 @@
 # compose project name, alongside the other adapter tracks' own overlays on the same machine.
 #
 #   docker compose -p vsaga-brighter -f docker-compose.yml -f docker-compose.brighter.yml up -d --build
+# Dashboard: http://localhost:4500
 #
 # Plain `docker compose up` (no overlay) behaves exactly as before -- RabbitMq is still the default
 # Transport:Provider (see dotnet/samples/VSaga.Samples.OrderProcessing/appsettings.json).
 # Ports use the "!override" merge tag rather than plain sequences: Compose's default list-merge
 # behavior concatenates ports arrays across files instead of replacing them, which would leave this
-# overlay trying to bind docker-compose.yml's original host ports (5433/5672/15672/5080) as well as
+# overlay trying to bind docker-compose.yml's original host ports (5433/5672/15672/5080/4200) as well as
 # these -- exactly the collision this overlay exists to avoid when another track's stack is already
 # bound to those.
 services:
@@ -25,7 +26,11 @@ services:
 
   dashboard-api:
     ports: !override
-      - "5380:8080"
+      - "127.0.0.1:5380:8080"
+
+  dashboard-web:
+    ports: !override
+      - "127.0.0.1:4500:8080"
 
   order-processing:
     environment:

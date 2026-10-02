@@ -6,10 +6,11 @@
 # service-to-service DNS names/ports (e.g. order-processing talking to "rabbitmq:5672") are unaffected.
 #
 #   docker compose -p vsaga-wolverine -f docker-compose.yml -f docker-compose.wolverine.yml up -d --build
+# Dashboard: http://localhost:4300
 #
 # Ports use the "!override" merge tag rather than plain sequences: Compose's default list-merge
 # behavior concatenates ports arrays across files instead of replacing them, which would leave this
-# overlay also trying to bind docker-compose.yml's original host ports (5433/5672/15672/5080) —
+# overlay also trying to bind docker-compose.yml's original host ports (5433/5672/15672/5080/4200) —
 # exactly the collision this overlay exists to avoid when another track's stack already holds those.
 services:
   postgres:
@@ -17,7 +18,9 @@ services:
   rabbitmq:
     ports: !override ["5772:5672", "15772:15672"]
   dashboard-api:
-    ports: !override ["5180:8080"]
+    ports: !override ["127.0.0.1:5180:8080"]
+  dashboard-web:
+    ports: !override ["127.0.0.1:4300:8080"]
   order-processing:
     environment:
       Transport__Provider: "Wolverine"

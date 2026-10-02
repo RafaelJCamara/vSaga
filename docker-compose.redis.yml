@@ -3,6 +3,7 @@
 # Postgres, for that provider's own live-verification pass.
 #
 #   docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
+# Dashboard: http://localhost:4800
 #
 # The redis service is configured at the provider's Tier A: appendonly yes, appendfsync everysec,
 # maxmemory-policy noeviction, a dedicated instance with a maxmemory ceiling so the provider's memory
@@ -18,7 +19,8 @@
 # Ports use the "!override" merge tag rather than plain sequences, same reason as every other overlay:
 # Compose's default list-merge would otherwise leave this track also trying to bind the base file's
 # original host ports. This overlay's block: redis 6479, postgres 5447, rabbitmq 6272/16272,
-# dashboard-api 5680 -- the slots docs/design/redis-persistence.md reserved for it.
+# dashboard-api 5680 -- the slots docs/design/redis-persistence.md reserved for it -- plus dashboard-web
+# 4800 (the API port minus 880, as in every stack).
 services:
   redis:
     image: redis:7.4-alpine
@@ -39,7 +41,7 @@ services:
     ports: !override ["6272:5672", "16272:15672"]
 
   dashboard-api:
-    ports: !override ["5680:8080"]
+    ports: !override ["127.0.0.1:5680:8080"]
     environment:
       Persistence__Provider: "Redis"
       Redis__ConnectionString: "redis:6379"
@@ -47,6 +49,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  dashboard-web:
+    ports: !override ["127.0.0.1:4800:8080"]
 
   order-processing:
     environment:

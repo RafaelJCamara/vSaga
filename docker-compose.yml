@@ -30,8 +30,12 @@ services:
     build:
       context: ./dotnet
       dockerfile: src/VSaga.Dashboard.Api/Dockerfile
+    # The dashboard ports bind to loopback because the demo ships a known credential (the committed API
+    # key below, and later a seeded administrator), so only this machine can reach them. To expose the
+    # dashboard deliberately, change the bind address here and on dashboard-web together with that
+    # credential, and put TLS in front.
     ports:
-      - "5080:8080"
+      - "127.0.0.1:5080:8080"
     environment:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__VSaga: "Host=postgres;Port=5432;Database=vsaga;Username=postgres;Password=postgres"
@@ -48,6 +52,21 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  dashboard-web:
+    build:
+      context: ./dashboard-web
+    ports:
+      - "127.0.0.1:4200:8080" # http://localhost:4200. In every stack: dashboard-api's host port minus 880.
+    depends_on:
+      dashboard-api:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not localhost: BusyBox wget may try ::1 first and nginx listens on IPv4 only.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   order-processing:
     build:

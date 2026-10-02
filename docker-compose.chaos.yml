@@ -4,6 +4,8 @@
 # 5-20% simulated-failure rates in its participants. See docs/chaos.md for what each fault does.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
+# Dashboard: http://localhost:4200 -- this overlay remaps no ports, so the dashboard stays where the
+# base file puts it.
 #
 # Plain `docker compose up` (no chaos file) behaves exactly as before — chaos is opt-in, off by
 # default (Chaos:Enabled in appsettings.json).

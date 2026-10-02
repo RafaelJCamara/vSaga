@@ -3,6 +3,7 @@
 # adapter's own live-verification pass.
 #
 #   docker compose -p vsaga-http -f docker-compose.yml -f docker-compose.http.yml up -d --build
+# Dashboard: http://localhost:4600
 #
 # Unlike every other adapter overlay, this one cannot be a pure config-swap on the existing
 # order-processing service: because local subscriptions count as routes (docs/design/http-based-sagas.md
@@ -25,14 +26,14 @@
 # Ports use the "!override" merge tag rather than plain sequences, same reason as every other overlay:
 # Compose's default list-merge would otherwise leave this track also trying to bind the base file's
 # original host ports. Fresh ports here (continuing each other overlay's own block): postgres 5446,
-# rabbitmq 6072/16072, dashboard-api 5480.
+# rabbitmq 6072/16072, dashboard-api 5480, dashboard-web 4600.
 services:
   postgres:
     ports: !override ["5446:5432"]
   rabbitmq:
     ports: !override ["6072:5672", "16072:15672"]
   dashboard-api:
-    ports: !override ["5480:8080"]
+    ports: !override ["127.0.0.1:5480:8080"]
     environment:
       Transport__Provider: "Http"
       # Manual retry's PublishRawAsync (SagaEndpoints.RetrySagaAsync) never knows the message type ahead
@@ -41,6 +42,8 @@ services:
       Http__ServiceName: "dashboard-api"
       Http__Endpoints__sagas: "http://order-processing:8080"
       "Http__Routes__*__0": "sagas"
+  dashboard-web:
+    ports: !override ["127.0.0.1:4600:8080"]
 
   order-processing:
     environment:

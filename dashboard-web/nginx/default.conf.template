@@ -12,9 +12,8 @@ map "${DASHBOARD_OUTER_PROXY}:$http_x_forwarded_proto" $forwarded_proto {
 }
 
 # $uri, not $request: a machine client's access_token query parameter (the API key) never reaches the
-# access log. nginx's error log still prints the full request line, query included, when the upstream
-# fails (connection refused, name not resolving, timeout); that is accepted, because the bundled SPA
-# stops sending the key in the query once sign-in lands.
+# access log. The server block below also raises its error log to crit, because nginx's error lines
+# print the full request line and upstream URL, query included, whenever the API is unreachable.
 log_format dashboard '$remote_addr [$time_local] "$request_method $uri $server_protocol" '
                      '$status $body_bytes_sent $request_time';
 
@@ -24,6 +23,11 @@ server {
     server_tokens off;
     absolute_redirect off;
     access_log /var/log/nginx/access.log dashboard;
+    # Request-time messages at error level and below (a refused or unresolved upstream, a timeout) quote
+    # the request line with its query, so they are not written at all. The access log still records
+    # each such request by path with its 502 or 504, and the API's own logs and health check say why it
+    # is down. Start-up and configuration errors keep the base image's main error log.
+    error_log /var/log/nginx/error.log crit;
     root /srv/dashboard-web;
     index index.html;
 
