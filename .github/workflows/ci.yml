@@ -72,5 +72,13 @@ jobs:
       - name: Build
         run: npx ng build
 
+      # The dashboard-web image serves the SPA under a CSP with script-src 'self', which blocks inline
+      # scripts and inline event handlers. A build option that emits either (critical-CSS inlining
+      # writes an onload handler on the stylesheet link) would ship a page whose styles or scripts the
+      # browser refuses, while ng serve, which has no CSP, keeps working. test -f comes first because
+      # a bare "! grep" would turn grep's missing-file status into success and check nothing.
+      - name: Check index.html for inline scripts and handlers
+        run: "test -f dist/dashboard-web/browser/index.html && ! grep -Eq '<script>| on[a-z]+=' dist/dashboard-web/browser/index.html"
+
       - name: Test
         run: npx ng test --watch=false

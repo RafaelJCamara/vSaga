@@ -100,7 +100,10 @@ underlying issue before committing, not after.
 - `dotnet build dotnet/VSaga.slnx` is clean (zero warnings) and `dotnet test dotnet/VSaga.slnx` passes.
 - If you touched `dashboard-web`: `npm ci && npm audit --audit-level=low && npx ng build && npx ng test --watch=false`
   pass from that directory. `npm audit` fails on any advisory rated `low` through `critical`, dev
-  dependencies included, exactly as CI's does.
+  dependencies included, exactly as CI's does. If you changed `angular.json` or the build options,
+  also run `! grep -Eq '<script>| on[a-z]+=' dist/dashboard-web/browser/index.html` after the build:
+  the container image's CSP forbids inline scripts and `on*=` handlers, and `ng serve` has no CSP to
+  show it.
 - If your change touches message flow, headers, correlation, or timing, you've live-verified it
   against `docker compose up` (and the chaos overlay, where relevant) — not just unit tests.
 - New reference behaviour is documented in `docs/`, not left only in a commit message or code comment.
@@ -112,7 +115,9 @@ pass:
   with `--configuration Release` (the commands above build Debug), on the SDK `dotnet/global.json`
   pins, with Testcontainers' Ryuk sidecar disabled (`TESTCONTAINERS_RYUK_DISABLED`).
 - `Angular build & test`: in `dashboard-web/` on Node 22, `npm ci`, then `npm audit --audit-level=low`,
-  then `npx ng build`, then `npx ng test --watch=false`. `npm ci` only reports known vulnerabilities;
+  then `npx ng build`, then a check that the built `index.html` has no inline `<script>` or `on*=`
+  handler (the dashboard-web image's CSP forbids them), then `npx ng test --watch=false`. `npm ci`
+  only reports known vulnerabilities;
   the `npm audit` step fails the job on **any** advisory rated `low` through `critical`, in dev
   dependencies too. Neither job is
   path-filtered, so a newly published advisory can fail a PR that never touched `dashboard-web/`.
