@@ -100,13 +100,14 @@ new here; the rest of this index is organized by topic, roughly in the order you
 ## History
 
 - [`history/`](history/) — one file per topic: the changelog narrative this project's README used to
-  carry directly, preserved verbatim and headed with the commit(s) it describes, plus five records
+  carry directly, preserved verbatim and headed with the commit(s) it describes, plus six records
   written fresh after the docs restructure (the CI flakes, the third field test, the requirements
-  audit, and the Redis and MongoDB providers). Read these for *how* a feature was built and verified —
-  live-verification traces, mutation-testing results, bugs found and fixed along the way — content
-  that matters for provenance but would clutter a reference doc meant to describe the feature as it
-  stands today. Because they are kept unedited, some still describe the TypeScript participant SDK
-  (removed 2026-09-27) and the dashboard's old `typescript/dashboard-web` path (now `dashboard-web/`).
+  audit, the Redis and MongoDB providers, and the dashboard UI joining compose). Read these for *how*
+  a feature was built and verified — live-verification traces, mutation-testing results, bugs found
+  and fixed along the way — content that matters for provenance but would clutter a reference doc
+  meant to describe the feature as it stands today. Because they are kept unedited, some still
+  describe the TypeScript participant SDK (removed 2026-09-27) and the dashboard's old
+  `typescript/dashboard-web` path (now `dashboard-web/`).
 
 ## Project meta
 
