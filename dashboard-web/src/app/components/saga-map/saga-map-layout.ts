@@ -1,4 +1,4 @@
-import { SagaMap, SagaMapNode } from '../../models/saga.model';
+import { SagaMap, SagaMapEvent, SagaMapNode } from '../../models/saga.model';
 
 /** Zero-Angular-import geometry/layout/replay-derivation module — the pure, DOM-free part of the map. */
 
@@ -227,6 +227,33 @@ export function computeNodeStates(map: SagaMap, currentIndex: number): Map<strin
     }
   }
   return states;
+}
+
+/** Where the replay stands for a timeline entry (see resolveFocusIndex). */
+export interface FocusResolution {
+  /** The index in the map's events the replay positions on. */
+  index: number;
+  /** Whether the event at `index` is the requested entry itself, not a stand-in for it. */
+  exact: boolean;
+  /** The sequence number that was asked for. */
+  requested: number;
+}
+
+/**
+ * The event the map shows for timeline entry `sequence`: the event with that sequence number,
+ * otherwise the last one before it (a map fetched before the entry was recorded), otherwise the
+ * first event. Null when nothing is asked for or there is nothing to show.
+ */
+export function resolveFocusIndex(events: readonly SagaMapEvent[], sequence: number | null): FocusResolution | null {
+  if (sequence === null || events.length === 0) return null;
+
+  let index = 0;
+  for (let i = 0; i < events.length; i++) {
+    const current = events[i].sequenceNumber;
+    if (current === sequence) return { index: i, exact: true, requested: sequence };
+    if (current < sequence) index = i;
+  }
+  return { index, exact: false, requested: sequence };
 }
 
 const MIN_STEP_DELAY_MS = 1000;

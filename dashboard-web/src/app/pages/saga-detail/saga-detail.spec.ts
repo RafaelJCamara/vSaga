@@ -1,11 +1,13 @@
 import { TestBed } from '@angular/core/testing';
-import { ActivatedRoute, ParamMap, convertToParamMap, provideRouter } from '@angular/router';
+import { By } from '@angular/platform-browser';
+import { ActivatedRoute, ParamMap, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { BehaviorSubject, Observable, Subject, of, throwError } from 'rxjs';
 import { vi } from 'vitest';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import { SagaDetail as SagaDetailModel, SagaLogEntry, SagaMap as SagaMapModel, SagaStatus, SagaSummary } from '../../models/saga.model';
 import { timezoneLabel } from '../../util/time-format';
+import { SagaMap } from '../../components/saga-map/saga-map';
 import { SagaDetail } from './saga-detail';
 
 function makeDetail(overrides: Partial<SagaSummary> = {}): SagaDetailModel {
@@ -73,6 +75,7 @@ describe('SagaDetail', () => {
     subscribeToSaga: ReturnType<typeof vi.fn>;
     unsubscribeFromSaga: ReturnType<typeof vi.fn>;
   };
+  let navigateSpy: ReturnType<typeof vi.spyOn>;
 
   function setup(
     detail: SagaDetailModel = makeDetail(),
@@ -85,6 +88,8 @@ describe('SagaDetail', () => {
     // Defaults to a single static emission; pass a Subject to drive multiple param sets through the
     // same component instance the way Angular's route-reuse does on same-route-config navigation.
     paramMap$: Observable<ParamMap> = of(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' })),
+    // The page's query parameters (?tab=&entry=); a Subject drives Back and Forward.
+    queryParamMap$: Observable<ParamMap> = of(convertToParamMap({})),
   ) {
     apiMock = {
       get: vi.fn().mockReturnValue(of(detail)),
@@ -112,10 +117,12 @@ describe('SagaDetail', () => {
           provide: ActivatedRoute,
           useValue: {
             paramMap: paramMap$,
+            queryParamMap: queryParamMap$,
           },
         },
       ],
     });
+    navigateSpy = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
 
     const fixture = TestBed.createComponent(SagaDetail);
     fixture.detectChanges();
@@ -191,7 +198,7 @@ describe('SagaDetail', () => {
         provideRouter([]),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
-        { provide: ActivatedRoute, useValue: { paramMap: paramMap$ } },
+        { provide: ActivatedRoute, useValue: { paramMap: paramMap$, queryParamMap: of(convertToParamMap({})) } },
       ],
     });
     const fixture = TestBed.createComponent(SagaDetail);
@@ -252,7 +259,13 @@ describe('SagaDetail', () => {
         provideRouter([]),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
-        { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' })) } },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            paramMap: of(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' })),
+            queryParamMap: of(convertToParamMap({})),
+          },
+        },
       ],
     });
     const fixture = TestBed.createComponent(SagaDetail);
@@ -680,5 +693,194 @@ describe('SagaDetail', () => {
 
     const el: HTMLElement = fixture.nativeElement;
     expect(el.querySelector('app-saga-map')).not.toBeNull();
+  });
+
+  describe('jump between the timeline and the map', () => {
+    /** One step: rows #1-#3 (sequence 1-3), a snapshot (4) that is never a row. */
+    function steps(): SagaLogEntry[] {
+      return [
+        makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageId: 'm0' }),
+        makeEntry({ sequenceNumber: 2, entryType: 'MessageReceived', messageId: 'm0' }),
+        makeEntry({ sequenceNumber: 3, entryType: 'StepSucceeded', messageId: 'm0', fromState: 'Initial', toState: 'Submitted' }),
+        makeEntry({ sequenceNumber: 4, entryType: 'StatePersisted', messageId: 'm0', payloadJson: '{}' }),
+      ];
+    }
+
+    function mapOf(...sequences: number[]): SagaMapModel {
+      return makeMap({
+        nodes: [{ id: 'OrderSaga', displayName: 'OrderSaga', kind: 'Orchestrator', status: 'ok', messagesIn: 0, messagesOut: 0 }],
+        events: sequences.map((sequenceNumber) => ({
+          sequenceNumber,
+          edgeId: null,
+          nodeId: null,
+          entryType: 'StepSucceeded' as const,
+          messageType: null,
+          errorMessage: null,
+          occurredAtUtc: '2026-01-01T00:00:00Z',
+        })),
+      });
+    }
+
+    function query(params: Record<string, string>): Observable<ParamMap> {
+      return of(convertToParamMap(params));
+    }
+
+    const routeParams = () => of(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+
+    function mapComponent(fixture: ReturnType<typeof setup>): SagaMap {
+      return fixture.debugElement.query(By.directive(SagaMap)).componentInstance as SagaMap;
+    }
+
+    function lastNavigation(): { queryParams: Record<string, unknown>; queryParamsHandling: string; replaceUrl: boolean } {
+      return navigateSpy.mock.calls.at(-1)![1] as never;
+    }
+
+    it('restores the tab and the focused entry from the URL', () => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3), undefined, [], routeParams(), query({ tab: 'timeline', entry: '2' }));
+
+      expect(fixture.componentInstance.tab()).toBe('timeline');
+      expect(fixture.componentInstance.focusedSequence()).toBe(2);
+      const focused = fixture.nativeElement.querySelectorAll('.tl-row--focused');
+      expect(focused.length).toBe(1);
+      expect(focused[0].getAttribute('data-seq')).toBe('2');
+      expect(navigateSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ tab: 'bogus', entry: '0' }],
+      [{ tab: 'Timeline', entry: 'abc' }],
+      [{ entry: '-3' }],
+      [{ entry: '1.5' }],
+      [{ entry: '9007199254740993' }],
+    ])('ignores an invalid tab or entry in %o', (params) => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3), undefined, [], routeParams(), query(params));
+
+      expect(fixture.componentInstance.tab()).toBe('map');
+      expect(fixture.componentInstance.focusedSequence()).toBeNull();
+    });
+
+    it('accepts the data tab from the URL while that tab exists', () => {
+      const fixture = setup(makeDetail(), [], makeMap(), undefined, [], routeParams(), query({ tab: 'data' }));
+
+      expect(fixture.componentInstance.tab()).toBe('data');
+    });
+
+    it('opens the map on an entry when its timeline row is clicked, as a history step', () => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3));
+      fixture.componentInstance.setTab('timeline');
+      fixture.detectChanges();
+      navigateSpy.mockClear();
+
+      fixture.nativeElement.querySelector('.tl-row[data-seq="2"]').click();
+      fixture.detectChanges();
+
+      expect(navigateSpy).toHaveBeenCalledTimes(1);
+      expect(navigateSpy).toHaveBeenCalledWith(
+        [],
+        expect.objectContaining({ queryParams: { tab: null, entry: 2 }, queryParamsHandling: 'merge', replaceUrl: false }),
+      );
+      expect(fixture.componentInstance.tab()).toBe('map');
+      const map = mapComponent(fixture);
+      expect(map.focusSequence()).toBe(2);
+      expect(map.currentIndex()).toBe(1);
+      expect(fixture.nativeElement.querySelector('.focus-banner')?.textContent).toContain('As of entry #2 of 3');
+    });
+
+    it("opens the map on a step's last entry when the step title is clicked", () => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3));
+      fixture.componentInstance.setTab('timeline');
+      fixture.detectChanges();
+
+      fixture.nativeElement.querySelector('button.tl-title').click();
+
+      expect(lastNavigation().queryParams).toEqual({ tab: null, entry: 3 });
+      expect(fixture.componentInstance.focusedSequence()).toBe(3);
+    });
+
+    it('fetches the map again when it does not hold the entry yet, and not when it does', () => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2));
+      expect(apiMock.getMap).toHaveBeenCalledTimes(1);
+
+      fixture.componentInstance.showOnMap(2);
+      expect(apiMock.getMap).toHaveBeenCalledTimes(1);
+
+      fixture.componentInstance.showOnMap(3);
+      expect(apiMock.getMap).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows a live row without a sequence number on the map unfocused', () => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3));
+
+      fixture.componentInstance.showOnMap(0);
+
+      expect(fixture.componentInstance.tab()).toBe('map');
+      expect(fixture.componentInstance.focusedSequence()).toBeNull();
+      expect(lastNavigation().queryParams).toEqual({ tab: null, entry: null });
+    });
+
+    it('drops the focus without a history step when the map releases it', () => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3), undefined, [], routeParams(), query({ entry: '2' }));
+      expect(mapComponent(fixture).focusSequence()).toBe(2);
+
+      mapComponent(fixture).restart();
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.focusedSequence()).toBeNull();
+      expect(lastNavigation()).toEqual(
+        expect.objectContaining({ queryParams: { tab: null, entry: null }, queryParamsHandling: 'merge', replaceUrl: true }),
+      );
+      expect(fixture.nativeElement.querySelector('.focus-banner')).toBeNull();
+    });
+
+    it("goes back to the entry in the timeline from the map's banner", () => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3), undefined, [], routeParams(), query({ entry: '2' }));
+
+      (fixture.nativeElement.querySelector('.focus-banner button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.tab()).toBe('timeline');
+      expect(fixture.componentInstance.focusedSequence()).toBe(2);
+      expect(lastNavigation()).toEqual(
+        expect.objectContaining({ queryParams: { tab: 'timeline', entry: 2 }, replaceUrl: false }),
+      );
+      expect(fixture.nativeElement.querySelector('.tl-row--focused')?.getAttribute('data-seq')).toBe('2');
+    });
+
+    it('follows Back and Forward: the URL decides the tab and the focus', () => {
+      const query$ = new BehaviorSubject<ParamMap>(convertToParamMap({ tab: 'timeline' }));
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3), undefined, [], routeParams(), query$);
+      expect(fixture.componentInstance.tab()).toBe('timeline');
+
+      query$.next(convertToParamMap({ entry: '3' }));
+      expect(fixture.componentInstance.tab()).toBe('map');
+      expect(fixture.componentInstance.focusedSequence()).toBe(3);
+
+      query$.next(convertToParamMap({ tab: 'timeline' }));
+      expect(fixture.componentInstance.tab()).toBe('timeline');
+      expect(fixture.componentInstance.focusedSequence()).toBeNull();
+      expect(navigateSpy).not.toHaveBeenCalled();
+    });
+
+    it('writes a tab change to the URL as a history step and keeps the focus', () => {
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3), undefined, [], routeParams(), query({ entry: '2' }));
+
+      fixture.componentInstance.setTab('timeline');
+
+      expect(lastNavigation()).toEqual(
+        expect.objectContaining({ queryParams: { tab: 'timeline', entry: 2 }, queryParamsHandling: 'merge', replaceUrl: false }),
+      );
+    });
+
+    it('drops the focus of the previous saga when the route moves to another one', () => {
+      const paramMap$ = new Subject<ParamMap>();
+      const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3), undefined, [], paramMap$);
+      paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+      fixture.componentInstance.showOnMap(2);
+      expect(fixture.componentInstance.focusedSequence()).toBe(2);
+
+      paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-2' }));
+
+      expect(fixture.componentInstance.focusedSequence()).toBeNull();
+    });
   });
 });

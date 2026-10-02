@@ -24,6 +24,7 @@
     }
 
     @for (node of nodeViews(); track node.id) {
+      @let focused = node.kind === 'Orchestrator' && focusOnOrchestrator();
       <g
         class="node"
         [class.node--orchestrator]="node.kind === 'Orchestrator'"
@@ -32,8 +33,13 @@
         [class.node--active]="node.state === 'active'"
         [class.node--failed]="node.state === 'failed'"
         [class.node--pending]="node.state === 'pending'"
+        [class.node--focus]="focused"
         [attr.transform]="'translate(' + node.x + ',' + node.y + ')'"
       >
+        @if (focused) {
+          <!-- A ring outside the node's own border, so a failed node keeps its red border inside it. -->
+          <rect class="focus-ring" x="-5" y="-5" [attr.width]="node.width + 10" [attr.height]="node.height + 10" rx="12" />
+        }
         <rect [attr.width]="node.width" [attr.height]="node.height" rx="8" />
         <text [attr.x]="node.width / 2" [attr.y]="node.height / 2" text-anchor="middle" dominant-baseline="middle">{{ node.displayName }}</text>
       </g>
@@ -73,18 +79,45 @@
     </div>
   </div>
 
+  @if (focus(); as f) {
+    <div class="focus-banner" role="status">
+      <p class="focus-title">
+        As of entry #{{ f.index + 1 }} of {{ map().events.length }}: {{ label(focusEvent()?.entryType ?? '') }},
+        recorded at {{ focusAt()?.local }}
+        @if (focusAt()?.offset; as offset) {
+          ({{ offset }})
+        }
+      </p>
+      @if (focusOnOrchestrator()) {
+        <p>Nothing moved between services at this entry, so {{ orchestratorName() }} is highlighted.</p>
+      }
+      @if (focusFallback() === 'earlier') {
+        <p>The selected entry is not on the map yet; showing the closest earlier entry.</p>
+      } @else if (focusFallback() === 'first') {
+        <p>The selected entry is not on this saga's map; showing its first entry.</p>
+      }
+      <button type="button" (click)="showInTimeline()">Back to this entry in the timeline</button>
+    </div>
+  }
+
   @if (currentEvent(); as event) {
     <div class="status-line mono">
-      #{{ currentIndex() + 1 }}/{{ map().events.length }} — {{ event.entryType }}
+      #{{ currentIndex() + 1 }}/{{ map().events.length }} — {{ label(event.entryType) }}
       @if (event.messageType) {
         · {{ event.messageType }}
+      }
+      @if (currentAt(); as at) {
+        · recorded at <time [attr.datetime]="event.occurredAtUtc" [attr.title]="at.utc">{{ at.local }}</time>
+        @if (at.offset) {
+          ({{ at.offset }})
+        }
       }
     </div>
   }
 
   @if (failureReached() && failureEvent(); as failure) {
     <div class="error-card">
-      <strong>{{ failure.entryType }}</strong>
+      <strong>{{ label(failure.entryType) }}</strong>
       @if (failure.errorMessage) {
         <p>{{ failure.errorMessage }}</p>
       }
@@ -93,7 +126,7 @@
     <div class="error-card">
       <strong>This saga failed with nothing to map</strong>
       <p>
-        {{ failure.entryType }} on its first outbound step, before any hop was ever recorded — press Play
+        {{ label(failure.entryType) }} on its first outbound step, before any hop was ever recorded — press Play
         or step forward to see it in the timeline below.
         @if (failure.errorMessage) {
           {{ failure.errorMessage }}

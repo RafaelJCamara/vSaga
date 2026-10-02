@@ -69,7 +69,7 @@ describe('SagaTimeline', () => {
     const received = entries[4];
     const expected = formatRecordedAt(received.occurredAtUtc, T0);
     expect(text(row)).toBe(
-      `#4 MessageReceived PaymentCaptured from payments Recorded at ${expected.local} +0.400 s since the saga's first entry`,
+      `#4 MessageReceived PaymentCaptured from payments Recorded at ${expected.local} +0.400 s since the saga's first entry Show on map`,
     );
 
     const time = row.querySelector('time')!;
@@ -128,11 +128,45 @@ describe('SagaTimeline', () => {
     );
   });
 
-  it('has no controls yet: rows are not buttons and there is no data toggle', () => {
+  it('makes every row a native button that names its entry and asks for the map', () => {
     const el: HTMLElement = render(twoSteps()).nativeElement;
 
-    expect(el.querySelectorAll('button').length).toBe(0);
+    const rows = Array.from(el.querySelectorAll<HTMLElement>('.tl-row'));
+    expect(rows.length).toBe(5);
+    for (const row of rows) {
+      expect(row.tagName).toBe('BUTTON');
+      expect(row.getAttribute('type')).toBe('button');
+      expect(row.getAttribute('title')).toBe('Show the map as of this entry');
+      expect(text(row.querySelector(':scope > .sr-only'))).toBe('Show on map');
+    }
+    // Sequence numbers, not ordinals: the snapshot (4) is not a row.
+    expect(rows.map((r) => r.getAttribute('data-seq'))).toEqual(['1', '2', '3', '5', '6']);
     expect(el.textContent).not.toMatch(/\bData\b/);
+  });
+
+  it('asks for the map as of an entry when its row is clicked', () => {
+    const fixture = render(twoSteps());
+    const selected: number[] = [];
+    fixture.componentInstance.entrySelected.subscribe((s) => selected.push(s));
+
+    (fixture.nativeElement.querySelector('.tl-row[data-seq="5"]') as HTMLButtonElement).click();
+
+    expect(selected).toEqual([5]);
+  });
+
+  it("asks for the map as of a step's last entry when its title is clicked", () => {
+    const fixture = render(twoSteps());
+    const selected: number[] = [];
+    fixture.componentInstance.entrySelected.subscribe((s) => selected.push(s));
+
+    const titles = fixture.nativeElement.querySelectorAll('.tl-head button.tl-title') as NodeListOf<HTMLButtonElement>;
+    expect(titles.length).toBe(2);
+    expect(titles[0].getAttribute('type')).toBe('button');
+    titles[0].click();
+    titles[1].click();
+
+    // The steps' last rows; the snapshots after them (4 and 7) are not rows.
+    expect(selected).toEqual([3, 6]);
   });
 
   it('marks the focused entry', () => {
@@ -141,6 +175,28 @@ describe('SagaTimeline', () => {
     const focused = el.querySelectorAll('.tl-row--focused');
     expect(focused.length).toBe(1);
     expect(text(focused[0])).toMatch(/^#4 /);
+    expect(focused[0].getAttribute('aria-current')).toBe('true');
+    expect(el.querySelectorAll('[aria-current]').length).toBe(1);
+  });
+
+  it('moves keyboard focus to the focused entry once, and a refresh does not take it back', async () => {
+    const fixture = render(twoSteps(), { focusedSequence: 5 });
+    await fixture.whenStable();
+
+    const row = fixture.nativeElement.querySelector('.tl-row[data-seq="5"]') as HTMLElement;
+    expect(document.activeElement).toBe(row);
+
+    const elsewhere = fixture.nativeElement.querySelector('.tl-row[data-seq="1"]') as HTMLElement;
+    elsewhere.focus();
+    fixture.componentRef.setInput('history', foldTimeline([...twoSteps()]));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(elsewhere);
+
+    fixture.componentRef.setInput('focusedSequence', 2);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('.tl-row[data-seq="2"]'));
   });
 
   it('calls a final step without an outcome in progress only while the saga is live', () => {

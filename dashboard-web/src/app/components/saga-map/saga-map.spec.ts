@@ -1,6 +1,10 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { SagaMap as SagaMapModel } from '../../models/saga.model';
+import { formatRecordedAt } from '../../util/time-format';
 import { SagaMap } from './saga-map';
+
+const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 function makeMap(): SagaMapModel {
   return {
@@ -54,9 +58,10 @@ function makeMap(): SagaMapModel {
   };
 }
 
-function createComponent(map: SagaMapModel = makeMap()) {
+function createComponent(map: SagaMapModel = makeMap(), focusSequence?: number | null) {
   const fixture = TestBed.createComponent(SagaMap);
   fixture.componentRef.setInput('map', map);
+  if (focusSequence !== undefined) fixture.componentRef.setInput('focusSequence', focusSequence);
   fixture.detectChanges();
   return fixture;
 }
@@ -195,5 +200,193 @@ describe('SagaMap', () => {
     const fixture = createComponent();
 
     expect(fixture.componentInstance.failedWithNothingToShow()).toBe(false);
+  });
+
+  it('shows when the current entry was recorded in the status line', () => {
+    const fixture = createComponent();
+    fixture.componentInstance.scrubTo(1);
+    fixture.detectChanges();
+
+    const at = formatRecordedAt('2026-01-01T00:00:00.300Z', '2026-01-01T00:00:00.000Z');
+    const line = text(fixture.nativeElement.querySelector('.status-line'));
+    expect(line).toBe(`#2/3 — MessagePublished · ReserveInventory · recorded at ${at.local} (+0.300 s)`);
+    expect(fixture.nativeElement.querySelector('.status-line time')?.getAttribute('title')).toBe('2026-01-01 00:00:00.300 UTC');
+  });
+
+  describe('focused on a timeline entry', () => {
+    /** makeMap plus the saga finishing after the failure: an entry that moves nothing. */
+    function makeFinishedMap(): SagaMapModel {
+      const map = makeMap();
+      return {
+        ...map,
+        events: [
+          ...map.events,
+          { sequenceNumber: 5, edgeId: null, nodeId: null, entryType: 'SagaCompleted', messageType: null, errorMessage: null, occurredAtUtc: '2026-01-01T00:00:00.900Z' },
+        ],
+      };
+    }
+
+    const banner = (fixture: { nativeElement: HTMLElement }) => fixture.nativeElement.querySelector('.focus-banner');
+    const orchestrator = (fixture: { nativeElement: HTMLElement }) =>
+      fixture.nativeElement.querySelector('.node--orchestrator') as SVGGElement;
+
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('opens on the entry itself, before the first render', () => {
+      const fixture = createComponent(makeMap(), 2);
+
+      expect(fixture.componentInstance.currentIndex()).toBe(1);
+      expect(fixture.componentInstance.playing()).toBe(false);
+      const at = formatRecordedAt('2026-01-01T00:00:00.300Z', '2026-01-01T00:00:00.000Z');
+      const b = banner(fixture);
+      expect(b?.getAttribute('role')).toBe('status');
+      expect(text(b?.querySelector('.focus-title'))).toBe(
+        `As of entry #2 of 3: MessagePublished, recorded at ${at.local} (+0.300 s)`,
+      );
+      expect(text(b)).not.toContain('not on the map yet');
+      expect(text(b)).not.toContain('Nothing moved');
+    });
+
+    it('falls back to the closest earlier entry and says so', () => {
+      const fixture = createComponent(makeMap(), 4);
+
+      expect(fixture.componentInstance.currentIndex()).toBe(2);
+      expect(text(banner(fixture))).toContain('As of entry #3 of 3: StepFailed');
+      expect(text(banner(fixture))).toContain('The selected entry is not on the map yet; showing the closest earlier entry.');
+      // The stored sequence number (global on a shared store) never appears; the title's #N is the ordinal.
+      expect(text(banner(fixture))).not.toContain('Entry 4');
+      expect(text(banner(fixture))).not.toContain("not on this saga's map");
+    });
+
+    it('shows the first entry for an entry earlier than every event, without promising it will appear', () => {
+      const map = makeMap();
+      const shifted = { ...map, events: map.events.map((e) => ({ ...e, sequenceNumber: e.sequenceNumber + 1200 })) };
+      const fixture = createComponent(shifted, 3);
+
+      expect(fixture.componentInstance.currentIndex()).toBe(0);
+      expect(fixture.componentInstance.focusFallback()).toBe('first');
+      expect(text(banner(fixture))).toContain('As of entry #1 of 3: SagaStarted');
+      expect(text(banner(fixture))).toContain("The selected entry is not on this saga's map; showing its first entry.");
+      expect(text(banner(fixture))).not.toContain('closest earlier');
+      expect(text(banner(fixture))).not.toContain('not on the map yet');
+    });
+
+    it('moves onto the entry once a refreshed map holds it', () => {
+      const fixture = createComponent(makeMap(), 5);
+      expect(fixture.componentInstance.currentIndex()).toBe(2);
+
+      fixture.componentRef.setInput('map', makeFinishedMap());
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.currentIndex()).toBe(3);
+      expect(text(banner(fixture))).not.toContain('not on the map yet');
+    });
+
+    it('outlines the orchestrator for an entry that moved nothing between services, and names it', () => {
+      const fixture = createComponent(makeFinishedMap(), 5);
+
+      expect(orchestrator(fixture).classList).toContain('node--focus');
+      expect(orchestrator(fixture).querySelector('.focus-ring')).not.toBeNull();
+      expect(fixture.nativeElement.querySelectorAll('.node--focus').length).toBe(1);
+      expect(text(banner(fixture))).toContain('As of entry #4 of 4: SagaFinalized');
+      expect(text(banner(fixture))).toContain('Nothing moved between services at this entry, so OrderSaga is highlighted.');
+    });
+
+    it('keeps a failed orchestrator failed while it is outlined for the focus', () => {
+      const fixture = createComponent(makeFinishedMap(), 5);
+
+      expect(orchestrator(fixture).classList).toContain('node--failed');
+      expect(orchestrator(fixture).classList).toContain('node--focus');
+    });
+
+    it('outlines nothing for an entry that moved a message', () => {
+      const fixture = createComponent(makeFinishedMap(), 2);
+
+      expect(fixture.nativeElement.querySelector('.node--focus')).toBeNull();
+      expect(fixture.nativeElement.querySelector('.focus-ring')).toBeNull();
+    });
+
+    it('shows no banner and no outline without a focus', () => {
+      const fixture = createComponent(makeFinishedMap(), null);
+
+      expect(banner(fixture)).toBeNull();
+      expect(fixture.nativeElement.querySelector('.node--focus')).toBeNull();
+      expect(fixture.componentInstance.currentIndex()).toBe(0);
+    });
+
+    it.each<[string, (fixture: ReturnType<typeof createComponent>) => void]>([
+      [
+        'play',
+        (fixture) => {
+          vi.stubGlobal('requestAnimationFrame', vi.fn(() => 0));
+          fixture.componentInstance.play();
+        },
+      ],
+      ['restart', (fixture) => fixture.componentInstance.restart()],
+      ['step forward', (fixture) => fixture.componentInstance.stepForward()],
+      [
+        'the scrubber',
+        (fixture) => {
+          const scrubber = fixture.nativeElement.querySelector('.scrubber') as HTMLInputElement;
+          scrubber.value = '0';
+          scrubber.dispatchEvent(new Event('input'));
+        },
+      ],
+    ])('releases the focus once on %s, and a later map refresh does not pin it again', (_, act) => {
+      const fixture = createComponent(makeFinishedMap(), 2);
+      const cleared = vi.fn();
+      fixture.componentInstance.focusCleared.subscribe(cleared);
+
+      act(fixture);
+      fixture.detectChanges();
+      const index = fixture.componentInstance.currentIndex();
+
+      expect(cleared).toHaveBeenCalledTimes(1);
+      expect(fixture.componentInstance.focus()).toBeNull();
+      expect(banner(fixture)).toBeNull();
+
+      fixture.componentInstance.pause();
+      fixture.componentRef.setInput('map', { ...makeFinishedMap() });
+      fixture.detectChanges();
+      expect(fixture.componentInstance.currentIndex()).toBe(index);
+      expect(fixture.componentInstance.focus()).toBeNull();
+      expect(banner(fixture)).toBeNull();
+      expect(cleared).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the focus when the replay is positioned through scrubTo', () => {
+      const fixture = createComponent(makeFinishedMap(), 2);
+      const cleared = vi.fn();
+      fixture.componentInstance.focusCleared.subscribe(cleared);
+
+      fixture.componentInstance.scrubTo(1);
+
+      expect(cleared).not.toHaveBeenCalled();
+      expect(fixture.componentInstance.focus()).not.toBeNull();
+    });
+
+    it('asks for the requested entry in the timeline from the banner', () => {
+      const fixture = createComponent(makeMap(), 4);
+      const requested = vi.fn();
+      fixture.componentInstance.timelineRequested.subscribe(requested);
+
+      const button = banner(fixture)?.querySelector('button') as HTMLButtonElement;
+      expect(text(button)).toBe('Back to this entry in the timeline');
+      button.click();
+
+      expect(requested).toHaveBeenCalledWith(4);
+    });
+
+    it('pins the focus again when the page focuses another entry', () => {
+      const fixture = createComponent(makeFinishedMap(), 2);
+      fixture.componentInstance.restart();
+      fixture.detectChanges();
+
+      fixture.componentRef.setInput('focusSequence', 5);
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.currentIndex()).toBe(3);
+      expect(banner(fixture)).not.toBeNull();
+    });
   });
 });

@@ -1,5 +1,5 @@
-import { SagaMap } from '../../models/saga.model';
-import { computeEdgeStates, computeLayout, computeNodeStates, pointOnCubic, stepDelayMs } from './saga-map-layout';
+import { SagaMap, SagaMapEvent } from '../../models/saga.model';
+import { computeEdgeStates, computeLayout, computeNodeStates, pointOnCubic, resolveFocusIndex, stepDelayMs } from './saga-map-layout';
 
 function makeMap(): SagaMap {
   return {
@@ -195,5 +195,44 @@ describe('stepDelayMs', () => {
   it('divides by speed', () => {
     const map = makeMap();
     expect(stepDelayMs(map, 1, 2)).toBe(500);
+  });
+});
+
+describe('resolveFocusIndex', () => {
+  /** Events with these sequence numbers, sparse the way a real timeline can be. */
+  function events(...sequences: number[]): SagaMapEvent[] {
+    return sequences.map((sequenceNumber) => ({
+      sequenceNumber,
+      edgeId: null,
+      nodeId: null,
+      entryType: 'StepSucceeded',
+      messageType: null,
+      errorMessage: null,
+      occurredAtUtc: '2026-01-01T00:00:00.000Z',
+    }));
+  }
+
+  it('resolves nothing when no entry is asked for', () => {
+    expect(resolveFocusIndex(events(1, 2, 3), null)).toBeNull();
+  });
+
+  it('resolves nothing on an empty map', () => {
+    expect(resolveFocusIndex([], 4)).toBeNull();
+  });
+
+  it('positions on the event with the same sequence number', () => {
+    expect(resolveFocusIndex(events(2, 5, 9), 5)).toEqual({ index: 1, exact: true, requested: 5 });
+  });
+
+  it('falls back to the last event before an entry the map does not hold', () => {
+    expect(resolveFocusIndex(events(2, 5, 9), 7)).toEqual({ index: 1, exact: false, requested: 7 });
+  });
+
+  it('falls back to the first event for an entry before all of them', () => {
+    expect(resolveFocusIndex(events(2, 5, 9), 1)).toEqual({ index: 0, exact: false, requested: 1 });
+  });
+
+  it('falls back to the last event for an entry after all of them (a map fetched too early)', () => {
+    expect(resolveFocusIndex(events(2, 5, 9), 57)).toEqual({ index: 2, exact: false, requested: 57 });
   });
 });

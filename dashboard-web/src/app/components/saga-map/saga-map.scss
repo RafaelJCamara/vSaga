@@ -85,6 +85,45 @@
   stroke-width: 2.5;
 }
 
+/* The orchestrator standing for a focused entry: a ring outside the node's border, so a failed node
+   keeps its red border. */
+.node--focus .focus-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+}
+
+.focus-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.9rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 0.85rem;
+}
+
+.focus-banner p {
+  margin: 0;
+  flex-basis: 100%;
+}
+
+.focus-title {
+  font-weight: 600;
+}
+
+.focus-banner button {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;

@@ -1,4 +1,4 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, ElementRef, afterRenderEffect, computed, inject, input, output } from '@angular/core';
 import { SagaLogEntry } from '../../models/saga.model';
 import { entryTypeLabel } from '../../util/entry-type-label';
 import { SagaHistory, SagaTransition, TimelineRow } from '../../util/saga-transitions';
@@ -15,6 +15,9 @@ const OUTCOME_LABELS: Record<Exclude<SagaTransition['outcome'], 'in-flight' | 'r
  * The saga's timeline as steps (see util/saga-transitions): each step names what started it and
  * how it ended, and lists its entries with the time the engine recorded each one, in the viewer's
  * local time, UTC on hover and the offset from the saga's first entry. Snapshots are never rows.
+ *
+ * Every row is a native button that asks for the map as of that entry, and a step's title asks for
+ * the map as of the step's last entry, which is the state after the step.
  */
 @Component({
   selector: 'app-saga-timeline',
@@ -32,6 +35,33 @@ export class SagaTimeline {
   readonly canViewData = input(true);
   /** Whether the saga is still running, so its final step without an outcome is in progress. */
   readonly live = input(false);
+
+  /** The viewer picked an entry to see on the map; carries its sequence number. */
+  readonly entrySelected = output<number>();
+
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  /** The focus this view last scrolled to, so a refresh of the same focus never steals focus. */
+  private scrolledTo: number | null = null;
+
+  constructor() {
+    // Once per new focus, and only once its row exists (the history may arrive after the focus).
+    afterRenderEffect(() => {
+      const sequence = this.focusedSequence();
+      this.history();
+      if (sequence === null) {
+        this.scrolledTo = null;
+        return;
+      }
+      if (sequence === this.scrolledTo) return;
+
+      const row = this.host.nativeElement.querySelector<HTMLElement>(`.tl-row[data-seq="${sequence}"]`);
+      if (!row) return;
+      this.scrolledTo = sequence;
+      // scrollIntoView is missing in some environments (jsdom); focusing still works there.
+      row.scrollIntoView?.({ block: 'center' });
+      row.focus({ preventScroll: true });
+    });
+  }
 
   /** Every row's labelled time, measured from the saga's first entry. */
   readonly times = computed(() => {
@@ -57,6 +87,11 @@ export class SagaTimeline {
 
   at(row: TimelineRow): RecordedAt {
     return this.times().get(row) ?? formatRecordedAt(row.entry.occurredAtUtc, null);
+  }
+
+  /** The sequence number of the step's last row, which the step title jumps to; null without rows. */
+  lastSequence(step: SagaTransition): number | null {
+    return step.rows.at(-1)?.entry.sequenceNumber ?? null;
   }
 
   outcomeLabel(step: SagaTransition): string {

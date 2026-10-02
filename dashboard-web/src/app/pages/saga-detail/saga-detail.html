@@ -108,7 +108,12 @@
 
   @if (tab() === 'map') {
     @if (map(); as m) {
-      <app-saga-map [map]="m" />
+      <app-saga-map
+        [map]="m"
+        [focusSequence]="focusedSequence()"
+        (focusCleared)="clearFocus()"
+        (timelineRequested)="showInTimeline($event)"
+      />
     } @else {
       <div class="empty">Loading map…</div>
     }
@@ -116,7 +121,12 @@
     @if (history().rowCount === 0) {
       <div class="empty">No events recorded yet.</div>
     } @else {
-      <app-saga-timeline [history]="history()" [live]="live()" />
+      <app-saga-timeline
+        [history]="history()"
+        [live]="live()"
+        [focusedSequence]="focusedSequence()"
+        (entrySelected)="showOnMap($event)"
+      />
     }
   } @else {
     @if (prettyDataJson) {

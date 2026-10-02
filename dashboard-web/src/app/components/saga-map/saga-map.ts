@@ -1,9 +1,27 @@
-import { Component, computed, input, signal } from '@angular/core';
+import { Component, computed, effect, input, linkedSignal, output, signal, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SagaMap as SagaMapModel, SagaMapEvent } from '../../models/saga.model';
-import { computeEdgeStates, computeLayout, computeNodeStates, LayoutEdge, LayoutNode, pointOnCubic, ReplayVisualState, stepDelayMs } from './saga-map-layout';
+import { entryTypeLabel } from '../../util/entry-type-label';
+import { RecordedAt, formatRecordedAt } from '../../util/time-format';
+import {
+  computeEdgeStates,
+  computeLayout,
+  computeNodeStates,
+  FocusResolution,
+  LayoutEdge,
+  LayoutNode,
+  pointOnCubic,
+  ReplayVisualState,
+  resolveFocusIndex,
+  stepDelayMs,
+} from './saga-map-layout';
 
 const SPEEDS = [0.5, 1, 2, 4] as const;
+
+function sameFocus(a: FocusResolution | null, b: FocusResolution | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.index === b.index && a.exact === b.exact && a.requested === b.requested;
+}
 
 export interface EdgeView extends LayoutEdge {
   state: ReplayVisualState;
@@ -23,6 +41,21 @@ export interface NodeView extends LayoutNode {
 })
 export class SagaMap {
   readonly map = input.required<SagaMapModel>();
+  /** The sequence number of the timeline entry to show the map as of; null for a free replay. */
+  readonly focusSequence = input<number | null>(null);
+  /** The viewer moved the replay away from the focused entry (play, restart, step or scrub). */
+  readonly focusCleared = output<void>();
+  /** The viewer asked to see the focused entry in the timeline; carries its sequence number. */
+  readonly timelineRequested = output<number>();
+
+  /** The focus as given, until the viewer releases it; a new focusSequence pins it again. */
+  private readonly activeFocus = linkedSignal(() => this.focusSequence());
+
+  /**
+   * The event the replay stands on for the focused entry. Re-resolved when the map is refreshed, so
+   * a fallback to an earlier event moves onto the entry itself once the map has caught up.
+   */
+  readonly focus = computed(() => resolveFocusIndex(this.map().events, this.activeFocus()), { equal: sameFocus });
 
   readonly currentIndex = signal(0);
   readonly progress = signal(0);
@@ -76,6 +109,74 @@ export class SagaMap {
 
   readonly atEnd = computed(() => this.currentIndex() >= this.map().events.length - 1);
 
+  /** The current event's labelled time, measured from the map's first event. */
+  readonly currentAt = computed<RecordedAt | null>(() => this.recordedAt(this.currentEvent()));
+
+  readonly focusEvent = computed<SagaMapEvent | null>(() => {
+    const focus = this.focus();
+    return focus === null ? null : (this.map().events[focus.index] ?? null);
+  });
+
+  readonly focusAt = computed<RecordedAt | null>(() => this.recordedAt(this.focusEvent()));
+
+  /**
+   * How the replay stands in for an entry the map does not hold: 'earlier' on the closest earlier
+   * event (a map fetched before the entry was recorded), 'first' on the first event when every event
+   * comes after the requested one (a hand-typed or foreign ?entry=), null when the entry is on the map.
+   */
+  readonly focusFallback = computed<'earlier' | 'first' | null>(() => {
+    const focus = this.focus();
+    const event = this.focusEvent();
+    if (focus === null || focus.exact || event === null) return null;
+    return event.sequenceNumber < focus.requested ? 'earlier' : 'first';
+  });
+
+  /**
+   * Whether the focused entry moved nothing between services (a step outcome, a timeout scheduled,
+   * the saga finishing): no edge or node of its own, so the orchestrator stands for it. Drawn as its
+   * own class rather than through computeNodeStates, so a failed orchestrator keeps its failed style
+   * and ordinary playback is unchanged.
+   */
+  readonly focusOnOrchestrator = computed(() => {
+    const event = this.focusEvent();
+    return event !== null && !event.edgeId && !event.nodeId;
+  });
+
+  readonly orchestratorName = computed(
+    () => this.map().nodes.find((n) => n.kind === 'Orchestrator')?.displayName ?? this.map().summary.sagaType,
+  );
+
+  constructor() {
+    // Component effects run during change detection before the view is checked, so a map created
+    // with a focus (the Map tab opening on a jump) renders on the entry, never on event 1 first.
+    effect(() => {
+      const focus = this.focus();
+      if (focus) untracked(() => this.scrubTo(focus.index));
+    });
+  }
+
+  label(entryType: string): string {
+    return entryTypeLabel(entryType);
+  }
+
+  private recordedAt(event: SagaMapEvent | null): RecordedAt | null {
+    if (event === null) return null;
+    return formatRecordedAt(event.occurredAtUtc, this.map().events[0]?.occurredAtUtc ?? null);
+  }
+
+  /** Back to the timeline, on the entry the map was opened for. */
+  showInTimeline(): void {
+    const focus = this.focus();
+    if (focus) this.timelineRequested.emit(focus.requested);
+  }
+
+  /** The viewer took over the replay: drop the focus and tell the page, once. */
+  private releaseFocus(): void {
+    if (this.activeFocus() === null) return;
+    this.activeFocus.set(null);
+    this.focusCleared.emit();
+  }
+
   readonly tokenPosition = computed(() => {
     if (this.reducedMotion) return null;
 
@@ -126,6 +227,7 @@ export class SagaMap {
 
   play(): void {
     if (this.playing()) return;
+    this.releaseFocus();
     if (this.atEnd()) this.restart();
 
     this.playing.set(true);
@@ -138,11 +240,13 @@ export class SagaMap {
   }
 
   restart(): void {
+    this.releaseFocus();
     this.currentIndex.set(0);
     this.progress.set(0);
   }
 
   stepForward(): void {
+    this.releaseFocus();
     this.playing.set(false);
     if (!this.atEnd()) {
       this.currentIndex.update((i) => i + 1);
@@ -150,6 +254,7 @@ export class SagaMap {
     }
   }
 
+  /** Positions the replay; keeps the focus, because the focus itself positions through here. */
   scrubTo(index: number): void {
     this.playing.set(false);
     this.progress.set(0);
@@ -157,6 +262,7 @@ export class SagaMap {
   }
 
   onScrubInput(event: Event): void {
+    this.releaseFocus();
     const value = Number((event.target as HTMLInputElement).value);
     this.scrubTo(value);
   }

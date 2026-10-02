@@ -1,5 +1,5 @@
 import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, ParamMap, Router, RouterLink } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
@@ -15,10 +15,24 @@ import { timezoneLabel, toMillis } from '../../util/time-format';
 
 type Tab = 'timeline' | 'data' | 'map';
 
+/** The tabs a URL may name; the map is the default and is written as no `tab` at all. */
+const URL_TABS: readonly Tab[] = ['timeline', 'data'];
+
 /** `UTC+02:00` as of `iso` (a zone's offset changes with daylight saving); now when unparseable. */
 function zoneAt(iso: string | null | undefined): string {
   const at = toMillis(iso);
   return timezoneLabel(at === null ? new Date() : new Date(at));
+}
+
+/** A timeline entry's sequence number as the URL may carry it: a positive safe integer, else null. */
+function parseEntry(raw: string | null): number | null {
+  if (raw === null || !/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function isEntry(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
 }
 
 @Component({
@@ -41,6 +55,9 @@ export class SagaDetail implements OnInit, OnDestroy {
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   readonly tab = signal<Tab>('map');
+  /** The timeline entry the page is focused on (`?entry=`): the map shows the saga as of it and the
+   *  timeline highlights its row. */
+  readonly focusedSequence = signal<number | null>(null);
   readonly retrying = signal(false);
   readonly retryMessage = signal<string | null>(null);
   /** Retry re-drives a real saga against real participants, so the button asks before it fires. */
@@ -63,15 +80,21 @@ export class SagaDetail implements OnInit, OnDestroy {
   /** Whether we've ever joined a hub group yet — guards the unsubscribe-previous-saga step below,
    *  and ngOnDestroy, from firing before there's anything to unsubscribe from. */
   private hasSubscribedToHub = false;
+  /** The entry the URL last named, validated; what a saga change keeps (see the paramMap handler). */
+  private urlEntry: number | null = null;
 
   constructor(
     private readonly route: ActivatedRoute,
+    private readonly router: Router,
     private readonly api: SagaApiService,
     private readonly hub: SagaHubService,
   ) {}
 
   ngOnInit(): void {
     this.subs.push(
+      // Before paramMap, so the first load already knows the tab and entry. Back and Forward land
+      // here too; the echo of the page's own navigate() sets the signals to the values they hold.
+      this.route.queryParamMap.subscribe((query) => this.readUrlState(query)),
       // The observable, not `.snapshot` — Angular reuses this component instance when navigating
       // between two routes matched by the same route config (e.g. a sibling-saga or sub-saga link),
       // so ngOnInit itself does not re-fire. Reading the snapshot once would freeze sagaType/
@@ -79,6 +102,9 @@ export class SagaDetail implements OnInit, OnDestroy {
       this.route.paramMap.subscribe((params) => {
         if (this.hasSubscribedToHub) {
           void this.hub.unsubscribeFromSaga(this.sagaType, this.correlationId);
+          // A focus belongs to one saga's timeline. The router emits query params before params, so
+          // the URL of the new saga has already been read: keep only the entry it names.
+          this.focusedSequence.set(this.urlEntry);
         }
 
         this.sagaType = params.get('sagaType') ?? '';
@@ -235,8 +261,62 @@ export class SagaDetail implements OnInit, OnDestroy {
     });
   }
 
+  /**
+   * The tab and entry from the URL, validated the way the list page reads its filters: `tab` only
+   * names a tab other than the default map, `entry` only a positive safe integer; anything else is
+   * the default.
+   */
+  private readUrlState(query: ParamMap): void {
+    const tab = query.get('tab');
+    this.tab.set(tab !== null && (URL_TABS as readonly string[]).includes(tab) ? (tab as Tab) : 'map');
+    this.urlEntry = parseEntry(query.get('entry'));
+    this.focusedSequence.set(this.urlEntry);
+  }
+
+  /**
+   * Writes the tab and entry to the URL after the signals already changed, defaults as null so the
+   * plain detail URL stays plain. A tab or entry change is a history step, so Back returns to where
+   * the viewer came from; dropping the focus replaces the current step instead.
+   */
+  private syncUrl(replaceUrl = false): void {
+    const tab = this.tab();
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { tab: tab === 'map' ? null : tab, entry: this.focusedSequence() },
+      queryParamsHandling: 'merge',
+      replaceUrl,
+    });
+  }
+
   setTab(tab: Tab): void {
+    if (this.tab() === tab) return;
     this.tab.set(tab);
+    this.syncUrl();
+  }
+
+  /** The map as of a timeline entry. A map fetched before the entry was recorded is fetched again. */
+  showOnMap(sequence: number): void {
+    // A row pushed live carries no sequence number yet: show the map, unfocused.
+    const entry = isEntry(sequence) ? sequence : null;
+    this.tab.set('map');
+    this.focusedSequence.set(entry);
+    this.syncUrl();
+    const map = this.map();
+    if (entry !== null && map && !map.events.some((e) => e.sequenceNumber === entry)) this.loadMap();
+  }
+
+  /** The timeline, scrolled to and focused on an entry (the map's "Back to this entry"). */
+  showInTimeline(sequence: number): void {
+    this.tab.set('timeline');
+    this.focusedSequence.set(isEntry(sequence) ? sequence : null);
+    this.syncUrl();
+  }
+
+  /** The viewer took over the map's replay: the focus goes, without a history step of its own. */
+  clearFocus(): void {
+    if (this.focusedSequence() === null) return;
+    this.focusedSequence.set(null);
+    this.syncUrl(true);
   }
 
   /** The saga's raw persisted state, pretty-printed with Kind and Status as names (see state-json). */
