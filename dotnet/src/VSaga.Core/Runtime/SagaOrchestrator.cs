@@ -1014,10 +1014,15 @@ public sealed class SagaOrchestrator<TState>(
     /// </summary>
     private readonly record struct StagedChildSagaFinished(ChildSagaFinished Message, MessageEnvelope Envelope, string? CausationMessageId);
 
+    /// <summary>
+    /// The single path every timeline entry the engine writes takes, SagaContext's log sink included.
+    /// The notifier gets the entry stamped with the sequence number the store assigned, because
+    /// subscribers append pushed entries and join timeline to map on that number.
+    /// </summary>
     private async Task LogAsync(SagaLogEntry entry, CancellationToken cancellationToken)
     {
-        await eventLog.AppendAsync(entry, cancellationToken);
-        await notifier.TimelineEntryAddedAsync(entry.SagaType, entry.CorrelationId, entry, cancellationToken);
+        var sequenceNumber = await eventLog.AppendAsync(entry, cancellationToken);
+        await notifier.TimelineEntryAddedAsync(entry.SagaType, entry.CorrelationId, entry with { SequenceNumber = sequenceNumber }, cancellationToken);
     }
 
     private static SagaSummary ToSummary(TState state) =>

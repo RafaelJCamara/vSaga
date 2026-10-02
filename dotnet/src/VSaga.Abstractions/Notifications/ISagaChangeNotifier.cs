@@ -11,7 +11,10 @@ public interface ISagaChangeNotifier
 {
     Task SagaUpdatedAsync(SagaSummary summary, CancellationToken cancellationToken = default);
 
-    /// <summary>The (sagaType, correlationId) pair names the instance whose timeline grew — subscribers group per instance, not per correlation id.</summary>
+    /// <summary>
+    /// The (sagaType, correlationId) pair names the instance whose timeline grew — subscribers group per instance, not per correlation id.
+    /// <paramref name="entry"/> carries the sequence number the event log assigned when it stored the entry.
+    /// </summary>
     Task TimelineEntryAddedAsync(string sagaType, Guid correlationId, SagaLogEntry entry, CancellationToken cancellationToken = default);
 }
 
