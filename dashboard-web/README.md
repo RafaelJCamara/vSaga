@@ -18,7 +18,7 @@ docker compose up -d --build      # from the repository root: Postgres, RabbitMQ
 
 ```bash
 npm install
-npx ng serve                      # http://localhost:4200
+npx ng serve                      # http://localhost:4201
 ```
 
 Both run from `dashboard-web/`, which has its own lockfile and Angular CLI toolchain. CI installs it
@@ -26,11 +26,29 @@ with `npm ci`, audits it, then builds and tests it as its own job (`angular` in
 `.github/workflows/ci.yml`); the `npm audit --audit-level=low` step fails that job on any known
 advisory rated `low` through `critical`, dev dependencies included.
 
+The dev server listens on http://localhost:4201 and proxies `/api` and `/hubs` to the compose stack's
+API on http://localhost:5080 (see [How it reaches the API](#how-it-reaches-the-api)). To browse
+another stack, set `VSAGA_API_URL` before starting it, here the MongoDB overlay's API. In Git Bash or
+WSL:
+
+```bash
+VSAGA_API_URL=http://localhost:5580 npx ng serve
+```
+
+In PowerShell:
+
+```powershell
+$env:VSAGA_API_URL = 'http://localhost:5580'; npx ng serve
+```
+
+The PowerShell variable stays set for the rest of that session; `Remove-Item Env:VSAGA_API_URL`
+clears it.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `npx ng serve` | Dev server with hot reload on http://localhost:4200 |
+| `npx ng serve` | Dev server with hot reload on http://localhost:4201, proxying the API (`VSAGA_API_URL`, default http://localhost:5080) |
 | `npx ng build` | Production bundle into `dist/` |
 | `npx ng test` | Unit tests (vitest), interactive watch mode |
 | `npx ng test --watch=false` | Same, single run — what CI actually runs |
@@ -38,13 +56,24 @@ advisory rated `low` through `critical`, dev dependencies included.
 
 ## How it reaches the API
 
-Both values live in [`src/app/api-config.ts`](src/app/api-config.ts):
+The app calls the API on its own origin. [`src/app/api-config.ts`](src/app/api-config.ts) holds no
+host or port:
 
 ```ts
-export const API_BASE_URL = 'http://localhost:5080';
-export const HUB_URL = `${API_BASE_URL}/hubs/saga`;
+export const API_BASE_URL = '';
+export const HUB_URL = `${API_BASE_URL}/hubs/saga`;   // '/hubs/saga'
 export const DASHBOARD_API_KEY = 'dev-local-only-change-me';
 ```
+
+So every request goes to whatever served the page, which forwards `/api` and `/hubs` to the API. Under
+`ng serve` that is the dev server, configured by [`proxy.conf.mjs`](proxy.conf.mjs): it sends both
+paths to `VSAGA_API_URL` (default http://localhost:5080, the compose stack's API; an overlay's API port,
+5180 to 5680, or http://localhost:5275 for an API started with `dotnet run`), with WebSocket upgrades
+passed through for the SignalR hub. The proxy leaves the `Host` header as the browser sent it, so the
+API sees `localhost:4201`. Because the browser only ever talks to its own origin, the API's CORS
+setting (`Dashboard__WebOrigin`) plays no part, and no port in this app has to match any server
+setting. A `dotnet run` API ships an empty `Dashboard:ApiKey`, which denies every request, so start it
+with `Dashboard__ApiKey` set to `DASHBOARD_API_KEY`'s value.
 
 The key is attached to every request by an HTTP interceptor
 ([`src/app/interceptors/api-key.interceptor.ts`](src/app/interceptors/api-key.interceptor.ts)) as the
@@ -59,10 +88,6 @@ Two consequences worth knowing before you change anything:
   who can load the page can read it. That is an accepted trade-off for an internal ops dashboard on
   a trusted network — see [`docs/dashboard.md#authentication`](../docs/dashboard.md#authentication)
   for the reasoning and what deploying this beyond that setting would require.
-
-The API also only accepts browser requests from the origin in its `Dashboard__WebOrigin` setting,
-which is `http://localhost:4200` in `docker-compose.yml`. Serve this app on a different port and
-CORS will reject its calls until that setting matches.
 
 ## Project layout
 

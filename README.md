@@ -85,15 +85,17 @@ docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml 
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
 ```
 
-The dashboard UI below always calls the plain stack's API on `5080`. To browse an overlay's sagas
-instead, point `API_BASE_URL` in
-[`dashboard-web/src/app/api-config.ts`](dashboard-web/src/app/api-config.ts) at that overlay's port
-before serving it — see ["Running an adapter's own overlay"](docs/transports/index.md#running-an-adapters-own-overlay).
+The dashboard UI below proxies to the plain stack's API on `5080` by default. To browse an overlay's
+sagas instead, start it with `VSAGA_API_URL` set to that overlay's API, e.g.
+`VSAGA_API_URL=http://localhost:5580 npx ng serve` — see
+[`dashboard-web/README.md`](dashboard-web/README.md#run-it), and
+["Running an adapter's own overlay"](docs/transports/index.md#running-an-adapters-own-overlay) for each
+overlay's ports.
 
 Then serve the dashboard UI — a dev server, deliberately not part of `docker-compose.yml`:
 
 ```bash
-cd dashboard-web && npm install && npx ng serve     # http://localhost:4200
+cd dashboard-web && npm install && npx ng serve     # http://localhost:4201
 ```
 
 > This command chains with `&&`, which Windows PowerShell 5.1 (`powershell.exe`) can't parse. Use
@@ -101,7 +103,7 @@ cd dashboard-web && npm install && npx ng serve     # http://localhost:4200
 
 | What | Where | Notes |
 | --- | --- | --- |
-| Dashboard UI | http://localhost:4200 | `ng serve`; must match `Dashboard__WebOrigin` |
+| Dashboard UI | http://localhost:4201 | `ng serve`; proxies `/api` and `/hubs` to the API (`VSAGA_API_URL`, default `http://localhost:5080`) |
 | Dashboard API | http://localhost:5080 | API key `dev-local-only-change-me` — see [`docs/dashboard.md`](docs/dashboard.md#authentication) |
 | RabbitMQ management | http://localhost:15672 | `guest` / `guest` |
 | RabbitMQ (AMQP) | `localhost:5672` | `guest` / `guest`, i.e. `amqp://guest:guest@localhost:5672/` |
