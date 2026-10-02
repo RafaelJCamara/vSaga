@@ -8,7 +8,8 @@ import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.
 import { SagaDetail as SagaDetailModel, SagaLogEntry, SagaMap as SagaMapModel, SagaStatus, SagaSummary } from '../../models/saga.model';
 import { timezoneLabel } from '../../util/time-format';
 import { SagaMap } from '../../components/saga-map/saga-map';
-import { SagaDetail } from './saga-detail';
+import { PENDING_SNAPSHOT_MS } from '../../util/saga-transitions';
+import { REFRESH_AUDIT_MS, SNAPSHOT_FOLLOW_UP_MS, SagaDetail } from './saga-detail';
 
 function makeDetail(overrides: Partial<SagaSummary> = {}): SagaDetailModel {
   return {
@@ -76,6 +77,9 @@ describe('SagaDetail', () => {
     unsubscribeFromSaga: ReturnType<typeof vi.fn>;
   };
   let navigateSpy: ReturnType<typeof vi.spyOn>;
+
+  // Only the tests that push use fake timers (the refresh waits REFRESH_AUDIT_MS); none may leak.
+  afterEach(() => vi.useRealTimers());
 
   function setup(
     detail: SagaDetailModel = makeDetail(),
@@ -281,19 +285,26 @@ describe('SagaDetail', () => {
     expect(fixture.componentInstance.detail()).toEqual(detail);
   });
 
-  // Mirrors the guard hasEverConnected already uses: only a reconnect that follows an actual failure
-  // should force an extra reload. A first-ever connect (or an ordinary reconnect blip that never
-  // surfaced an error) must not double up on the load() ngOnInit already fired.
-  it('does not trigger a redundant load on an ordinary connect/reconnect when there was no prior error', () => {
+  // A first-ever connect must not double up on the load() ngOnInit already fired. A later reconnect
+  // with no prior error re-reads everything once, as a live refresh (no "Loading…"): the pushes sent
+  // while the hub was down are lost, and a saga that finished meanwhile would never send another.
+  it('adds no request on the first connect and one live refresh on a later reconnect', () => {
+    vi.useFakeTimers();
     const fixture = setup();
+    const calls = () => [apiMock.get, apiMock.getTimeline, apiMock.getMap, apiMock.findByCorrelationId, apiMock.getChildren].map((m) => m.mock.calls.length);
 
-    expect(apiMock.get).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+    expect(calls()).toEqual([1, 1, 1, 1, 1]);
     expect(fixture.componentInstance.error()).toBeNull();
 
     hubMock.connectionState$.next('reconnecting');
     hubMock.connectionState$.next('connected');
+    expect(fixture.componentInstance.loading()).toBe(false);
+    expect(calls()).toEqual([1, 1, 1, 1, 1]);
 
-    expect(apiMock.get).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+    expect(calls()).toEqual([2, 2, 2, 2, 2]);
+    expect(fixture.componentInstance.loading()).toBe(false);
   });
 
   it('unsubscribes from the hub on destroy', () => {
@@ -681,10 +692,12 @@ describe('SagaDetail', () => {
   });
 
   it('re-fetches children when a live saga update arrives', () => {
+    vi.useFakeTimers();
     const fixture = setup();
     expect(apiMock.getChildren).toHaveBeenCalledTimes(1);
 
     hubMock.sagaUpdated$.next(fixture.componentInstance.detail()!.summary);
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
 
     expect(apiMock.getChildren).toHaveBeenCalledTimes(2);
   });
@@ -724,30 +737,45 @@ describe('SagaDetail', () => {
   });
 
   it('ignores a live timeline entry for the same correlation id under a different saga type', () => {
+    vi.useFakeTimers();
     const fixture = setup();
     const entry = makeEntry({ sequenceNumber: 2, sagaType: 'ShippingChoreography' });
 
     hubMock.timelineEntryAdded$.next({ sagaType: 'ShippingChoreography', correlationId: 'saga-1', entry });
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
 
     expect(fixture.componentInstance.timeline()).toEqual([]);
+    expect(apiMock.getTimeline).toHaveBeenCalledTimes(1);
   });
 
-  it('appends a live timeline entry when the correlation id matches', () => {
+  // A pushed entry carries no payload, no error text and possibly no sequence number, so it is
+  // never appended: it asks for a refresh that reads the stored timeline whole.
+  it('re-fetches the timeline after the audit window instead of appending a live entry', () => {
+    vi.useFakeTimers();
     const fixture = setup();
     const entry = makeEntry({ sequenceNumber: 2, entryType: 'StepSucceeded' });
 
     hubMock.timelineEntryAdded$.next({ sagaType: 'OrderSaga', correlationId: 'saga-1', entry });
 
-    expect(fixture.componentInstance.timeline()).toContainEqual(entry);
+    expect(fixture.componentInstance.timeline()).toEqual([]);
+    expect(apiMock.getTimeline).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+
+    expect(apiMock.getTimeline).toHaveBeenCalledTimes(2);
+    expect(fixture.componentInstance.timeline()).toEqual([]);
   });
 
   it('ignores a live timeline entry for a different correlation id', () => {
+    vi.useFakeTimers();
     const fixture = setup();
     const entry = makeEntry({ sequenceNumber: 2 });
 
     hubMock.timelineEntryAdded$.next({ sagaType: 'OrderSaga', correlationId: 'other-id', entry });
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
 
     expect(fixture.componentInstance.timeline()).toEqual([]);
+    expect(apiMock.getTimeline).toHaveBeenCalledTimes(1);
   });
 
   it('loads the map alongside the timeline', () => {
@@ -759,10 +787,12 @@ describe('SagaDetail', () => {
   });
 
   it('re-fetches the map (not incrementally, via a whole re-fetch) when a live saga update arrives', () => {
+    vi.useFakeTimers();
     const fixture = setup();
     expect(apiMock.getMap).toHaveBeenCalledTimes(1);
 
     hubMock.sagaUpdated$.next(fixture.componentInstance.detail()!.summary);
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
 
     expect(apiMock.getMap).toHaveBeenCalledTimes(2);
   });
@@ -770,19 +800,23 @@ describe('SagaDetail', () => {
   // SignalR only ever pushes a summary-level SagaUpdated, never an incremental timeline diff, across
   // processes — so after a manual retry the Timeline tab must be re-fetched whole, the same as the map.
   it('re-fetches the timeline (not incrementally, via a whole re-fetch) when a live saga update arrives', () => {
+    vi.useFakeTimers();
     const fixture = setup();
     expect(apiMock.getTimeline).toHaveBeenCalledTimes(1);
 
     hubMock.sagaUpdated$.next(fixture.componentInstance.detail()!.summary);
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
 
     expect(apiMock.getTimeline).toHaveBeenCalledTimes(2);
   });
 
   it('does not re-fetch the map for a live saga update on a different correlation id', () => {
+    vi.useFakeTimers();
     const fixture = setup();
     const other: SagaSummary = { ...fixture.componentInstance.detail()!.summary, correlationId: 'other-id' };
 
     hubMock.sagaUpdated$.next(other);
+    vi.advanceTimersByTime(REFRESH_AUDIT_MS);
 
     expect(apiMock.getMap).toHaveBeenCalledTimes(1);
   });
@@ -903,7 +937,7 @@ describe('SagaDetail', () => {
       expect(apiMock.getMap).toHaveBeenCalledTimes(2);
     });
 
-    it('shows a live row without a sequence number on the map unfocused', () => {
+    it('shows the map unfocused for an entry without a valid sequence number', () => {
       const fixture = setup(makeDetail(), steps(), mapOf(1, 2, 3));
 
       fixture.componentInstance.showOnMap(0);
@@ -1016,6 +1050,7 @@ describe('SagaDetail', () => {
     });
 
     it('stays open when a live update refreshes the timeline', () => {
+      vi.useFakeTimers();
       const fixture = setup(makeDetail({ status: 'Running' }), oneStep());
       openFirstStep(fixture);
       apiMock.getTimeline.mockReturnValue(
@@ -1023,6 +1058,7 @@ describe('SagaDetail', () => {
       );
 
       hubMock.sagaUpdated$.next(fixture.componentInstance.detail()!.summary);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
       fixture.detectChanges();
 
       expect(fixture.nativeElement.querySelectorAll('.tl-step').length).toBe(2);
@@ -1041,6 +1077,317 @@ describe('SagaDetail', () => {
 
       expect(fixture.componentInstance.openKeys().size).toBe(0);
       expect(inspector(fixture)).toBeNull();
+    });
+  });
+
+  describe('live refresh', () => {
+    const T = Date.parse('2026-01-01T00:00:10Z');
+    const at = (offsetMs: number) => new Date(T + offsetMs).toISOString();
+
+    /** Step 1 with its snapshot; step 2 committed 400 ms before T, its snapshot not appended yet. */
+    function awaitingSnapshot(withSnapshots = true): SagaLogEntry[] {
+      return [
+        makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageId: 'm0', occurredAtUtc: at(-3000) }),
+        makeEntry({ sequenceNumber: 2, entryType: 'StepSucceeded', messageId: 'm0', fromState: 'Initial', toState: 'Submitted', occurredAtUtc: at(-2900) }),
+        ...(withSnapshots
+          ? [makeEntry({ sequenceNumber: 3, entryType: 'StatePersisted', messageId: 'm0', payloadJson: '{}', occurredAtUtc: at(-2900) })]
+          : []),
+        makeEntry({ sequenceNumber: 4, entryType: 'MessageReceived', messageId: 'm1', messageType: 'PaymentCaptured', occurredAtUtc: at(-500) }),
+        makeEntry({ sequenceNumber: 5, entryType: 'StepSucceeded', messageId: 'm1', fromState: 'Submitted', toState: 'Paid', occurredAtUtc: at(-400) }),
+      ];
+    }
+
+    function push(fixture: ReturnType<typeof setup>, overrides: Partial<SagaSummary> = {}): void {
+      hubMock.sagaUpdated$.next({ ...fixture.componentInstance.detail()!.summary, ...overrides });
+    }
+
+    it('re-reads the detail without showing Loading and shows its new data', () => {
+      vi.useFakeTimers();
+      const fixture = setup(makeDetail({ status: 'Running', version: 2 }));
+      const fresh$ = new Subject<SagaDetailModel>();
+      apiMock.get.mockReturnValue(fresh$);
+
+      push(fixture, { version: 3, currentState: 'Paid' });
+      expect(fixture.componentInstance.detail()!.summary.currentState).toBe('Paid');
+      expect(apiMock.get).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      fixture.detectChanges();
+
+      expect(apiMock.get).toHaveBeenCalledTimes(2);
+      expect(fixture.componentInstance.loading()).toBe(false);
+      expect(fixture.nativeElement.querySelector('.summary-card')).not.toBeNull();
+
+      fresh$.next({ ...makeDetail({ status: 'Running', version: 3, currentState: 'Paid' }), dataJson: '{"Total":10}' });
+
+      expect(fixture.componentInstance.detail()!.dataJson).toBe('{"Total":10}');
+      expect(fixture.componentInstance.loading()).toBe(false);
+    });
+
+    it('keeps the newer summary when an older detail response arrives', () => {
+      vi.useFakeTimers();
+      const fixture = setup(makeDetail({ status: 'Running', version: 2 }));
+      apiMock.get.mockReturnValue(of({ ...makeDetail({ status: 'Running', version: 2 }), dataJson: '{"Total":1}' }));
+
+      push(fixture, { version: 3, status: 'Completed' });
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+
+      expect(fixture.componentInstance.detail()!.summary).toEqual(expect.objectContaining({ version: 3, status: 'Completed' }));
+      expect(fixture.componentInstance.detail()!.dataJson).toBeNull();
+    });
+
+    it('keeps the higher version when two refreshes answer out of order', () => {
+      vi.useFakeTimers();
+      const fixture = setup(makeDetail({ status: 'Running', version: 2 }));
+      const first$ = new Subject<SagaDetailModel>();
+      const second$ = new Subject<SagaDetailModel>();
+      apiMock.get.mockReturnValueOnce(first$).mockReturnValueOnce(second$);
+
+      push(fixture, { version: 3 });
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      push(fixture, { version: 4 });
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+
+      second$.next({ ...makeDetail({ status: 'Running', version: 4 }), dataJson: '{"v":4}' });
+      first$.next({ ...makeDetail({ status: 'Running', version: 3 }), dataJson: '{"v":3}' });
+
+      expect(fixture.componentInstance.detail()!.summary.version).toBe(4);
+      expect(fixture.componentInstance.detail()!.dataJson).toBe('{"v":4}');
+    });
+
+    it('keeps the newer timeline and map when two refreshes answer out of order', () => {
+      vi.useFakeTimers();
+      const fixture = setup(makeDetail({ status: 'Running', version: 2 }), [makeEntry({ sequenceNumber: 1 })]);
+      const firstTimeline$ = new Subject<SagaLogEntry[]>();
+      const secondTimeline$ = new Subject<SagaLogEntry[]>();
+      const firstMap$ = new Subject<SagaMapModel>();
+      const secondMap$ = new Subject<SagaMapModel>();
+      apiMock.getTimeline.mockReturnValueOnce(firstTimeline$).mockReturnValueOnce(secondTimeline$);
+      apiMock.getMap.mockReturnValueOnce(firstMap$).mockReturnValueOnce(secondMap$);
+
+      push(fixture, { version: 3 });
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      push(fixture, { version: 4 });
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+
+      const newer = [makeEntry({ sequenceNumber: 1 }), makeEntry({ sequenceNumber: 2 }), makeEntry({ sequenceNumber: 3 })];
+      const newerMap = makeMap({ failureEventIndex: 2 });
+      secondTimeline$.next(newer);
+      secondMap$.next(newerMap);
+      firstTimeline$.next([makeEntry({ sequenceNumber: 1 }), makeEntry({ sequenceNumber: 2 })]);
+      firstMap$.next(makeMap());
+      firstTimeline$.error(new Error('late failure'));
+      firstMap$.error(new Error('late failure'));
+
+      expect(fixture.componentInstance.timeline()).toEqual(newer);
+      expect(fixture.componentInstance.map()).toEqual(newerMap);
+      expect(fixture.componentInstance.timelineError()).toBe(false);
+      expect(fixture.componentInstance.mapError()).toBe(false);
+    });
+
+    it('ignores a pushed summary older than the one shown', () => {
+      const fixture = setup(makeDetail({ status: 'Running', version: 5 }));
+
+      push(fixture, { version: 4, status: 'Failed' });
+
+      expect(fixture.componentInstance.detail()!.summary).toEqual(expect.objectContaining({ version: 5, status: 'Running' }));
+    });
+
+    it('turns three pushes within the audit window into one refresh', () => {
+      vi.useFakeTimers();
+      const fixture = setup(makeDetail({ status: 'Running' }));
+      const calls = () => [apiMock.get, apiMock.getTimeline, apiMock.getMap, apiMock.findByCorrelationId, apiMock.getChildren].map((m) => m.mock.calls.length);
+      expect(calls()).toEqual([1, 1, 1, 1, 1]);
+
+      push(fixture);
+      vi.advanceTimersByTime(100);
+      hubMock.timelineEntryAdded$.next({ sagaType: 'OrderSaga', correlationId: 'saga-1', entry: makeEntry({ sequenceNumber: 0 }) });
+      vi.advanceTimersByTime(100);
+      push(fixture);
+      expect(calls()).toEqual([1, 1, 1, 1, 1]);
+
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS - 200);
+      expect(calls()).toEqual([2, 2, 2, 2, 2]);
+
+      vi.advanceTimersByTime(10_000);
+      expect(calls()).toEqual([2, 2, 2, 2, 2]);
+    });
+
+    it("fetches the timeline once more when a push lands before the final step's snapshot", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T);
+      const fixture = setup(makeDetail({ status: 'Completed' }), awaitingSnapshot());
+
+      // The first load alone never schedules it: only a push says the saga just moved.
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(1);
+
+      push(fixture);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(2);
+
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS - 1);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(1);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
+
+      // Still no snapshot: the follow-up does not schedule another one.
+      vi.advanceTimersByTime(10_000);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
+    });
+
+    it.each([
+      ['the saga records no snapshots', false, 0],
+      ['the final step is older than the pending window', true, PENDING_SNAPSHOT_MS],
+    ])('does not fetch the timeline again when %s', (_case, withSnapshots, ageMs) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T + ageMs);
+      const fixture = setup(makeDetail({ status: 'Completed' }), awaitingSnapshot(withSnapshots));
+
+      push(fixture);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS + SNAPSHOT_FOLLOW_UP_MS + 1000);
+
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not fetch the timeline again once the final step's snapshot is there", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T);
+      const recorded = [
+        ...awaitingSnapshot(),
+        makeEntry({ sequenceNumber: 6, entryType: 'StatePersisted', messageId: 'm1', payloadJson: '{"Paid":true}', occurredAtUtc: at(-400) }),
+      ];
+      const fixture = setup(makeDetail({ status: 'Completed' }), recorded);
+
+      push(fixture);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS + SNAPSHOT_FOLLOW_UP_MS + 1000);
+
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('load errors', () => {
+    const routeParams = () => convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' });
+    const failing = () => throwError(() => new Error('API down'));
+
+    /** The page with the given tab, its timeline and map requests failing from the first load. */
+    function setupFailing(tab: 'map' | 'timeline'): ReturnType<typeof setup> {
+      const paramMap$ = new Subject<ParamMap>();
+      const fixture = setup(makeDetail(), [], makeMap(), undefined, [], paramMap$, of(convertToParamMap(tab === 'map' ? {} : { tab })));
+      apiMock.getTimeline.mockReturnValue(failing());
+      apiMock.getMap.mockReturnValue(failing());
+      paramMap$.next(routeParams());
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    const text = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+    it('shows an error with Try again when the timeline cannot be loaded, and Try again loads it', () => {
+      const fixture = setupFailing('timeline');
+      const el: HTMLElement = fixture.nativeElement;
+
+      const banner = el.querySelector('.banner.banner--error.load-error');
+      expect(text(banner)).toBe('Could not load the timeline. Try again');
+      expect(el.querySelector('app-saga-timeline')).toBeNull();
+      expect(el.textContent).not.toContain('No events recorded yet.');
+      expect(el.textContent).not.toContain('Loading timeline…');
+
+      apiMock.getTimeline.mockReturnValue(of([makeEntry()]));
+      (banner!.querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      expect(el.querySelector('.load-error')).toBeNull();
+      expect(el.querySelector('app-saga-timeline')).not.toBeNull();
+    });
+
+    it('shows an error with Try again when the map cannot be loaded, and Try again loads it', () => {
+      const fixture = setupFailing('map');
+      const el: HTMLElement = fixture.nativeElement;
+
+      const banner = el.querySelector('.banner.banner--error.load-error');
+      expect(text(banner)).toBe('Could not load the map. Try again');
+      expect(el.querySelector('app-saga-map')).toBeNull();
+      expect(el.textContent).not.toContain('Loading map…');
+
+      apiMock.getMap.mockReturnValue(of(makeMap()));
+      (banner!.querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      expect(el.querySelector('.load-error')).toBeNull();
+      expect(el.querySelector('app-saga-map')).not.toBeNull();
+    });
+
+    it('keeps the stale timeline and map under a warning when a refresh fails', () => {
+      vi.useFakeTimers();
+      const fixture = setup(makeDetail({ status: 'Running' }), [makeEntry()], makeMap(), undefined, [], undefined, of(convertToParamMap({ tab: 'timeline' })));
+      const el: HTMLElement = fixture.nativeElement;
+      apiMock.getTimeline.mockReturnValue(failing());
+      apiMock.getMap.mockReturnValue(failing());
+
+      hubMock.sagaUpdated$.next(fixture.componentInstance.detail()!.summary);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      fixture.detectChanges();
+
+      expect(text(el.querySelector('.banner.banner--warning.load-error'))).toBe(
+        'Could not refresh the timeline; it shows the entries as last loaded. Try again',
+      );
+      expect(el.querySelector('.banner--error')).toBeNull();
+      expect(el.querySelector('app-saga-timeline')).not.toBeNull();
+
+      fixture.componentInstance.setTab('map');
+      fixture.detectChanges();
+      const warning = el.querySelector('.banner.banner--warning.load-error');
+      expect(text(warning)).toBe('Could not refresh the map; it shows the saga as last loaded. Try again');
+      expect(el.querySelector('app-saga-map')).not.toBeNull();
+
+      apiMock.getMap.mockReturnValue(of(makeMap()));
+      (warning!.querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(el.querySelector('.load-error')).toBeNull();
+    });
+
+    it('retries the timeline and the map in one live refresh when live updates reconnect', () => {
+      vi.useFakeTimers();
+      const fixture = setupFailing('timeline');
+      const calls = () => [apiMock.get, apiMock.getTimeline, apiMock.getMap, apiMock.findByCorrelationId, apiMock.getChildren].map((m) => m.mock.calls.length);
+      expect(fixture.componentInstance.timelineError()).toBe(true);
+      expect(fixture.componentInstance.mapError()).toBe(true);
+      expect(calls()).toEqual([1, 1, 1, 1, 1]);
+      apiMock.getTimeline.mockReturnValue(of([makeEntry()]));
+      apiMock.getMap.mockReturnValue(of(makeMap()));
+
+      hubMock.connectionState$.next('reconnecting');
+      hubMock.connectionState$.next('connected');
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+
+      // The detail loaded fine, so the page re-reads it as a refresh, without "Loading…".
+      expect(calls()).toEqual([2, 2, 2, 2, 2]);
+      expect(fixture.componentInstance.loading()).toBe(false);
+      expect(fixture.componentInstance.timelineError()).toBe(false);
+      expect(fixture.componentInstance.mapError()).toBe(false);
+    });
+
+    it('drops the timeline, the map and their errors when the route moves to another saga', () => {
+      const paramMap$ = new BehaviorSubject<ParamMap>(routeParams());
+      const fixture = setup(makeDetail(), [makeEntry()], makeMap(), undefined, [], paramMap$);
+      apiMock.getTimeline.mockReturnValue(failing());
+      apiMock.getMap.mockReturnValue(failing());
+      fixture.componentInstance.retryTimeline();
+      fixture.componentInstance.loadMap();
+      expect(fixture.componentInstance.timelineError()).toBe(true);
+      expect(fixture.componentInstance.mapError()).toBe(true);
+      apiMock.getTimeline.mockReturnValue(new Subject<SagaLogEntry[]>());
+      apiMock.getMap.mockReturnValue(new Subject<SagaMapModel>());
+
+      paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-2' }));
+
+      const page = fixture.componentInstance;
+      expect(page.timeline()).toEqual([]);
+      expect(page.timelineLoaded()).toBe(false);
+      expect(page.timelineError()).toBe(false);
+      expect(page.map()).toBeNull();
+      expect(page.mapError()).toBe(false);
     });
   });
 });

@@ -1,6 +1,6 @@
 import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
 import { ActivatedRoute, ParamMap, Router, RouterLink } from '@angular/router';
-import { Subscription } from 'rxjs';
+import { Subject, Subscription, auditTime } from 'rxjs';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import { SagaDetail as SagaDetailModel, SagaLogEntry, SagaMap as SagaMapModel, SagaSummary } from '../../models/saga.model';
@@ -10,8 +10,22 @@ import { SagaMap } from '../../components/saga-map/saga-map';
 import { LocalTime } from '../../components/local-time/local-time';
 import { SagaTimeline } from '../../components/saga-timeline/saga-timeline';
 import { DATA_VIEWS, DataView, SagaDataOverview } from '../../components/saga-data-overview/saga-data-overview';
-import { foldTimeline } from '../../util/saga-transitions';
+import { PENDING_SNAPSHOT_MS, SagaHistory, foldTimeline } from '../../util/saga-transitions';
 import { timezoneLabel, toMillis } from '../../util/time-format';
+
+/**
+ * How long live pushes are gathered into one refresh. One change reaches this page twice (the list
+ * group and the instance group both push it), and a busy saga pushes several changes per step; each
+ * refresh re-reads the whole timeline, so a burst costs one round of requests, not one per push.
+ */
+export const REFRESH_AUDIT_MS = 250;
+
+/**
+ * The delay of the one extra timeline fetch after a push-triggered refresh that found the final
+ * step committed but its snapshot not appended yet: the poller can push between the engine's persist
+ * and its StatePersisted append, and for a saga that has just finished no later push would come.
+ */
+export const SNAPSHOT_FOLLOW_UP_MS = 1500;
 
 type Tab = 'map' | 'timeline';
 
@@ -40,6 +54,20 @@ function isEntry(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+/**
+ * Whether the final step's snapshot may still be on its way: the step has an outcome but no
+ * snapshot, its newest row is younger than PENDING_SNAPSHOT_MS (either side of the browser's clock,
+ * which can trail the API host's), and the saga records snapshots at all. Without that last test an
+ * older saga, or one with snapshots switched off, would fetch again after every push.
+ */
+function awaitsSnapshot(history: SagaHistory, nowMs: number): boolean {
+  const last = history.transitions.at(-1);
+  if (!last || history.snapshotCount === 0) return false;
+  if (last.outcome === 'in-flight' || last.snapshotState !== 'missing') return false;
+  const at = toMillis(last.lastOccurredAtUtc);
+  return at !== null && Math.abs(nowMs - at) < PENDING_SNAPSHOT_MS;
+}
+
 @Component({
   selector: 'app-saga-detail',
   imports: [RouterLink, KindBadge, StatusBadge, SagaMap, LocalTime, SagaTimeline, SagaDataOverview],
@@ -55,7 +83,11 @@ export class SagaDetail implements OnInit, OnDestroy {
   /** Whether `timeline` holds this saga's fetched timeline; until then the Saga data bar must not
    *  read an empty one as "nothing recorded". */
   readonly timelineLoaded = signal(false);
+  /** Whether the last timeline fetch failed: an error with nothing loaded, a warning over stale rows. */
+  readonly timelineError = signal(false);
   readonly map = signal<SagaMapModel | null>(null);
+  /** Whether the last map fetch failed: an error with no map loaded, a warning over a stale one. */
+  readonly mapError = signal(false);
   /** Other saga types tracking this same correlation id — empty for the usual one-saga case. */
   readonly related = signal<SagaSummary[]>([]);
   /** Sagas this one started via StartChildAsync — empty unless it composes sub-sagas. */
@@ -98,6 +130,13 @@ export class SagaDetail implements OnInit, OnDestroy {
   private hasSubscribedToHub = false;
   /** The entry the URL last named, validated; what a saga change keeps (see the paramMap handler). */
   private urlEntry: number | null = null;
+  /** Live pushes for this saga; audited into one refresh per REFRESH_AUDIT_MS window. */
+  private readonly refreshRequests = new Subject<void>();
+  /** The pending snapshot follow-up fetch, if one is scheduled. */
+  private followUp: ReturnType<typeof setTimeout> | null = null;
+  /** The latest timeline and map fetches; an answer to an earlier one is dropped. */
+  private timelineRequest = 0;
+  private mapRequest = 0;
 
   constructor(
     private readonly route: ActivatedRoute,
@@ -123,6 +162,7 @@ export class SagaDetail implements OnInit, OnDestroy {
           this.focusedSequence.set(this.urlEntry);
           // Step keys are sequence numbers of another saga's timeline.
           this.openKeys.set(new Set());
+          this.resetSagaContent();
         }
 
         this.sagaType = params.get('sagaType') ?? '';
@@ -137,39 +177,49 @@ export class SagaDetail implements OnInit, OnDestroy {
         this.hasSubscribedToHub = true;
       }),
       this.hub.connectionState$.subscribe((s) => {
-        // Captured before the error signal is touched by anything below -- a reconnect after an
-        // ordinary first-ever connect (error() still null, nothing has failed yet) must not trigger
-        // a redundant extra load() on top of the one ngOnInit already fired.
+        // Captured before anything below touches them -- the first-ever connect (nothing failed,
+        // nothing missed yet) must not add requests on top of the load() ngOnInit already fired.
         const hadError = this.error() !== null;
+        const hadTimelineError = this.timelineError();
+        const hadMapError = this.mapError();
         this.connectionState.set(s);
         if (s === 'connected') {
+          const wasConnectedBefore = this.hasEverConnected();
           this.hasEverConnected.set(true);
           // A prior REST load failure (e.g. the API was down on page load) leaves the error state
           // and stale/empty timeline/map/related/children on screen even after the hub reconnects
           // and live push updates resume -- reconnecting only proves the SignalR channel is back,
           // not that the failed GET requests have been retried. Re-run them now so both clear together.
-          if (hadError) this.load();
+          // Any later reconnect also re-reads everything once: the pushes sent while the hub was
+          // down are lost, and a saga that finished meanwhile would never send another.
+          if (hadError) {
+            this.load();
+          } else if (wasConnectedBefore || hadTimelineError || hadMapError) {
+            this.refreshRequests.next();
+          }
         }
       }),
       this.hub.sagaUpdated$.subscribe((summary) => {
         // Both halves must match: the list group pushes updates for every saga, and another saga
         // type may be tracking this same correlation id.
         if (summary.correlationId === this.correlationId && summary.sagaType === this.sagaType) {
-          this.detail.update((current) => (current ? { ...current, summary } : current));
-          // Neither the map nor the timeline is pushed incrementally here (SagaChangePollingService
-          // only ever emits SagaUpdated, never TimelineEntryAdded, across processes) — re-fetch them
-          // whole instead.
-          this.loadMap();
-          this.loadTimeline();
-          this.loadRelated();
-          this.loadChildren();
+          // The badge and the summary card follow at once; the rest waits for the refresh. A push
+          // older than what is shown (the two hub groups can deliver out of order) changes nothing.
+          this.detail.update((current) =>
+            current && summary.version >= current.summary.version ? { ...current, summary } : current,
+          );
+          this.refreshRequests.next();
         }
       }),
-      this.hub.timelineEntryAdded$.subscribe(({ sagaType, correlationId, entry }) => {
+      // A pushed entry is never appended: it carries no payload and no error text (the API strips
+      // them for everyone) and, from an older engine, no sequence number. It asks for the same
+      // refresh instead, which reads the stored entries whole.
+      this.hub.timelineEntryAdded$.subscribe(({ sagaType, correlationId }) => {
         if (correlationId === this.correlationId && sagaType === this.sagaType) {
-          this.timeline.update((entries) => [...entries, entry]);
+          this.refreshRequests.next();
         }
       }),
+      this.refreshRequests.pipe(auditTime(REFRESH_AUDIT_MS)).subscribe(() => this.refresh()),
     );
   }
 
@@ -178,12 +228,12 @@ export class SagaDetail implements OnInit, OnDestroy {
       void this.hub.unsubscribeFromSaga(this.sagaType, this.correlationId);
     }
     this.subs.forEach((s) => s.unsubscribe());
+    this.cancelSnapshotFollowUp();
   }
 
   load(): void {
     this.loading.set(true);
     this.error.set(null);
-    this.timelineLoaded.set(false);
 
     // Captured now, at the moment this call is fired — compared against the live fields when the
     // response arrives, below. Angular reuses this component instance across same-route-config
@@ -212,14 +262,94 @@ export class SagaDetail implements OnInit, OnDestroy {
     this.loadChildren();
   }
 
-  private loadTimeline(): void {
+  /**
+   * One coalesced live refresh: the detail (for the stored data and a summary at least as new as
+   * the pushed one), the timeline, the map and both relation strips. It runs after a push or a hub
+   * reconnect, and only such a refresh may schedule the snapshot follow-up.
+   */
+  private refresh(): void {
+    this.refreshDetail();
+    this.loadTimeline(() => this.scheduleSnapshotFollowUp());
+    this.loadMap();
+    this.loadRelated();
+    this.loadChildren();
+  }
+
+  /**
+   * Re-reads the detail behind a live refresh. Unlike load() it never shows "Loading…", and a
+   * failure keeps what is shown. Two refreshes can cross, and a push may already have patched in a
+   * newer summary, so the detail with the higher version wins; on a tie the response does, since it
+   * also carries the stored data.
+   */
+  private refreshDetail(): void {
     const sagaType = this.sagaType;
     const correlationId = this.correlationId;
-    this.api.getTimeline(sagaType, correlationId).subscribe((entries) => {
-      if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
-      this.timeline.set(entries);
-      this.timelineLoaded.set(true);
+    this.api.get(sagaType, correlationId).subscribe({
+      next: (fresh) => {
+        if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
+        this.detail.update((current) =>
+          current && fresh.summary.version >= current.summary.version ? fresh : current,
+        );
+      },
+      error: () => undefined,
     });
+  }
+
+  /** The timeline tab's Try again. */
+  retryTimeline(): void {
+    this.loadTimeline();
+  }
+
+  /**
+   * Fetches the timeline. Fetches can overlap (a refresh, its follow-up, a later refresh on a slow
+   * API) and answer out of order, so only the answer to the latest one is applied; an older
+   * timeline would otherwise replace a newer one, and for a saga that has finished no later push
+   * would correct it.
+   */
+  private loadTimeline(onLoaded?: () => void): void {
+    const sagaType = this.sagaType;
+    const correlationId = this.correlationId;
+    const request = ++this.timelineRequest;
+    const stale = () => request !== this.timelineRequest || sagaType !== this.sagaType || correlationId !== this.correlationId;
+    this.api.getTimeline(sagaType, correlationId).subscribe({
+      next: (entries) => {
+        if (stale()) return;
+        this.timeline.set(entries);
+        this.timelineLoaded.set(true);
+        this.timelineError.set(false);
+        onLoaded?.();
+      },
+      error: () => {
+        if (stale()) return;
+        this.timelineError.set(true);
+      },
+    });
+  }
+
+  /** One timeline fetch SNAPSHOT_FOLLOW_UP_MS from now, when the final step's snapshot may still land. */
+  private scheduleSnapshotFollowUp(): void {
+    this.cancelSnapshotFollowUp();
+    if (!awaitsSnapshot(this.history(), Date.now())) return;
+    this.followUp = setTimeout(() => {
+      this.followUp = null;
+      this.loadTimeline();
+    }, SNAPSHOT_FOLLOW_UP_MS);
+  }
+
+  private cancelSnapshotFollowUp(): void {
+    if (this.followUp === null) return;
+    clearTimeout(this.followUp);
+    this.followUp = null;
+  }
+
+  /** What belongs to one saga's page, cleared when the route moves to another saga. */
+  private resetSagaContent(): void {
+    this.cancelSnapshotFollowUp();
+    this.timeline.set([]);
+    this.timelineLoaded.set(false);
+    this.timelineError.set(false);
+    this.map.set(null);
+    this.mapError.set(false);
   }
 
   /**
@@ -272,12 +402,22 @@ export class SagaDetail implements OnInit, OnDestroy {
     });
   }
 
+  /** Fetches the map; like loadTimeline, only the answer to the latest fetch is applied. */
   loadMap(): void {
     const sagaType = this.sagaType;
     const correlationId = this.correlationId;
-    this.api.getMap(sagaType, correlationId).subscribe((map) => {
-      if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
-      this.map.set(map);
+    const request = ++this.mapRequest;
+    const stale = () => request !== this.mapRequest || sagaType !== this.sagaType || correlationId !== this.correlationId;
+    this.api.getMap(sagaType, correlationId).subscribe({
+      next: (map) => {
+        if (stale()) return;
+        this.map.set(map);
+        this.mapError.set(false);
+      },
+      error: () => {
+        if (stale()) return;
+        this.mapError.set(true);
+      },
     });
   }
 
@@ -318,7 +458,8 @@ export class SagaDetail implements OnInit, OnDestroy {
 
   /** The map as of a timeline entry. A map fetched before the entry was recorded is fetched again. */
   showOnMap(sequence: number): void {
-    // A row pushed live carries no sequence number yet: show the map, unfocused.
+    // Only a positive sequence number can be a focus; anything else (an unstamped 0, say) shows the
+    // map, unfocused.
     const entry = isEntry(sequence) ? sequence : null;
     this.tab.set('map');
     this.focusedSequence.set(entry);

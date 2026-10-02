@@ -1,9 +1,9 @@
 <a class="back" routerLink="/sagas">&larr; All sagas</a>
 
 @if (connectionState() === 'reconnecting') {
-  <div class="banner--warning">Reconnecting to live updates…</div>
+  <div class="banner banner--warning">Reconnecting to live updates…</div>
 } @else if (hasEverConnected() && connectionState() === 'disconnected') {
-  <div class="banner--warning">Live updates disconnected.</div>
+  <div class="banner banner--warning">Live updates disconnected.</div>
 }
 
 @if (loading()) {
@@ -115,7 +115,22 @@
     <button type="button" [class.active]="tab() === 'timeline'" (click)="setTab('timeline')">Timeline</button>
   </div>
 
+  <!-- A failed fetch with nothing to show is an error in place of the tab; over content loaded
+       earlier it is a warning, and the stale content stays readable below it. -->
   @if (tab() === 'map') {
+    @if (mapError()) {
+      @if (map()) {
+        <div class="banner banner--warning load-error" role="status">
+          Could not refresh the map; it shows the saga as last loaded.
+          <button type="button" class="btn" (click)="loadMap()">Try again</button>
+        </div>
+      } @else {
+        <div class="banner banner--error load-error" role="alert">
+          Could not load the map.
+          <button type="button" class="btn" (click)="loadMap()">Try again</button>
+        </div>
+      }
+    }
     @if (map(); as m) {
       <app-saga-map
         [map]="m"
@@ -123,11 +138,28 @@
         (focusCleared)="clearFocus()"
         (timelineRequested)="showInTimeline($event)"
       />
-    } @else {
+    } @else if (!mapError()) {
       <div class="empty">Loading map…</div>
     }
   } @else {
-    @if (history().rowCount === 0) {
+    @if (timelineError()) {
+      @if (timelineLoaded()) {
+        <div class="banner banner--warning load-error" role="status">
+          Could not refresh the timeline; it shows the entries as last loaded.
+          <button type="button" class="btn" (click)="retryTimeline()">Try again</button>
+        </div>
+      } @else {
+        <div class="banner banner--error load-error" role="alert">
+          Could not load the timeline.
+          <button type="button" class="btn" (click)="retryTimeline()">Try again</button>
+        </div>
+      }
+    }
+    @if (!timelineLoaded()) {
+      @if (!timelineError()) {
+        <div class="empty">Loading timeline…</div>
+      }
+    } @else if (history().rowCount === 0) {
       <div class="empty">No events recorded yet.</div>
     } @else {
       <app-saga-timeline

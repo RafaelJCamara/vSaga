@@ -11,24 +11,6 @@
   text-align: center;
 }
 
-.banner--error {
-  background: rgba(239, 85, 102, 0.12);
-  color: var(--status-failed);
-  border: 1px solid rgba(239, 85, 102, 0.3);
-  padding: 0.6rem 0.9rem;
-  border-radius: 6px;
-}
-
-.banner--warning {
-  background: rgba(242, 169, 59, 0.12);
-  color: var(--status-compensating);
-  border: 1px solid rgba(242, 169, 59, 0.3);
-  padding: 0.6rem 0.9rem;
-  border-radius: 6px;
-  margin-bottom: 1rem;
-  font-size: 0.85rem;
-}
-
 .summary-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);

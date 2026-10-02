@@ -108,6 +108,32 @@ code, .mono {
   outline-offset: 1px;
 }
 
+/* A message across the top of a page or a tab. The base carries the box; `--warning` is a degraded
+   but usable view (live updates down, stale content), `--error` a failure with nothing to show. */
+.banner {
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+}
+
+.banner--error {
+  background: rgba(239, 85, 102, 0.12);
+  color: var(--status-failed);
+  border-color: rgba(239, 85, 102, 0.3);
+}
+
+.banner--warning {
+  background: rgba(242, 169, 59, 0.12);
+  color: var(--status-compensating);
+  border-color: rgba(242, 169, 59, 0.3);
+}
+
+.banner .btn {
+  margin-left: 0.5rem;
+}
+
 /* Pretty-printed JSON: a saga's state or a message payload. Focusable where it scrolls. */
 .json-block {
   overflow: auto;

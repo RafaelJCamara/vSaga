@@ -51,19 +51,6 @@ button:hover {
   filter: brightness(1.1);
 }
 
-.banner {
-  padding: 0.6rem 0.9rem;
-  border-radius: 6px;
-  margin-bottom: 1rem;
-  font-size: 0.85rem;
-}
-
-.banner--error {
-  background: rgba(239, 85, 102, 0.12);
-  color: var(--status-failed);
-  border: 1px solid rgba(239, 85, 102, 0.3);
-}
-
 .banner--info {
   background: var(--bg-elevated);
   color: var(--text);
@@ -76,12 +63,6 @@ button:hover {
 .banner--info button {
   padding: 0.2rem 0.6rem;
   font-size: 0.8rem;
-}
-
-.banner--warning {
-  background: rgba(242, 169, 59, 0.12);
-  color: var(--status-compensating);
-  border: 1px solid rgba(242, 169, 59, 0.3);
 }
 
 .empty {
