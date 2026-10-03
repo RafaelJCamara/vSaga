@@ -51,7 +51,7 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
     /// <summary>The prefix browsers accept only on a Secure, host-only cookie with path <c>/</c>; added when <see cref="RequireHttps"/> is true.</summary>
     public const string HostCookiePrefix = "__Host-";
 
-    private const int MaxCookieNameLength = 64;
+    private const int MaxCookieNameLength = 128;
 
     private const int MaxRoleNameLength = 64;
 
@@ -91,7 +91,7 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
     /// 8 to 128, <c>Dashboard:Lockout:MaxFailedAttempts</c> 0 (never lock) to 100,
     /// <c>Dashboard:Lockout:Minutes</c> 1 to 1440 (a day), <c>Dashboard:Session:IdleTimeoutMinutes</c> 1 to
     /// 10080 (a week), <c>Dashboard:Session:AbsoluteTimeoutHours</c> 1 to 720 (30 days),
-    /// <c>Dashboard:Session:RequireHttps</c> true or false, <c>Dashboard:Session:CookieName</c> 1 to 64 letters,
+    /// <c>Dashboard:Session:RequireHttps</c> true or false, <c>Dashboard:Session:CookieName</c> 1 to 128 letters,
     /// digits, dots, hyphens and underscores not starting with <c>__</c> (the prefix is the setting's job),
     /// <c>Dashboard:ApiKeyRole</c> at most 64 characters, and <c>Dashboard:RateLimit:AuthPerMinute</c> 1 to
     /// 1000, or composition fails here.

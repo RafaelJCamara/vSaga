@@ -27,5 +27,14 @@ WORKDIR /app
 # messages against a schema this app's MigrateAsync hasn't finished applying yet.
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app .
+# The dashboard's users, roles and data-protection keys live in one SQLite file. Its directory is created
+# here, owned by the image's non-root "app" user and closed to everyone else, so a new named volume mounted
+# on it takes that ownership and mode. The path is set in the image too, so a bare `docker run` writes to
+# this directory rather than reporting the identity store unavailable (there is no default inside a
+# container). Mount a volume on /var/lib/vsaga-dashboard or every user and key goes with the container.
+ENV Dashboard__Identity__Sqlite__Path=/var/lib/vsaga-dashboard/identity.db
+RUN mkdir -p /var/lib/vsaga-dashboard && chown $APP_UID /var/lib/vsaga-dashboard && chmod 700 /var/lib/vsaga-dashboard
+# Run as the aspnet image's "app" user (uid 1654); curl is installed above as root, and port 8080 needs no privilege.
+USER $APP_UID
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "VSaga.Dashboard.Api.dll"]

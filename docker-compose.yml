@@ -31,9 +31,11 @@ services:
       context: ./dotnet
       dockerfile: src/VSaga.Dashboard.Api/Dockerfile
     # The dashboard ports bind to loopback because the demo ships a known credential (the committed API
-    # key below, and later a seeded administrator), so only this machine can reach them. To expose the
-    # dashboard deliberately, change the bind address here and on dashboard-web together with that
-    # credential, and put TLS in front.
+    # key and the seeded administrator below), so only this machine can reach them. To expose the
+    # dashboard deliberately, change the bind address here and on dashboard-web, change Dashboard__ApiKey,
+    # and change the administrator's password: once the identity volume exists Dashboard__Admin__Password
+    # no longer applies, so sign in and change it (or set Dashboard__Admin__ResetOnStart=true for one
+    # start, or start over with `down -v`). Put TLS in front.
     ports:
       - "127.0.0.1:5080:8080"
     environment:
@@ -46,6 +48,23 @@ services:
       # network; acceptable here because the ports are bound to loopback. Narrow this to your proxy's
       # address or network for a real deployment: any peer in these ranges can assert a client address.
       Dashboard__TrustedProxies: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      # Operator, so the dashboard UI, which still signs its requests with the key above, can retry a
+      # failed saga. The commit that switches the UI to sign-in sets this back to Viewer.
+      Dashboard__ApiKeyRole: "Operator"
+      # Users, roles and the session keys live in this SQLite file on the volume below, so they survive a
+      # rebuild or recreate of this container; `docker compose down -v` removes them. The image sets the
+      # same path.
+      Dashboard__Identity__Provider: "Sqlite"
+      Dashboard__Identity__Sqlite__Path: "/var/lib/vsaga-dashboard/identity.db"
+      # The demo administrator, created on the first start against an empty identity volume and never
+      # touched again afterwards. A known password: see the loopback note above.
+      Dashboard__Admin__Username: "admin"
+      Dashboard__Admin__Password: "dev-local-only-change-me"
+      # One session cookie name per compose project, so this stack and an overlay stack running beside it
+      # (each on its own localhost port, which cookies ignore) do not overwrite each other's sign-in.
+      Dashboard__Session__CookieName: "vsaga.session.${COMPOSE_PROJECT_NAME:-vsaga}"
+    volumes:
+      - vsaga-dashboard-identity:/var/lib/vsaga-dashboard
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,3 +118,4 @@ services:
 
 volumes:
   vsaga-postgres-data:
+  vsaga-dashboard-identity:

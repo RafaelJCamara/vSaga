@@ -101,7 +101,6 @@ public sealed class DashboardSecuritySettingsTests
     [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "vsaga session")]
     [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "vsaga;session")]
     [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "__Host-vsaga.session")]
-    [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "a0123456789012345678901234567890123456789012345678901234567890123")]
     [InlineData(DashboardSecuritySettings.ApiKeyRoleKey, "r0123456789012345678901234567890123456789012345678901234567890123")]
     [InlineData(DashboardSecuritySettings.AuthPerMinuteKey, "0")]
     [InlineData(DashboardSecuritySettings.AuthPerMinuteKey, "1001")]
@@ -111,6 +110,24 @@ public sealed class DashboardSecuritySettingsTests
 
         Assert.Contains(key, error.Message, StringComparison.Ordinal);
         Assert.Contains($"'{value}'", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Read_CookieName_Accepts128CharactersAndRejects129()
+    {
+        // Compose names the cookie vsaga.session.<project>, and the default project name is the checkout
+        // folder's name, so the limit leaves room for a long folder name.
+        var longest = "vsaga.session." + new string('p', 114);
+        var tooLong = longest + "p";
+
+        var settings = DashboardSecuritySettings.Read(Configuration((DashboardSecuritySettings.SessionCookieNameKey, longest)));
+        var error = Assert.Throws<InvalidOperationException>(
+            () => DashboardSecuritySettings.Read(Configuration((DashboardSecuritySettings.SessionCookieNameKey, tooLong))));
+
+        Assert.Equal(128, longest.Length);
+        Assert.Equal(longest, settings.SessionCookieName);
+        Assert.Contains(DashboardSecuritySettings.SessionCookieNameKey, error.Message, StringComparison.Ordinal);
+        Assert.Contains("1 to 128", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
