@@ -3,23 +3,24 @@
   <span class="count" *ngIf="!loading()">{{ totalCount() }} total</span>
 </div>
 
-<div class="filters">
-  <select [(ngModel)]="status" (change)="onFilterChange()">
+<div class="toolbar">
+  <select class="input" [(ngModel)]="status" (change)="onFilterChange()">
     <option value="">All statuses</option>
     <option *ngFor="let s of statuses" [value]="s">{{ s }}</option>
   </select>
 
-  <select [(ngModel)]="kind" (change)="onFilterChange()">
+  <select class="input" [(ngModel)]="kind" (change)="onFilterChange()">
     <option value="">All kinds</option>
     <option *ngFor="let k of kinds" [value]="k">{{ k }}</option>
   </select>
 
-  <select [(ngModel)]="sagaType" (change)="onFilterChange()">
+  <select class="input" [(ngModel)]="sagaType" (change)="onFilterChange()">
     <option value="">All saga types</option>
     <option *ngFor="let t of sagaTypes()" [value]="t.sagaType">{{ t.sagaType }}</option>
   </select>
 
   <input
+    class="input"
     type="search"
     placeholder="Search by type or correlation id…"
     [(ngModel)]="search"
@@ -53,7 +54,7 @@
        "No sagas match these filters yet." on top of it would read as contradictory. -->
   <div class="empty">No sagas match these filters yet.</div>
 } @else if (sagas().length > 0) {
-  <table class="saga-table">
+  <table class="data-table">
     <thead>
       <tr>
         <th>Correlation Id</th>
@@ -91,7 +92,7 @@
   <div class="pagination">
     <label class="page-size">
       Rows per page
-      <select [(ngModel)]="pageSize" (change)="onFilterChange()">
+      <select class="input" [(ngModel)]="pageSize" (change)="onFilterChange()">
         <option *ngFor="let size of pageSizes" [ngValue]="size">{{ size }}</option>
       </select>
     </label>
@@ -101,6 +102,7 @@
     <label class="page-jump">
       Go to page
       <input
+        class="input"
         type="number"
         min="1"
         [max]="totalPages()"

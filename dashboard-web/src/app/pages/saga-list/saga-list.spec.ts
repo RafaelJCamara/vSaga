@@ -376,6 +376,35 @@ describe('SagaList', () => {
     expect(fixture.componentInstance.newSagasAvailable()).toBe(0);
   });
 
+  // The page's toolbar, controls, table and banners are the shared classes of src/styles.scss, which
+  // the unit tests do not load, so the class names are all there is to check. The base `.banner`
+  // carries the box: a modifier on its own would show a banner with no padding.
+  it('builds its header, toolbar, form controls, table and banners from the shared global classes', () => {
+    const fixture = setup({ items: [makeSummary()], page: 1, pageSize: 25, totalCount: 75 });
+    const el: HTMLElement = fixture.nativeElement;
+
+    expect(el.querySelector('.page-header > h1')).not.toBeNull();
+    expect(el.querySelectorAll('.toolbar > select.input, .toolbar > input.input')).toHaveLength(4);
+    expect(el.querySelector('table.data-table')).not.toBeNull();
+    expect(el.querySelectorAll('.pagination select.input, .pagination input.input')).toHaveLength(2);
+
+    hubMock.connectionState$.next('reconnecting');
+    fixture.componentInstance.error.set('Could not reach the API.');
+    fixture.componentInstance.newSagasAvailable.set(2);
+    fixture.detectChanges();
+
+    expect(Array.from(el.querySelectorAll('[class*="banner"]'), (b) => b.className)).toEqual([
+      'banner banner--warning',
+      'banner banner--error',
+      'banner banner--info',
+    ]);
+
+    fixture.componentInstance.sagas.set([]);
+    fixture.componentInstance.error.set(null);
+    fixture.detectChanges();
+    expect(el.querySelector('.empty')?.textContent).toBe('No sagas match these filters yet.');
+  });
+
   it('defaults to a page size of 25 and offers 25/50/75/100 as options', () => {
     const fixture = setup();
 

@@ -1,10 +1,3 @@
-.page-header {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
 h1 {
   font-size: 1.3rem;
   margin: 0;
@@ -12,23 +5,6 @@ h1 {
 
 .count {
   color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-select,
-input[type='search'] {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
   font-size: 0.85rem;
 }
 
@@ -51,10 +27,8 @@ button:hover {
   filter: brightness(1.1);
 }
 
+/* The "new sagas" notice is a text-and-button row; the colours come from the global .banner--info. */
 .banner--info {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -65,37 +39,12 @@ button:hover {
   font-size: 0.8rem;
 }
 
-.empty {
-  color: var(--text-muted);
-  padding: 2rem 0;
-  text-align: center;
-}
-
-.saga-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.saga-table th {
-  text-align: left;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  padding: 0.6rem 0.9rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.saga-table th.sortable {
+.data-table th.sortable {
   cursor: pointer;
   user-select: none;
 }
 
-.saga-table th.sortable:hover {
+.data-table th.sortable:hover {
   color: var(--text);
 }
 
@@ -104,26 +53,12 @@ button:hover {
   font-size: 0.65rem;
 }
 
-.saga-table td {
-  padding: 0.6rem 0.9rem;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.85rem;
-}
-
 .saga-row {
   cursor: pointer;
 }
 
 .saga-row:hover {
   background: var(--bg-hover);
-}
-
-.saga-row:last-child td {
-  border-bottom: none;
-}
-
-.muted {
-  color: var(--text-muted);
 }
 
 .pagination {
@@ -157,12 +92,7 @@ button:hover {
 
 .page-jump input {
   width: 4rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
   padding: 0.3rem 0.5rem;
-  font-size: 0.85rem;
 }
 
 .pagination button:disabled {

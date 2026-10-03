@@ -324,6 +324,34 @@ describe('SagaDetail', () => {
     expect(fixture.componentInstance.loading()).toBe(false);
   });
 
+  // The page's panel, tabs, empty state and banners are the shared classes of src/styles.scss, which
+  // the unit tests do not load, so the class names are all there is to check. The base `.banner`
+  // carries the box: a modifier on its own would show a banner with no padding.
+  it('builds its summary card, tabs, empty state and banners from the shared global classes', () => {
+    const fixture = setup(makeDetail({ status: 'Completed' }));
+    const el: HTMLElement = fixture.nativeElement;
+    const banners = () => Array.from(el.querySelectorAll('[class*="banner"]'), (b) => b.className);
+
+    expect(el.querySelector('.card.summary-card')).not.toBeNull();
+    expect(el.querySelectorAll('.subtabs > button')).toHaveLength(2);
+
+    hubMock.connectionState$.next('reconnecting');
+    fixture.detectChanges();
+    expect(banners()).toEqual(['banner banner--warning']);
+
+    hubMock.connectionState$.next('disconnected');
+    fixture.detectChanges();
+    expect(banners()).toEqual(['banner banner--warning']);
+
+    fixture.componentInstance.error.set('Could not load this saga.');
+    fixture.detectChanges();
+    expect(banners()).toEqual(['banner banner--warning', 'banner banner--error']);
+
+    fixture.componentInstance.loading.set(true);
+    fixture.detectChanges();
+    expect(el.querySelector('.empty')?.textContent).toBe('Loading…');
+  });
+
   it('unsubscribes from the hub on destroy', () => {
     const fixture = setup();
     fixture.destroy();
@@ -476,7 +504,7 @@ describe('SagaDetail', () => {
       (el.querySelector('.retry-confirm') as HTMLButtonElement).click();
       fixture.detectChanges();
 
-      const timelineTab = el.querySelectorAll<HTMLButtonElement>('.tabs button')[1];
+      const timelineTab = el.querySelectorAll<HTMLButtonElement>('.subtabs button')[1];
       timelineTab.focus();
       response.next();
       fixture.detectChanges();
@@ -500,7 +528,7 @@ describe('SagaDetail', () => {
     it('leaves focus alone when the row goes while it was elsewhere', () => {
       const fixture = setup(makeDetail({ status: 'Failed' }));
       const el: HTMLElement = fixture.nativeElement;
-      const timelineTab = el.querySelectorAll<HTMLButtonElement>('.tabs button')[1];
+      const timelineTab = el.querySelectorAll<HTMLButtonElement>('.subtabs button')[1];
       timelineTab.focus();
 
       hubMock.sagaUpdated$.next({ ...fixture.componentInstance.detail()!.summary, status: 'Running' });
@@ -628,7 +656,7 @@ describe('SagaDetail', () => {
     const fixture = setup(makeDetail({ status: 'Completed' }), [], makeMap(), undefined, [], undefined, of(convertToParamMap({ tab: 'timeline' })));
     const el: HTMLElement = fixture.nativeElement;
 
-    const tabs = Array.from(el.querySelectorAll('.tabs button')).map((b) => b.textContent?.trim());
+    const tabs = Array.from(el.querySelectorAll('.subtabs button')).map((b) => b.textContent?.trim());
     expect(tabs).toEqual(['Map', 'Timeline']);
     expect(el.querySelector('.data-json')).toBeNull();
     expect(el.querySelector('app-saga-data-overview [role="group"][aria-label="Saga data"]')).not.toBeNull();

@@ -11,7 +11,7 @@
 } @else if (error(); as message) {
   <div class="banner banner--error">{{ message }}</div>
 } @else if (detail(); as d) {
-  <div class="summary-card">
+  <div class="card summary-card">
     <div class="summary-top">
       <div>
         <h1 #sagaHeading tabindex="-1">{{ d.summary.sagaType }}</h1>
@@ -141,7 +141,7 @@
     (viewChange)="setDataView($event)"
   />
 
-  <div class="tabs">
+  <div class="subtabs">
     <button type="button" [class.active]="tab() === 'map'" (click)="setTab('map')">Map</button>
     <button type="button" [class.active]="tab() === 'timeline'" (click)="setTab('timeline')">Timeline</button>
   </div>

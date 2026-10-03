@@ -52,12 +52,25 @@ button {
   cursor: pointer;
 }
 
+/* The keyboard focus ring everywhere; a component or `.btn` that needs another offset overrides it. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 code, .mono {
   font-family: var(--font-mono);
 }
 
 .muted {
   color: var(--text-muted);
+}
+
+/* Centred text where a list or a tab has nothing to show yet: "Loading…", "No events recorded yet." */
+.empty {
+  color: var(--text-muted);
+  padding: 2rem 0;
+  text-align: center;
 }
 
 /* A small caps label in front of a value: "Step 3", "Recorded at". */
@@ -108,8 +121,22 @@ code, .mono {
   outline-offset: 1px;
 }
 
+/* The destructive one, in the retry row's red: a delete or a reset that asks to be confirmed. */
+.btn--danger {
+  background: var(--status-failed);
+  border-color: var(--status-failed);
+  color: #fff;
+}
+
+.btn--danger:hover:not(:disabled) {
+  border-color: var(--status-failed);
+  color: #fff;
+  filter: brightness(1.1);
+}
+
 /* A message across the top of a page or a tab. The base carries the box; `--warning` is a degraded
-   but usable view (live updates down, stale content), `--error` a failure with nothing to show. */
+   but usable view (live updates down, stale content), `--error` a failure with nothing to show,
+   `--info` a neutral notice and `--success` a completed action. */
 .banner {
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--border);
@@ -130,8 +157,209 @@ code, .mono {
   border-color: rgba(242, 169, 59, 0.3);
 }
 
+.banner--info {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.banner--success {
+  background: rgba(53, 201, 140, 0.12);
+  color: var(--status-completed);
+  border-color: rgba(53, 201, 140, 0.3);
+}
+
 .banner .btn {
   margin-left: 0.5rem;
+}
+
+/* A labelled form control: the `.label` above it, an optional `.field-hint`, and an inline
+   `.field-error` below it. The control is a `.input`; `aria-invalid="true"` marks it red. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+}
+
+.label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--status-failed);
+}
+
+.input:disabled {
+  opacity: 0.6;
+}
+
+.field-hint,
+.field-error {
+  font-size: 0.82rem;
+}
+
+.field-hint {
+  color: var(--text-muted);
+}
+
+.field-error {
+  color: var(--status-failed);
+}
+
+/* The title row of a page: the heading, then a count or a button beside it. */
+.page-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+/* A row of filters and actions above a table. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+/* Tabs under a page's header, as buttons or links; the current one carries `.active`. */
+.subtabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
+
+.subtabs button,
+.subtabs a {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-bottom: 2px solid transparent;
+}
+
+.subtabs a:hover {
+  text-decoration: none;
+}
+
+.subtabs .active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* A bordered panel. `.auth-card` is the narrow, centred one that holds sign-in, setup and account. */
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.auth-card {
+  max-width: 26rem;
+  margin: 3rem auto;
+}
+
+/* A table of records. A row that links somewhere styles its own hover and cursor. */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.data-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table td {
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* A small pill next to a name: Built-in, Disabled, a permission. `--muted` is the outlined one,
+   `--danger` the red one. */
+.chip {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.chip--muted {
+  background: transparent;
+  border-color: var(--text-muted);
+  color: var(--text-muted);
+}
+
+.chip--danger {
+  background: rgba(239, 85, 102, 0.12);
+  border-color: rgba(239, 85, 102, 0.3);
+  color: var(--status-failed);
+}
+
+/* A pop-up list of links and buttons. The component that owns it positions it. */
+.menu {
+  min-width: 12rem;
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.menu a,
+.menu button {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.menu a:hover,
+.menu button:hover {
+  background: var(--bg-hover);
+  text-decoration: none;
 }
 
 /* Pretty-printed JSON: a saga's state or a message payload. Focusable where it scrolls. */
