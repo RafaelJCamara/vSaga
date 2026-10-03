@@ -13,6 +13,8 @@ import {
   SagaStatus,
   SagaSummary,
 } from '../../models/saga.model';
+import { AuthMock, AuthMockOptions, createAuthMock, provideAuthMock } from '../../testing/auth-mock';
+import { httpError, problem } from '../../testing/http-error';
 import { timedOutInvoice } from '../../testing/timeline-fixtures';
 import { timezoneLabel } from '../../util/time-format';
 import { SagaMap } from '../../components/saga-map/saga-map';
@@ -88,11 +90,15 @@ describe('SagaDetail', () => {
   let navigateSpy: ReturnType<typeof vi.spyOn>;
   /** What setup's /retry-plan answers; by default nothing, so the page shows no plan. */
   let retryPlanResponse: Observable<SagaRetryPlan> = EMPTY;
+  /** The session setup() signs in with: by default every permission for every saga type. */
+  let authOptions: AuthMockOptions = {};
+  let auth: AuthMock;
 
   // Only the tests that push use fake timers (the refresh waits REFRESH_AUDIT_MS); none may leak.
   afterEach(() => {
     vi.useRealTimers();
     retryPlanResponse = EMPTY;
+    authOptions = {};
   });
 
   function setup(
@@ -126,10 +132,12 @@ describe('SagaDetail', () => {
       unsubscribeFromSaga: vi.fn().mockResolvedValue(undefined),
     };
 
+    auth = createAuthMock(authOptions);
     TestBed.configureTestingModule({
       imports: [SagaDetail],
       providers: [
         provideRouter([]),
+        provideAuthMock(auth),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
         {
@@ -216,6 +224,7 @@ describe('SagaDetail', () => {
       imports: [SagaDetail],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
         { provide: ActivatedRoute, useValue: { paramMap: paramMap$, queryParamMap: of(convertToParamMap({})) } },
@@ -278,6 +287,7 @@ describe('SagaDetail', () => {
       imports: [SagaDetail],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
         {
@@ -386,7 +396,7 @@ describe('SagaDetail', () => {
 
   it('retry() surfaces the server error message on failure', () => {
     const fixture = setup(makeDetail({ status: 'Failed' }));
-    apiMock.retry.mockReturnValue(throwError(() => ({ error: { error: 'Saga cannot be retried' } })));
+    apiMock.retry.mockReturnValue(throwError(() => httpError(409, { error: 'Saga cannot be retried' })));
 
     fixture.componentInstance.retry();
 
@@ -1738,6 +1748,385 @@ describe('SagaDetail', () => {
       fixture.componentInstance.setTab('timeline');
       fixture.detectChanges();
       expect(el.querySelectorAll('.tl-step--failed-here').length).toBe(1);
+    });
+  });
+
+  // What the session lets the viewer do with the saga's type: the API enforces it, and the page follows
+  // the session so a viewer is not offered what the API would refuse.
+  describe('access by permission', () => {
+    const access = (permissions: string[], scoped: { sagaType: string; permissions: string[] }[] = []) => ({
+      permissions,
+      scoped,
+    });
+    const everything = access(['sagas.view', 'sagas.data', 'sagas.retry']);
+    const route = () => convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' });
+    const text = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+    const forbiddenBody = httpError(
+      403,
+      problem('forbidden', "This needs the sagas.view permission for saga type 'OrderSaga'. See docs/dashboard.md#authentication."),
+    );
+
+    describe('the retry row', () => {
+      it.each([
+        ['sagas.view alone', access(['sagas.view'])],
+        ['sagas.retry for another saga type only', access(['sagas.view'], [{ sagaType: 'ShippingSaga', permissions: ['sagas.retry'] }])],
+      ])('has no button and says why for a viewer with %s', (_, held) => {
+        authOptions = { access: held };
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(el.querySelector('.retry-row button')).toBeNull();
+        expect(text(el.querySelector('.retry-hint'))).toBe('You do not have permission to retry OrderSaga sagas.');
+      });
+
+      it('gives the button, and no hint, to a viewer holding sagas.retry for this saga type only', () => {
+        authOptions = { access: access(['sagas.view'], [{ sagaType: 'OrderSaga', permissions: ['sagas.view', 'sagas.retry'] }]) };
+        const fixture = setup(makeDetail({ status: 'TimedOut' }));
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(text(el.querySelector('.retry-row button'))).toBe('Retry this saga');
+        expect(el.querySelector('.retry-hint')).toBeNull();
+      });
+
+      it('says nothing about retrying a saga that cannot be retried anyway', () => {
+        authOptions = { access: access(['sagas.view']) };
+        const fixture = setup(makeDetail({ status: 'Completed' }));
+
+        expect(fixture.nativeElement.querySelector('.retry-row')).toBeNull();
+      });
+
+      it('follows the session: the button goes when sagas.retry is revoked and comes back when it is granted', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        const el: HTMLElement = fixture.nativeElement;
+        expect(el.querySelector('.retry-row button')).not.toBeNull();
+
+        auth.access.set(access(['sagas.view']));
+        fixture.detectChanges();
+        expect(el.querySelector('.retry-row button')).toBeNull();
+        expect(el.querySelector('.retry-hint')).not.toBeNull();
+
+        auth.access.set(everything);
+        fixture.detectChanges();
+        expect(el.querySelector('.retry-row button')).not.toBeNull();
+        expect(el.querySelector('.retry-hint')).toBeNull();
+      });
+
+      it('shows the problem detail of a 403 from the retry, and the API text of any other refusal', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        const detail = "This needs the sagas.retry permission for saga type 'OrderSaga'. See docs/dashboard.md#authentication.";
+        apiMock.retry.mockReturnValue(throwError(() => httpError(403, problem('forbidden', detail))));
+
+        fixture.componentInstance.retry();
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.retryMessage()).toBe(detail);
+        expect(text(fixture.nativeElement.querySelector('.retry-message'))).toBe(detail);
+
+        apiMock.retry.mockReturnValue(throwError(() => httpError(422, { error: 'The step cannot be replayed.' })));
+        fixture.componentInstance.retry();
+        expect(fixture.componentInstance.retryMessage()).toBe('The step cannot be replayed.');
+
+        apiMock.retry.mockReturnValue(throwError(() => httpError(502, '<html>Bad gateway</html>')));
+        fixture.componentInstance.retry();
+        expect(fixture.componentInstance.retryMessage()).toBe('Retry failed.');
+      });
+    });
+
+    describe('the retry plan', () => {
+      const plan: SagaRetryPlan = {
+        retryable: true,
+        reason: null,
+        failureKind: 'StepFailed',
+        failureSequenceNumber: 3,
+        step: { sequenceNumber: 1, messageType: 'OrderSubmitted', messageId: 'm0', fromState: 'Initial' },
+      };
+
+      it('is asked for with sagas.view alone, and still marks the failed step', () => {
+        authOptions = { access: access(['sagas.view']) };
+        retryPlanResponse = of(plan);
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+
+        expect(apiMock.getRetryPlan).toHaveBeenCalledWith('OrderSaga', 'saga-1');
+        expect(fixture.componentInstance.failureSequence()).toBe(3);
+        expect(fixture.nativeElement.querySelector('.retry-row button')).toBeNull();
+      });
+
+      it('is not asked for without sagas.view, and is when the session gains it', () => {
+        authOptions = { access: access([]) };
+        retryPlanResponse = of(plan);
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        expect(apiMock.getRetryPlan).not.toHaveBeenCalled();
+        expect(fixture.componentInstance.retryPlan()).toBeNull();
+
+        auth.access.set(access(['sagas.view']));
+        fixture.detectChanges();
+
+        expect(apiMock.getRetryPlan).toHaveBeenCalledTimes(1);
+        expect(fixture.componentInstance.retryPlan()).toEqual(plan);
+      });
+    });
+
+    describe('a forbidden saga', () => {
+      /** The page as the API answers a viewer without sagas.view: 403 to the detail, the timeline and the map. */
+      function setupForbidden(): ReturnType<typeof setup> {
+        const paramMap$ = new Subject<ParamMap>();
+        const fixture = setup(makeDetail(), [], makeMap(), undefined, [], paramMap$);
+        apiMock.get.mockReturnValue(throwError(() => forbiddenBody));
+        apiMock.getTimeline.mockReturnValue(throwError(() => forbiddenBody));
+        apiMock.getMap.mockReturnValue(throwError(() => forbiddenBody));
+        paramMap$.next(route());
+        fixture.detectChanges();
+        return fixture;
+      }
+
+      it('shows the no-access text and the way back, with no error banner', () => {
+        const fixture = setupForbidden();
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+        expect(fixture.componentInstance.error()).toBeNull();
+        expect(fixture.componentInstance.loading()).toBe(false);
+        expect(text(el.querySelector('.empty'))).toBe(
+          'You do not have access to OrderSaga sagas. Ask an administrator for sagas.view on this saga type.',
+        );
+        expect(el.querySelector('[class*="banner--error"]')).toBeNull();
+        expect(el.querySelector('.summary-card')).toBeNull();
+        expect(el.querySelector('a.back')?.getAttribute('href')).toBe('/sagas');
+      });
+
+      it('is not a load error: any other failure still shows the banner', () => {
+        const paramMap$ = new Subject<ParamMap>();
+        const fixture = setup(makeDetail(), [], makeMap(), undefined, [], paramMap$);
+        apiMock.get.mockReturnValue(throwError(() => httpError(404, null)));
+        paramMap$.next(route());
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.forbidden()).toBe(false);
+        expect(fixture.componentInstance.error()).toContain('Could not load');
+        expect(fixture.nativeElement.querySelector('.banner--error')).not.toBeNull();
+      });
+
+      it('reloads nothing when live updates reconnect', () => {
+        vi.useFakeTimers();
+        const fixture = setupForbidden();
+        const calls = () => [apiMock.get, apiMock.getTimeline, apiMock.getMap].map((m) => m.mock.calls.length);
+        expect(calls()).toEqual([1, 1, 1]);
+        expect(fixture.componentInstance.timelineError()).toBe(true);
+
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+
+        expect(calls()).toEqual([1, 1, 1]);
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+      });
+
+      it('refreshes nothing on a push either', () => {
+        vi.useFakeTimers();
+        const fixture = setupForbidden();
+
+        hubMock.timelineEntryAdded$.next({ sagaType: 'OrderSaga', correlationId: 'saga-1', entry: makeEntry() });
+        vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
+        expect(apiMock.getTimeline).toHaveBeenCalledTimes(1);
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+      });
+
+      it('asks for the detail alone when the session already holds no sagas.view, and loads the rest if the API lets it in', () => {
+        authOptions = { access: access([]) };
+        const paramMap$ = new Subject<ParamMap>();
+        const detail$ = new Subject<SagaDetailModel>();
+        const fixture = setup(makeDetail(), [makeEntry()], makeMap(), undefined, [], paramMap$);
+        apiMock.get.mockReturnValue(detail$);
+        const parts = () => [apiMock.getTimeline, apiMock.getMap, apiMock.findByCorrelationId, apiMock.getChildren].map((m) => m.mock.calls.length);
+
+        paramMap$.next(route());
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
+        expect(parts()).toEqual([0, 0, 0, 0]);
+
+        detail$.next(makeDetail({ status: 'Completed' }));
+        expect(parts()).toEqual([1, 1, 1, 1]);
+        expect(fixture.componentInstance.detail()?.summary.status).toBe('Completed');
+        expect(fixture.componentInstance.forbidden()).toBe(false);
+      });
+
+      it('asks again when the session gains sagas.view', () => {
+        authOptions = { access: access([]) };
+        const paramMap$ = new Subject<ParamMap>();
+        const fixture = setup(makeDetail(), [], makeMap(), undefined, [], paramMap$);
+        apiMock.get.mockReturnValue(throwError(() => forbiddenBody));
+        paramMap$.next(route());
+        fixture.detectChanges();
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
+
+        apiMock.get.mockReturnValue(of(makeDetail({ status: 'Completed' })));
+        auth.access.set(access(['sagas.view']));
+        fixture.detectChanges();
+
+        expect(apiMock.get).toHaveBeenCalledTimes(2);
+        expect(fixture.componentInstance.forbidden()).toBe(false);
+        expect(fixture.nativeElement.querySelector('.summary-card')).not.toBeNull();
+      });
+
+      it('asks once for a 403 that is already there when the page first renders', () => {
+        apiMock = {
+          get: vi.fn().mockReturnValue(throwError(() => forbiddenBody)),
+          getTimeline: vi.fn().mockReturnValue(throwError(() => forbiddenBody)),
+          getMap: vi.fn().mockReturnValue(throwError(() => forbiddenBody)),
+          retry: vi.fn(),
+          getRetryPlan: vi.fn().mockReturnValue(EMPTY),
+          findByCorrelationId: vi.fn().mockReturnValue(of([])),
+          getChildren: vi.fn().mockReturnValue(of([])),
+        };
+        hubMock = {
+          sagaUpdated$: new Subject<SagaSummary>(),
+          timelineEntryAdded$: new Subject<{ sagaType: string; correlationId: string; entry: SagaLogEntry }>(),
+          connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
+          subscribeToSaga: vi.fn().mockResolvedValue(undefined),
+          unsubscribeFromSaga: vi.fn().mockResolvedValue(undefined),
+        };
+        TestBed.configureTestingModule({
+          imports: [SagaDetail],
+          providers: [
+            provideRouter([]),
+            provideAuthMock(),
+            { provide: SagaApiService, useValue: apiMock },
+            { provide: SagaHubService, useValue: hubMock },
+            { provide: ActivatedRoute, useValue: { paramMap: of(route()), queryParamMap: of(convertToParamMap({})) } },
+          ],
+        });
+        const fixture = TestBed.createComponent(SagaDetail);
+
+        fixture.detectChanges();
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not ask again for a 403 the session cannot explain', () => {
+        const fixture = setupForbidden();
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
+
+        // The session already held sagas.view; refreshing it with the same answer changes nothing.
+        auth.access.set(access(['sagas.view', 'sagas.data']));
+        fixture.detectChanges();
+
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+      });
+
+      it('shows the no-access state when a live refresh finds that sagas.view is gone', () => {
+        vi.useFakeTimers();
+        const fixture = setup(makeDetail({ status: 'Running' }));
+        expect(fixture.nativeElement.querySelector('.summary-card')).not.toBeNull();
+        apiMock.get.mockReturnValue(throwError(() => forbiddenBody));
+
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+        expect(fixture.nativeElement.querySelector('.summary-card')).toBeNull();
+        expect(text(fixture.nativeElement.querySelector('.empty'))).toContain('You do not have access to OrderSaga sagas.');
+      });
+    });
+
+    describe('"Started by"', () => {
+      const startedBy = () => makeDetail({ parentSagaType: 'ParentSaga', parentCorrelationId: 'parent-1' });
+      const startedByRow = (el: HTMLElement) =>
+        Array.from(el.querySelectorAll('.related')).find((r) => text(r.querySelector('.related-label')) === 'Started by');
+
+      it('links to a parent whose type the viewer may see', () => {
+        const fixture = setup(startedBy());
+        const row = startedByRow(fixture.nativeElement)!;
+
+        expect(row.querySelector('a.related-link')?.getAttribute('href')).toBe('/sagas/ParentSaga/parent-1');
+        expect(row.textContent).not.toContain('(no access)');
+      });
+
+      it('names the parent as plain text, marked "(no access)", when its type is out of the viewer\'s reach', () => {
+        authOptions = { access: access([], [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }]) };
+        const fixture = setup(startedBy());
+        const row = startedByRow(fixture.nativeElement)!;
+
+        expect(row.querySelector('a')).toBeNull();
+        expect(text(row.querySelector('.related-links'))).toBe('ParentSaga parent-1 (no access)');
+      });
+
+      it('follows the session when sagas.view for the parent type is granted', () => {
+        authOptions = { access: access([], [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }]) };
+        const fixture = setup(startedBy());
+
+        auth.access.set(access([], [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }, { sagaType: 'ParentSaga', permissions: ['sagas.view'] }]));
+        fixture.detectChanges();
+
+        expect(startedByRow(fixture.nativeElement)?.querySelector('a.related-link')).not.toBeNull();
+      });
+    });
+
+    describe('saga data', () => {
+      const dataButtons = (el: HTMLElement) => Array.from(el.querySelectorAll<HTMLButtonElement>('.ov-bar button'));
+      /** What the API sends a viewer who holds sagas.data; a stale session must still not print it. */
+      const withError = [
+        makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageId: 'm0', payloadJson: '{"Total":10}' }),
+        makeEntry({ sequenceNumber: 2, entryType: 'StepFailed', messageId: 'm0', errorMessage: 'card declined' }),
+      ];
+
+      it('disables the data buttons beside the sentence naming the permission, and opens no view', () => {
+        authOptions = { access: access(['sagas.view', 'sagas.retry']) };
+        const detail = { ...makeDetail({ status: 'Completed' }), dataJson: '{"Total":10}' };
+        const fixture = setup(detail, [], makeMap(), undefined, [], undefined, of(convertToParamMap({ data: 'end' })));
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(dataButtons(el).map((b) => b.disabled)).toEqual([true, true, true]);
+        expect(text(el.querySelector('.ov-bar .muted'))).toBe('Saga data is hidden for your role. It needs the sagas.data permission.');
+        expect(el.querySelector('.ov-panel')).toBeNull();
+      });
+
+      it('enables them for a viewer holding sagas.data for this saga type', () => {
+        authOptions = { access: access(['sagas.view'], [{ sagaType: 'OrderSaga', permissions: ['sagas.view', 'sagas.data'] }]) };
+        const fixture = setup(makeDetail({ status: 'Completed' }), [makeEntry()]);
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(dataButtons(el).filter((b) => b.textContent?.trim() !== 'Compare').map((b) => b.disabled)).toEqual([false, false]);
+        expect(el.querySelector('.ov-bar .muted')).toBeNull();
+      });
+
+      it('shows timeline rows without error text, and no data toggle, for a viewer without sagas.data', () => {
+        authOptions = { access: access(['sagas.view']) };
+        const fixture = setup(makeDetail({ status: 'Failed' }), withError, makeMap(), undefined, [], undefined, of(convertToParamMap({ tab: 'timeline' })));
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(el.querySelectorAll('.tl-row').length).toBe(2);
+        expect(el.querySelector('.tl-error')).toBeNull();
+        expect(el.textContent).not.toContain('card declined');
+        expect(el.querySelector('.tl-data')).toBeNull();
+      });
+
+      it('shows the error text and the data toggles with sagas.data', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }), withError, makeMap(), undefined, [], undefined, of(convertToParamMap({ tab: 'timeline' })));
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(text(el.querySelector('.tl-error'))).toBe('card declined');
+        expect(el.querySelector('.tl-data')).not.toBeNull();
+      });
+
+      it('follows the session when sagas.data is revoked', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }), withError, makeMap(), undefined, [], undefined, of(convertToParamMap({ tab: 'timeline' })));
+        const el: HTMLElement = fixture.nativeElement;
+        expect(el.querySelector('.tl-error')).not.toBeNull();
+
+        auth.access.set(access(['sagas.view', 'sagas.retry']));
+        fixture.detectChanges();
+
+        expect(el.querySelector('.tl-error')).toBeNull();
+        expect(el.querySelector('.tl-data')).toBeNull();
+        expect(dataButtons(el).every((b) => b.disabled)).toBe(true);
+      });
     });
   });
 });

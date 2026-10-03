@@ -86,6 +86,13 @@
   border-color: var(--accent);
 }
 
+/* A parent the viewer cannot open: the same words as the link, with none of its box. */
+.related-plain {
+  display: inline-block;
+  padding: 0.35rem 0;
+  font-size: 0.82rem;
+}
+
 .related-type {
   font-weight: 600;
 }
@@ -138,7 +145,8 @@
 
 .retry-message,
 .retry-audience,
-.retry-refusal {
+.retry-refusal,
+.retry-hint {
   font-size: 0.82rem;
   color: var(--text-muted);
 }

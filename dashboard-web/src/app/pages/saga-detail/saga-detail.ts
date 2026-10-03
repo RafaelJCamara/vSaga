@@ -14,6 +14,7 @@ import {
 } from '@angular/core';
 import { ActivatedRoute, ParamMap, Router, RouterLink } from '@angular/router';
 import { Subject, Subscription, auditTime } from 'rxjs';
+import { AuthService } from '../../services/auth.service';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import {
@@ -30,6 +31,7 @@ import { SagaMap } from '../../components/saga-map/saga-map';
 import { LocalTime } from '../../components/local-time/local-time';
 import { SagaTimeline } from '../../components/saga-timeline/saga-timeline';
 import { DATA_VIEWS, DataView, SagaDataOverview } from '../../components/saga-data-overview/saga-data-overview';
+import { problemOf } from '../../util/http-error';
 import { PENDING_SNAPSHOT_MS, SagaHistory, foldTimeline, stepContaining } from '../../util/saga-transitions';
 import { timezoneLabel, toMillis } from '../../util/time-format';
 
@@ -102,7 +104,15 @@ function awaitsSnapshot(history: SagaHistory, nowMs: number): boolean {
 })
 export class SagaDetail implements OnInit, OnDestroy {
   correlationId = '';
-  sagaType = '';
+  /** The routed saga type, kept in a signal behind a plain property so the permission checks below
+   *  follow a route reuse (a sibling or sub-saga link keeps this instance and changes the type). */
+  private readonly sagaTypeState = signal('');
+  get sagaType(): string {
+    return this.sagaTypeState();
+  }
+  set sagaType(value: string) {
+    this.sagaTypeState.set(value);
+  }
 
   readonly detail = signal<SagaDetailModel | null>(null);
   readonly timeline = signal<SagaLogEntry[]>([]);
@@ -120,6 +130,13 @@ export class SagaDetail implements OnInit, OnDestroy {
   readonly children = signal<SagaSummary[]>([]);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
+  /** The API answered 403 for this saga: the viewer holds no `sagas.view` for its type. Not an error
+   *  (no banner, and a reconnect or a push asks for nothing); it ends when the session gains the permission. */
+  readonly forbidden = signal(false);
+  /** What the session lets the viewer do with this saga's type. Computed from the auth service, so a
+   *  refreshed session (after a 403, or when the tab is shown again) changes the page without a reload. */
+  readonly canView = computed(() => this.auth.can('sagas.view', this.sagaType));
+  readonly canRetry = computed(() => this.auth.can('sagas.retry', this.sagaType));
   readonly tab = signal<Tab>('map');
   /** The timeline entry the page is focused on (`?entry=`): the map shows the saga as of it and the
    *  timeline highlights its row. */
@@ -130,8 +147,14 @@ export class SagaDetail implements OnInit, OnDestroy {
    *  view goes while the map tab shows, so an inspector stays open across a jump to the map and
    *  back and across refreshes (step keys are sequence numbers); a saga change closes them all. */
   readonly openKeys = signal<ReadonlySet<number>>(new Set());
-  /** Whether the viewer may see saga data. Always true until the permission wiring lands. */
-  readonly canViewData = true;
+  /** Whether the viewer may see saga data (`sagas.data` for this type): the data bar and the timeline
+   *  take it as their `canViewData` input. The API redacts payloads, state and error text either way. */
+  readonly canViewData = computed(() => this.auth.can('sagas.data', this.sagaType));
+  /** Whether the viewer may follow the "Started by" link: the parent is a saga of another type. */
+  readonly canViewParent = computed(() => {
+    const parentType = this.detail()?.summary.parentSagaType;
+    return !!parentType && this.auth.can('sagas.view', parentType);
+  });
   readonly retrying = signal(false);
   readonly retryMessage = signal<string | null>(null);
   /** Retry re-drives a real saga against real participants, so the button asks before it fires. */
@@ -192,8 +215,11 @@ export class SagaDetail implements OnInit, OnDestroy {
     return `Other services that consume ${type ?? 'that message'} still receive it.`;
   });
 
-  /** Whether the summary card shows the retry row: only a Failed or TimedOut saga can be retried. */
-  private readonly retryShown = computed(() => isRetryable(this.detail()?.summary.status));
+  /** Whether the saga is in a status a retry accepts: only a Failed or TimedOut one. */
+  readonly retryable = computed(() => isRetryable(this.detail()?.summary.status));
+  /** Whether the summary card shows the retry row: a retryable saga, to a viewer holding `sagas.retry`
+   *  for its type (the others read why they cannot instead). */
+  readonly retryShown = computed(() => this.retryable() && this.canRetry());
   /** Where focus goes when the retry row swaps or drops the element that had it (see moveFocus). */
   private readonly retryRow = viewChild<ElementRef<HTMLElement>>('retryRow');
   private readonly retryButton = viewChild<ElementRef<HTMLElement>>('retryButton');
@@ -222,6 +248,7 @@ export class SagaDetail implements OnInit, OnDestroy {
     private readonly router: Router,
     private readonly api: SagaApiService,
     private readonly hub: SagaHubService,
+    private readonly auth: AuthService,
     private readonly injector: Injector,
   ) {
     // A retried saga runs again, and its status hides the retry row with the focused button in it.
@@ -230,6 +257,23 @@ export class SagaDetail implements OnInit, OnDestroy {
       if (this.retryShown()) return;
       const row = untracked(this.retryRow)?.nativeElement;
       if (row?.contains(document.activeElement)) this.moveFocus(false, this.sagaHeading);
+    });
+
+    // The session gained `sagas.view` for this type while the page was open (the interceptor refreshes it
+    // after a 403, and it is read again when the tab is shown): a page that was forbidden asks again, and
+    // a Failed saga loaded under a session that could not yet see it gets its retry plan. Only a gain
+    // counts, so the effect's first run changes nothing. Losing the permission needs no code here: every
+    // refresh asks the API again, and its 403 forbids the page.
+    let couldView = this.canView();
+    effect(() => {
+      const mayView = this.canView();
+      const gained = mayView && !couldView;
+      couldView = mayView;
+      if (!gained) return;
+      untracked(() => {
+        if (this.forbidden()) this.load();
+        else if (!this.loading()) this.syncRetryPlan();
+      });
     });
   }
 
@@ -323,6 +367,7 @@ export class SagaDetail implements OnInit, OnDestroy {
   load(): void {
     this.loading.set(true);
     this.error.set(null);
+    this.forbidden.set(false);
 
     // Captured now, at the moment this call is fired — compared against the live fields when the
     // response arrives, below. Angular reuses this component instance across same-route-config
@@ -332,20 +377,31 @@ export class SagaDetail implements OnInit, OnDestroy {
     const sagaType = this.sagaType;
     const correlationId = this.correlationId;
 
+    // A session without `sagas.view` for this type asks for the detail alone: the API decides, and
+    // answers 403 (or, for a session that is out of date, 200, and then the rest is loaded).
+    const sessionMayView = this.canView();
+
     this.api.get(sagaType, correlationId).subscribe({
       next: (detail) => {
         if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
         this.detail.set(detail);
         this.loading.set(false);
         this.syncRetryPlan();
+        if (!sessionMayView) this.loadParts();
       },
-      error: () => {
+      error: (err) => {
         if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
-        this.error.set('Could not load this saga. It may not exist.');
         this.loading.set(false);
+        if (problemOf(err, '').status === 403) this.forbidden.set(true);
+        else this.error.set('Could not load this saga. It may not exist.');
       },
     });
 
+    if (sessionMayView) this.loadParts();
+  }
+
+  /** The timeline, the map and both relation strips: what a saga's page holds beside its detail. */
+  private loadParts(): void {
     this.loadTimeline();
     this.loadMap();
     this.loadRelated();
@@ -358,6 +414,8 @@ export class SagaDetail implements OnInit, OnDestroy {
    * reconnect, and only such a refresh may schedule the snapshot follow-up.
    */
   private refresh(): void {
+    // A forbidden page has nothing to refresh: the answer would be the same 403, whatever asked.
+    if (this.forbidden()) return;
     this.refreshDetail();
     this.loadTimeline(() => this.scheduleSnapshotFollowUp());
     this.loadMap();
@@ -369,7 +427,8 @@ export class SagaDetail implements OnInit, OnDestroy {
    * Re-reads the detail behind a live refresh. Unlike load() it never shows "Loading…", and a
    * failure keeps what is shown. Two refreshes can cross, and a push may already have patched in a
    * newer summary, so the detail with the higher version wins; on a tie the response does, since it
-   * also carries the stored data.
+   * also carries the stored data. A 403 is the one failure that is shown: the viewer lost `sagas.view`
+   * (the hub closes their connection when access changes, so the reconnect's refresh finds out).
    */
   private refreshDetail(): void {
     const sagaType = this.sagaType;
@@ -382,18 +441,23 @@ export class SagaDetail implements OnInit, OnDestroy {
         );
         this.syncRetryPlan();
       },
-      error: () => undefined,
+      error: (err) => {
+        if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
+        if (problemOf(err, '').status === 403) this.forbidden.set(true);
+      },
     });
   }
 
   /**
    * Keeps the retry plan in step with the summary shown: asked for once per status and version of a
-   * Failed or TimedOut saga (a retry that fails again moves both), dropped for any other status. A
-   * plan already shown stays until the new one arrives.
+   * Failed or TimedOut saga (a retry that fails again moves both), dropped for any other status or a
+   * session without `sagas.view` for the type (the plan needs that and no more: it marks the failed
+   * step for every viewer, while only `sagas.retry` shows the button). A plan already shown stays until
+   * the new one arrives.
    */
   private syncRetryPlan(): void {
     const summary = this.detail()?.summary;
-    if (!summary || !isRetryable(summary.status)) {
+    if (!summary || !isRetryable(summary.status) || !this.canView()) {
       this.retryPlanRequest++;
       this.retryPlanFor = null;
       this.retryPlan.set(null);
@@ -658,7 +722,8 @@ export class SagaDetail implements OnInit, OnDestroy {
     };
     this.api.retry(this.sagaType, this.correlationId).subscribe({
       next: () => settle('Retry accepted — redriving the failed step.'),
-      error: (err) => settle(err?.error?.error ?? 'Retry failed.'),
+      // The API's own words: a 409 and a 422 say why the saga cannot be retried, a 403 which permission is missing.
+      error: (err) => settle(problemOf(err, 'Retry failed.').message),
     });
   }
 

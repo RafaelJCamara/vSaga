@@ -1,13 +1,15 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, effect, signal, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Subject, Subscription, debounceTime } from 'rxjs';
+import { AuthService } from '../../services/auth.service';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import { SagaKind, SagaSortColumn, SagaStatus, SagaSummary, SagaTypeInfo } from '../../models/saga.model';
 import { KindBadge } from '../../components/kind-badge/kind-badge';
 import { StatusBadge } from '../../components/status-badge/status-badge';
+import { problemOf } from '../../util/http-error';
 
 const STATUSES: SagaStatus[] = ['Running', 'Completed', 'Failed', 'Compensating', 'Compensated', 'TimedOut', 'Cancelled'];
 const KINDS: SagaKind[] = ['Orchestrated', 'Choreographed'];
@@ -15,6 +17,21 @@ const PAGE_SIZES = [25, 50, 75, 100];
 const SEARCH_DEBOUNCE_MS = 300;
 
 type SortDirection = 'asc' | 'desc';
+
+const UNREACHABLE = 'Could not reach the vSaga Dashboard API. Is it running?';
+const FORBIDDEN = 'You do not have access to these sagas.';
+/** What a 400 says when its body carries no text of its own: for a `maxPage` of 0, and for any other. */
+const TOO_MANY_TYPES = 'Too many saga types are visible to list them together. Choose a saga type with the filter.';
+const REFUSED = 'The API could not list sagas for these filters.';
+
+/**
+ * The `maxPage` of the scoped list's 400 body, `{ error, maxPage }`: the last page the request's shape can
+ * reach (0 when none can). Null when the body carries none (the Redis scan limit's 400 has no such member).
+ */
+function maxPageOf(err: unknown): number | null {
+  const value = (err as { error?: { maxPage?: unknown } } | null)?.error?.maxPage;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
 
 @Component({
   selector: 'app-saga-list',
@@ -40,8 +57,18 @@ export class SagaList implements OnInit, OnDestroy {
   readonly pageSizes = PAGE_SIZES;
   pageSize = PAGE_SIZES[0];
   readonly page = signal(1);
-  readonly hasNextPage = computed(() => this.page() * this.pageSize < this.totalCount());
-  readonly totalPages = computed(() => Math.max(1, Math.ceil(this.totalCount() / this.pageSize)));
+  /** The last page the API said this request can reach (a 400's `maxPage`), until a filter, a sort or the
+   *  page size changes the request: the pager does not offer a page past it. */
+  private readonly pageCap = signal<number | null>(null);
+  readonly totalPages = computed(() =>
+    Math.max(1, Math.min(Math.ceil(this.totalCount() / this.pageSize), this.pageCap() ?? Infinity)),
+  );
+  readonly hasNextPage = computed(() => this.page() < this.totalPages());
+  /** The page the rows on screen belong to: where a rejected request returns to. Null before the first answer. */
+  private lastGoodPage: number | null = null;
+  /** Whether the banner's failure may pass when the hub reconnects (an API that could not be reached);
+   *  a 403 or a 400 would answer the same again. */
+  private errorIsTransient = false;
 
   pageJump: number | null = null;
 
@@ -60,17 +87,55 @@ export class SagaList implements OnInit, OnDestroy {
   private subs: Subscription[] = [];
   private readonly searchChange$ = new Subject<void>();
 
+  /** Whether the session may list sagas at all (`sagas.view` for some type, or for every one). A computed
+   *  signal: a session refreshed while the page is open shows or removes the list without a reload. */
+  readonly hasAccess = computed(() => this.auth.canAny('sagas.view'));
+  private started = false;
+  /** Set while a list that had started is shown without access; regaining it reads the list again. */
+  private accessLost = false;
+
   constructor(
     private readonly api: SagaApiService,
     private readonly hub: SagaHubService,
+    private readonly auth: AuthService,
     private readonly route: ActivatedRoute,
     private readonly router: Router,
-  ) {}
+  ) {
+    // The session can change under an open list (the interceptor refreshes it after a 403, and it is read
+    // again when the tab is shown): a list opened without access starts when it gains it, and one that
+    // lost it reads again when it comes back, so it never shows rows from before.
+    effect(() => {
+      const allowed = this.hasAccess();
+      untracked(() => {
+        if (!allowed) this.accessLost = this.started;
+        else if (this.accessLost) {
+          this.accessLost = false;
+          this.refresh();
+        } else this.start();
+      });
+    });
+  }
 
   ngOnInit(): void {
     this.readFiltersFromUrl();
+    this.subs.push(this.searchChange$.pipe(debounceTime(SEARCH_DEBOUNCE_MS)).subscribe(() => this.onFilterChange()));
+    this.start();
+  }
 
-    this.api.getSagaTypes().subscribe((types) => this.sagaTypes.set(types));
+  /**
+   * The list's requests and its hub subscription, once and only for a session that may see sagas: without
+   * access there is nothing to ask for (every call would answer 403), so none is made and the page says so.
+   */
+  private start(): void {
+    if (this.started) return;
+    if (!this.hasAccess()) {
+      this.loading.set(false);
+      return;
+    }
+    this.started = true;
+
+    // The types only fill the filter: without them the select offers "All saga types" alone.
+    this.api.getSagaTypes().subscribe({ next: (types) => this.sagaTypes.set(types), error: () => undefined });
     this.refresh();
 
     void this.hub.subscribeToList();
@@ -80,7 +145,7 @@ export class SagaList implements OnInit, OnDestroy {
         // Captured before the error signal is touched by anything below -- a reconnect after an
         // ordinary first-ever connect (error() still null, nothing has failed yet) must not trigger
         // a redundant extra refresh() on top of the one ngOnInit already fired.
-        const hadError = this.error() !== null;
+        const hadError = this.error() !== null && this.errorIsTransient;
         this.connectionState.set(s);
         if (s === 'connected') {
           this.hasEverConnected.set(true);
@@ -91,7 +156,6 @@ export class SagaList implements OnInit, OnDestroy {
           if (hadError) this.refresh();
         }
       }),
-      this.searchChange$.pipe(debounceTime(SEARCH_DEBOUNCE_MS)).subscribe(() => this.onFilterChange()),
     );
   }
 
@@ -151,6 +215,7 @@ export class SagaList implements OnInit, OnDestroy {
    * the new filter, and showing a stale page's rows under a changed filter would be misleading. */
   onFilterChange(): void {
     this.page.set(1);
+    this.pageCap.set(null);
     this.refresh();
     this.syncUrlFromFilters();
   }
@@ -203,22 +268,26 @@ export class SagaList implements OnInit, OnDestroy {
       this.sortDirection.set('asc');
     }
     this.page.set(1);
+    this.pageCap.set(null);
     this.refresh();
     this.syncUrlFromFilters();
   }
 
-  refresh(): void {
+  /** `notice` is the message a rejected request left behind, kept on show while the page it sent the list to loads. */
+  refresh(notice: string | null = null): void {
     this.loading.set(true);
-    this.error.set(null);
+    this.error.set(notice);
+    this.errorIsTransient = false;
     this.newSagasAvailable.set(0);
 
+    const requestedPage = this.page();
     this.api
       .list({
         status: this.status || undefined,
         kind: this.kind || undefined,
         sagaType: this.sagaType || undefined,
         search: this.search || undefined,
-        page: this.page(),
+        page: requestedPage,
         pageSize: this.pageSize,
         sortBy: this.sortColumn() ?? undefined,
         sortDescending: this.sortColumn() ? this.sortDirection() === 'desc' : undefined,
@@ -228,6 +297,7 @@ export class SagaList implements OnInit, OnDestroy {
           this.sagas.set(result.items);
           this.totalCount.set(result.totalCount);
           this.loading.set(false);
+          this.lastGoodPage = requestedPage;
 
           // A shared/bookmarked link's page number (restored in readFiltersFromUrl) can be stale by
           // the time it's opened, if the result set has since shrunk -- totalPages() only becomes
@@ -240,11 +310,57 @@ export class SagaList implements OnInit, OnDestroy {
             this.refresh();
           }
         },
-        error: () => {
-          this.error.set('Could not reach the vSaga Dashboard API. Is it running?');
-          this.loading.set(false);
-        },
+        error: (err) => this.onListRejected(err, requestedPage),
       });
+  }
+
+  /**
+   * What a failed list request says. A 403 means the session holds no `sagas.view` (the interceptor
+   * refreshes it, and the page then shows its no-access state); a 400 is the API refusing this request,
+   * in its own words; anything else is an API that could not be reached, which clears when live updates
+   * come back.
+   */
+  private onListRejected(err: unknown, requestedPage: number): void {
+    const maxPage = maxPageOf(err);
+    const problem = problemOf(err, maxPage === 0 ? TOO_MANY_TYPES : REFUSED);
+    this.loading.set(false);
+
+    if (problem.status === 403) {
+      this.sagas.set([]);
+      this.totalCount.set(0);
+      this.error.set(FORBIDDEN);
+    } else if (problem.status === 400) {
+      this.onListRefused(problem.message, maxPage, requestedPage);
+    } else {
+      this.error.set(UNREACHABLE);
+      this.errorIsTransient = true;
+    }
+  }
+
+  /**
+   * A 400: the request cannot be served as asked. The rows on screen are still the last good page's, so the
+   * page goes back to it (never to 0). The scoped list's body names the last page its shape can reach
+   * (`maxPage`): when that is below the page asked for, the list goes there instead and the pager stops
+   * offering pages beyond it. A `maxPage` of 0 says no page of this request can be served at all (too many
+   * visible saga types): the rows go too, the message asks for a saga type filter, and the page is 1 again.
+   */
+  private onListRefused(message: string, maxPage: number | null, requestedPage: number): void {
+    this.error.set(message);
+
+    if (maxPage === 0) {
+      this.sagas.set([]);
+      this.totalCount.set(0);
+      this.page.set(1);
+      this.pageCap.set(null);
+      this.lastGoodPage = null;
+    } else if (maxPage !== null && maxPage < requestedPage) {
+      this.pageCap.set(maxPage);
+      this.page.set(maxPage);
+      if (this.lastGoodPage !== maxPage) this.refresh(message);
+    } else {
+      this.page.set(this.lastGoodPage ?? 1);
+    }
+    this.syncUrlFromFilters();
   }
 
   private upsert(summary: SagaSummary): void {

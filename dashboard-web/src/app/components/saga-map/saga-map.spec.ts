@@ -157,6 +157,20 @@ describe('SagaMap', () => {
     expect(el.querySelector('.error-card')?.textContent).toContain('boom');
   });
 
+  // A viewer without sagas.data gets the failure entry with its error message nulled: the card still
+  // names the entry, with no text under it.
+  it('renders the error card without a message when the API withheld the error text', () => {
+    const map = makeMap();
+    map.events = map.events.map((e) => ({ ...e, errorMessage: null }));
+    const fixture = createComponent(map);
+    fixture.componentInstance.scrubTo(2);
+    fixture.detectChanges();
+
+    const card = (fixture.nativeElement as HTMLElement).querySelector('.error-card');
+    expect(card?.querySelector('strong')?.textContent).toBeTruthy();
+    expect(card?.querySelector('p')).toBeNull();
+  });
+
   it('does not render the error card before the failure step', () => {
     const fixture = createComponent();
     fixture.detectChanges();

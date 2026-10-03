@@ -61,7 +61,7 @@
                   @if (service(e); as s) {
                     <span class="muted">{{ s }}</span>
                   }
-                  @if (e.errorMessage) {
+                  @if (e.errorMessage && canViewData()) {
                     <span class="tl-error">{{ e.errorMessage }}</span>
                   }
                 </span>

@@ -8,6 +8,12 @@
 
 @if (loading()) {
   <div class="empty">Loading…</div>
+} @else if (forbidden()) {
+  <!-- Not an error banner: the viewer is signed in, and the saga is none of their business. The back link
+       above is the way out. -->
+  <div class="empty" role="status">
+    You do not have access to {{ sagaType }} sagas. Ask an administrator for sagas.view on this saga type.
+  </div>
 } @else if (error(); as message) {
   <div class="banner banner--error">{{ message }}</div>
 } @else if (detail(); as d) {
@@ -53,15 +59,24 @@
     <!-- Sub-saga composition, both directions. Distinct from the strip above: those share this
          correlation id, whereas a parent or child is a separate instance under its own id. The
          "started by" link carries no badges because the pointer on this saga's own summary is just a
-         (type, id) pair — showing the parent's state would mean a second fetch for one line. -->
+         (type, id) pair — showing the parent's state would mean a second fetch for one line. A parent of
+         a type the viewer cannot see is named as plain text: its page would only answer 403. -->
     @if (d.summary.parentSagaType && d.summary.parentCorrelationId) {
       <div class="related">
         <span class="related-label">Started by</span>
         <div class="related-links">
-          <a class="related-link" [routerLink]="['/sagas', d.summary.parentSagaType, d.summary.parentCorrelationId]">
-            <span class="related-type">{{ d.summary.parentSagaType }}</span>
-            <span class="muted mono related-state">{{ d.summary.parentCorrelationId }}</span>
-          </a>
+          @if (canViewParent()) {
+            <a class="related-link" [routerLink]="['/sagas', d.summary.parentSagaType, d.summary.parentCorrelationId]">
+              <span class="related-type">{{ d.summary.parentSagaType }}</span>
+              <span class="muted mono related-state">{{ d.summary.parentCorrelationId }}</span>
+            </a>
+          } @else {
+            <span class="related-plain">
+              <span class="related-type">{{ d.summary.parentSagaType }}</span>&ngsp;
+              <span class="muted mono related-state">{{ d.summary.parentCorrelationId }}</span>&ngsp;
+              <span class="muted">(no access)</span>
+            </span>
+          }
         </div>
       </div>
     }
@@ -82,7 +97,7 @@
       </div>
     }
 
-    @if (d.summary.status === 'Failed' || d.summary.status === 'TimedOut') {
+    @if (retryShown()) {
       <div #retryRow class="retry-row">
         @if (confirmingRetry() && retryRefusal() === null) {
           <!-- The swap removes whichever button had focus, so the page moves it (see saga-detail.ts):
@@ -128,6 +143,11 @@
           <span class="retry-message">{{ msg }}</span>
         }
       </div>
+    } @else if (retryable()) {
+      <!-- A saga a retry would accept, shown to a viewer without sagas.retry for its type. -->
+      <div class="retry-row">
+        <span class="retry-hint">You do not have permission to retry {{ sagaType }} sagas.</span>
+      </div>
     }
   </div>
 
@@ -136,7 +156,7 @@
     [historyLoaded]="timelineLoaded()"
     [currentJson]="d.dataJson"
     [summary]="d.summary"
-    [canViewData]="canViewData"
+    [canViewData]="canViewData()"
     [view]="dataView()"
     (viewChange)="setDataView($event)"
   />
@@ -199,7 +219,7 @@
         [focusedSequence]="focusedSequence()"
         [failureSequence]="failureSequence()"
         [replaySequence]="replaySequence()"
-        [canViewData]="canViewData"
+        [canViewData]="canViewData()"
         [(openKeys)]="openKeys"
         (entrySelected)="showOnMap($event)"
       />

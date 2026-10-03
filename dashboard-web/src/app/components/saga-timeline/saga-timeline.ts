@@ -64,7 +64,8 @@ export class SagaTimeline {
   readonly history = input.required<SagaHistory>();
   /** The sequence number of the entry to highlight. */
   readonly focusedSequence = input<number | null>(null);
-  /** Whether the viewer may see saga data; the per-step data toggle depends on it. */
+  /** Whether the viewer may see saga data; the per-step data toggle and a row's error text depend on it
+   *  (the API already strips payloads and error text for a viewer without it). */
   readonly canViewData = input(true);
   /** Whether the saga is still running, so its final step without an outcome is in progress. */
   readonly live = input(false);

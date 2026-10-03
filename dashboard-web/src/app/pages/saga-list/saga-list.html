@@ -1,114 +1,121 @@
 <div class="page-header">
   <h1>Sagas</h1>
-  <span class="count" *ngIf="!loading()">{{ totalCount() }} total</span>
+  <span class="count" *ngIf="hasAccess() && !loading()">{{ totalCount() }} total</span>
 </div>
 
-<div class="toolbar">
-  <select class="input" [(ngModel)]="status" (change)="onFilterChange()">
-    <option value="">All statuses</option>
-    <option *ngFor="let s of statuses" [value]="s">{{ s }}</option>
-  </select>
+@if (!hasAccess()) {
+  <!-- No request is made for a session without sagas.view: the API would answer 403 to every one. -->
+  <div class="empty" role="status">
+    Your account has no access to any saga type yet. Ask an administrator for sagas.view.
+  </div>
+} @else {
+  <div class="toolbar">
+    <select class="input" [(ngModel)]="status" (change)="onFilterChange()">
+      <option value="">All statuses</option>
+      <option *ngFor="let s of statuses" [value]="s">{{ s }}</option>
+    </select>
 
-  <select class="input" [(ngModel)]="kind" (change)="onFilterChange()">
-    <option value="">All kinds</option>
-    <option *ngFor="let k of kinds" [value]="k">{{ k }}</option>
-  </select>
+    <select class="input" [(ngModel)]="kind" (change)="onFilterChange()">
+      <option value="">All kinds</option>
+      <option *ngFor="let k of kinds" [value]="k">{{ k }}</option>
+    </select>
 
-  <select class="input" [(ngModel)]="sagaType" (change)="onFilterChange()">
-    <option value="">All saga types</option>
-    <option *ngFor="let t of sagaTypes()" [value]="t.sagaType">{{ t.sagaType }}</option>
-  </select>
+    <select class="input" [(ngModel)]="sagaType" (change)="onFilterChange()">
+      <option value="">All saga types</option>
+      <option *ngFor="let t of sagaTypes()" [value]="t.sagaType">{{ t.sagaType }}</option>
+    </select>
 
-  <input
-    class="input"
-    type="search"
-    placeholder="Search by type or correlation id…"
-    [(ngModel)]="search"
-    (ngModelChange)="onSearchInput()"
-  />
+    <input
+      class="input"
+      type="search"
+      placeholder="Search by type or correlation id…"
+      [(ngModel)]="search"
+      (ngModelChange)="onSearchInput()"
+    />
 
-  <button type="button" (click)="refresh()">Refresh</button>
-</div>
-
-@if (connectionState() === 'reconnecting') {
-  <div class="banner banner--warning">Reconnecting to live updates…</div>
-} @else if (hasEverConnected() && connectionState() === 'disconnected') {
-  <div class="banner banner--warning">Live updates disconnected. <button type="button" (click)="refresh()">Refresh</button></div>
-}
-
-@if (error(); as message) {
-  <div class="banner banner--error">{{ message }}</div>
-}
-
-@if (newSagasAvailable() > 0) {
-  <div class="banner banner--info">
-    {{ newSagasAvailable() }} new saga{{ newSagasAvailable() === 1 ? '' : 's' }} since this page loaded —
     <button type="button" (click)="refresh()">Refresh</button>
   </div>
-}
 
-@if (loading()) {
-  <div class="empty">Loading…</div>
-} @else if (sagas().length === 0 && !error()) {
-  <!-- When error() is set, the banner above already explains why the table is empty; showing
-       "No sagas match these filters yet." on top of it would read as contradictory. -->
-  <div class="empty">No sagas match these filters yet.</div>
-} @else if (sagas().length > 0) {
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Correlation Id</th>
-        <th>Saga Type</th>
-        <th>Kind</th>
-        <th>Current State</th>
-        <th class="sortable" (click)="toggleSort('Status')">
-          Status
-          @if (sortColumn() === 'Status') {
-            <span class="sort-indicator">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
-          }
-        </th>
-        <th class="sortable" (click)="toggleSort('UpdatedAt')">
-          Updated
-          @if (sortColumn() === 'UpdatedAt') {
-            <span class="sort-indicator">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
-          }
-        </th>
-      </tr>
-    </thead>
-    <tbody>
-      @for (saga of sagas(); track saga.sagaType + ':' + saga.correlationId) {
-        <tr [routerLink]="['/sagas', saga.sagaType, saga.correlationId]" class="saga-row">
-          <td class="mono">{{ saga.correlationId | slice: 0 : 8 }}…</td>
-          <td>{{ saga.sagaType }}</td>
-          <td><app-kind-badge [kind]="saga.kind" /></td>
-          <td>{{ saga.currentState }}</td>
-          <td><app-status-badge [status]="saga.status" /></td>
-          <td class="muted">{{ saga.updatedAtUtc | date: 'M/d/yy, HH:mm' }}</td>
+  @if (connectionState() === 'reconnecting') {
+    <div class="banner banner--warning">Reconnecting to live updates…</div>
+  } @else if (hasEverConnected() && connectionState() === 'disconnected') {
+    <div class="banner banner--warning">Live updates disconnected. <button type="button" (click)="refresh()">Refresh</button></div>
+  }
+
+  @if (error(); as message) {
+    <div class="banner banner--error">{{ message }}</div>
+  }
+
+  @if (newSagasAvailable() > 0) {
+    <div class="banner banner--info">
+      {{ newSagasAvailable() }} new saga{{ newSagasAvailable() === 1 ? '' : 's' }} since this page loaded —
+      <button type="button" (click)="refresh()">Refresh</button>
+    </div>
+  }
+
+  @if (loading()) {
+    <div class="empty">Loading…</div>
+  } @else if (sagas().length === 0 && !error()) {
+    <!-- When error() is set, the banner above already explains why the table is empty; showing
+         "No sagas match these filters yet." on top of it would read as contradictory. -->
+    <div class="empty">No sagas match these filters yet.</div>
+  } @else if (sagas().length > 0) {
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Correlation Id</th>
+          <th>Saga Type</th>
+          <th>Kind</th>
+          <th>Current State</th>
+          <th class="sortable" (click)="toggleSort('Status')">
+            Status
+            @if (sortColumn() === 'Status') {
+              <span class="sort-indicator">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
+            }
+          </th>
+          <th class="sortable" (click)="toggleSort('UpdatedAt')">
+            Updated
+            @if (sortColumn() === 'UpdatedAt') {
+              <span class="sort-indicator">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
+            }
+          </th>
         </tr>
-      }
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        @for (saga of sagas(); track saga.sagaType + ':' + saga.correlationId) {
+          <tr [routerLink]="['/sagas', saga.sagaType, saga.correlationId]" class="saga-row">
+            <td class="mono">{{ saga.correlationId | slice: 0 : 8 }}…</td>
+            <td>{{ saga.sagaType }}</td>
+            <td><app-kind-badge [kind]="saga.kind" /></td>
+            <td>{{ saga.currentState }}</td>
+            <td><app-status-badge [status]="saga.status" /></td>
+            <td class="muted">{{ saga.updatedAtUtc | date: 'M/d/yy, HH:mm' }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
 
-  <div class="pagination">
-    <label class="page-size">
-      Rows per page
-      <select class="input" [(ngModel)]="pageSize" (change)="onFilterChange()">
-        <option *ngFor="let size of pageSizes" [ngValue]="size">{{ size }}</option>
-      </select>
-    </label>
-    <button type="button" (click)="prevPage()" [disabled]="page() <= 1">Previous</button>
-    <span class="muted">Page {{ page() }} of {{ totalPages() }}</span>
-    <button type="button" (click)="nextPage()" [disabled]="!hasNextPage()">Next</button>
-    <label class="page-jump">
-      Go to page
-      <input
-        class="input"
-        type="number"
-        min="1"
-        [max]="totalPages()"
-        [(ngModel)]="pageJump"
-        (keyup.enter)="goToPage()"
-      />
-    </label>
-  </div>
+    <div class="pagination">
+      <label class="page-size">
+        Rows per page
+        <select class="input" [(ngModel)]="pageSize" (change)="onFilterChange()">
+          <option *ngFor="let size of pageSizes" [ngValue]="size">{{ size }}</option>
+        </select>
+      </label>
+      <button type="button" (click)="prevPage()" [disabled]="page() <= 1">Previous</button>
+      <span class="muted">Page {{ page() }} of {{ totalPages() }}</span>
+      <button type="button" (click)="nextPage()" [disabled]="!hasNextPage()">Next</button>
+      <label class="page-jump">
+        Go to page
+        <input
+          class="input"
+          type="number"
+          min="1"
+          [max]="totalPages()"
+          [(ngModel)]="pageJump"
+          (keyup.enter)="goToPage()"
+        />
+      </label>
+    </div>
+  }
 }

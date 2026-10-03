@@ -1,10 +1,12 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
-import { BehaviorSubject, Subject, of, throwError } from 'rxjs';
+import { BehaviorSubject, Observable, Subject, of, throwError } from 'rxjs';
 import { vi } from 'vitest';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import { PagedResult, SagaSummary } from '../../models/saga.model';
+import { AuthMock, AuthMockOptions, createAuthMock, provideAuthMock } from '../../testing/auth-mock';
+import { httpError } from '../../testing/http-error';
 import { SagaList } from './saga-list';
 
 function makeSummary(overrides: Partial<SagaSummary> = {}): SagaSummary {
@@ -46,6 +48,7 @@ describe('SagaList', () => {
       imports: [SagaList],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
       ],
@@ -82,6 +85,7 @@ describe('SagaList', () => {
       imports: [SagaList],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
       ],
@@ -112,6 +116,7 @@ describe('SagaList', () => {
       imports: [SagaList],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
       ],
@@ -147,6 +152,7 @@ describe('SagaList', () => {
       imports: [SagaList],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
       ],
@@ -542,6 +548,7 @@ describe('SagaList', () => {
       imports: [SagaList],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
       ],
@@ -571,6 +578,7 @@ describe('SagaList', () => {
       imports: [SagaList],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
         {
@@ -621,6 +629,7 @@ describe('SagaList', () => {
       imports: [SagaList],
       providers: [
         provideRouter([]),
+        provideAuthMock(),
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
         {
@@ -650,5 +659,302 @@ describe('SagaList', () => {
         queryParams: expect.objectContaining({ status: 'Failed', page: null }),
       }),
     );
+  });
+
+  // What the session lets the viewer list: the API enforces it, and the page follows the session so it
+  // neither asks for what it would refuse nor words a refusal as an outage.
+  describe('access by permission', () => {
+    const none = { permissions: [], scoped: [] };
+    const scopedView = { permissions: [], scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }] };
+    const page = (items: SagaSummary[], pageNumber: number, totalCount: number): PagedResult<SagaSummary> => ({
+      items,
+      page: pageNumber,
+      pageSize: 25,
+      totalCount,
+    });
+    const text = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+    const noAccessText = 'Your account has no access to any saga type yet. Ask an administrator for sagas.view.';
+
+    let auth: AuthMock;
+
+    /** The page with the given session and the answers `list` gives, in order (the last one repeats). */
+    function open(
+      options: AuthMockOptions,
+      answers: Array<Observable<PagedResult<SagaSummary>>> = [of(page([], 1, 0))],
+      startPage = 1,
+    ) {
+      auth = createAuthMock(options);
+      const list = vi.fn();
+      answers.forEach((answer, i) => (i === answers.length - 1 ? list.mockReturnValue(answer) : list.mockReturnValueOnce(answer)));
+      apiMock = { list, getSagaTypes: vi.fn().mockReturnValue(of([])) };
+      hubMock = {
+        sagaUpdated$: new Subject<SagaSummary>(),
+        connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
+        subscribeToList: vi.fn().mockResolvedValue(undefined),
+      };
+      TestBed.configureTestingModule({
+        imports: [SagaList],
+        providers: [
+          provideRouter([]),
+          provideAuthMock(auth),
+          { provide: SagaApiService, useValue: apiMock },
+          { provide: SagaHubService, useValue: hubMock },
+        ],
+      });
+      const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+      const fixture = TestBed.createComponent(SagaList);
+      fixture.componentInstance.page.set(startPage);
+      fixture.detectChanges();
+      return { fixture, navigate };
+    }
+
+    describe('a session without sagas.view', () => {
+      it('makes no request and no hub subscription, and says why', () => {
+        const { fixture } = open({ access: none });
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(apiMock.list).not.toHaveBeenCalled();
+        expect(apiMock.getSagaTypes).not.toHaveBeenCalled();
+        expect(hubMock.subscribeToList).not.toHaveBeenCalled();
+        expect(text(el.querySelector('.empty'))).toBe(noAccessText);
+        expect(el.querySelector('.toolbar')).toBeNull();
+        expect(el.querySelector('.count')).toBeNull();
+        expect(el.textContent).not.toContain('Loading…');
+        expect(fixture.componentInstance.loading()).toBe(false);
+      });
+
+      it('lists for a viewer whose sagas.view is scoped to some saga types', () => {
+        const { fixture } = open({ access: scopedView }, [of(page([makeSummary()], 1, 1))]);
+
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+        expect(hubMock.subscribeToList).toHaveBeenCalledTimes(1);
+        expect(fixture.nativeElement.querySelector('.empty')).toBeNull();
+        expect(fixture.nativeElement.querySelectorAll('.saga-row')).toHaveLength(1);
+      });
+
+      it('starts when the session gains sagas.view, once', () => {
+        const { fixture } = open({ access: none });
+
+        auth.access.set(scopedView);
+        fixture.detectChanges();
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+        expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(1);
+        expect(hubMock.subscribeToList).toHaveBeenCalledTimes(1);
+        expect(fixture.nativeElement.querySelector('.toolbar')).not.toBeNull();
+
+        auth.access.set({ permissions: ['sagas.view'], scoped: [] });
+        fixture.detectChanges();
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+        expect(hubMock.subscribeToList).toHaveBeenCalledTimes(1);
+      });
+
+      it('replaces the list with the no-access state when the session loses sagas.view, and reads it again when it is back', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 1))]);
+        const el: HTMLElement = fixture.nativeElement;
+        expect(el.querySelectorAll('.saga-row')).toHaveLength(1);
+
+        auth.access.set(none);
+        fixture.detectChanges();
+        expect(text(el.querySelector('.empty'))).toBe(noAccessText);
+        expect(el.querySelector('.saga-row')).toBeNull();
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+
+        auth.access.set(scopedView);
+        fixture.detectChanges();
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(hubMock.subscribeToList).toHaveBeenCalledTimes(1);
+        expect(el.querySelectorAll('.saga-row')).toHaveLength(1);
+      });
+    });
+
+    describe('a request the API refuses', () => {
+      it('words a 403 as no access, not as an outage, and leaves it alone when live updates reconnect', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 1)), throwError(() => httpError(403, { title: 'Forbidden', detail: 'This needs the sagas.view permission.' }))]);
+        fixture.componentInstance.refresh();
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.error()).toBe('You do not have access to these sagas.');
+        expect(text(fixture.nativeElement.querySelector('.banner--error'))).toBe('You do not have access to these sagas.');
+        expect(fixture.componentInstance.sagas()).toEqual([]);
+        expect(fixture.nativeElement.textContent).not.toContain('Could not reach');
+
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+      });
+
+      it('shows the API text of a 400, not "Could not reach", and leaves it alone when live updates reconnect', () => {
+        const text400 = 'The search reads too many sagas. Narrow it with a saga type, a status or a kind.';
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 30)), throwError(() => httpError(400, { error: text400 }))]);
+        fixture.componentInstance.refresh();
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.error()).toBe(text400);
+        expect(text(fixture.nativeElement.querySelector('.banner--error'))).toBe(text400);
+        // The rows on screen are still the last good page's.
+        expect(fixture.componentInstance.sagas()).toHaveLength(1);
+        expect(fixture.componentInstance.page()).toBe(1);
+
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+      });
+
+      it('goes back to the last good page after a 400 with no maxPage, and writes it to the URL', () => {
+        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 75)), throwError(() => httpError(400, { error: 'Too broad.' }))]);
+        fixture.componentInstance.nextPage();
+
+        expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }));
+        expect(fixture.componentInstance.error()).toBe('Too broad.');
+        expect(fixture.componentInstance.page()).toBe(1);
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }) }));
+      });
+
+      it('still says an unreachable API is one', () => {
+        const { fixture } = open({}, [throwError(() => httpError(0, null)), throwError(() => httpError(500, { title: 'Boom' }))]);
+        expect(fixture.componentInstance.error()).toBe('Could not reach the vSaga Dashboard API. Is it running?');
+
+        fixture.componentInstance.refresh();
+        expect(fixture.componentInstance.error()).toBe('Could not reach the vSaga Dashboard API. Is it running?');
+      });
+
+      it('survives a failing saga type request', () => {
+        auth = createAuthMock();
+        apiMock = {
+          list: vi.fn().mockReturnValue(of(page([makeSummary()], 1, 1))),
+          getSagaTypes: vi.fn().mockReturnValue(throwError(() => httpError(403, null))),
+        };
+        hubMock = {
+          sagaUpdated$: new Subject<SagaSummary>(),
+          connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
+          subscribeToList: vi.fn().mockResolvedValue(undefined),
+        };
+        TestBed.configureTestingModule({
+          imports: [SagaList],
+          providers: [
+            provideRouter([]),
+            provideAuthMock(auth),
+            { provide: SagaApiService, useValue: apiMock },
+            { provide: SagaHubService, useValue: hubMock },
+          ],
+        });
+        const fixture = TestBed.createComponent(SagaList);
+
+        expect(() => fixture.detectChanges()).not.toThrow();
+        expect(fixture.componentInstance.sagaTypes()).toEqual([]);
+        expect(fixture.componentInstance.sagas()).toHaveLength(1);
+      });
+    });
+
+    describe('a page past what a list across several saga types can reach', () => {
+      const pastTheEnd = (maxPage: number | undefined, error = 'Page 30 is past the last page (20) a list across several saga types can reach. Choose a saga type with the sagaType filter to page further.') =>
+        throwError(() => httpError(400, maxPage === undefined ? { error } : { error, maxPage }));
+
+      it('goes to maxPage, keeps the message, and stops offering pages beyond it', () => {
+        const rows = [makeSummary({ correlationId: 'deep' })];
+        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 1000)), pastTheEnd(20), of(page(rows, 20, 1000))]);
+        const c = fixture.componentInstance;
+        expect(c.totalPages()).toBe(40);
+
+        c.pageJump = 30;
+        c.goToPage();
+        fixture.detectChanges();
+
+        expect(apiMock.list).toHaveBeenCalledTimes(3);
+        expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 20 }));
+        expect(c.page()).toBe(20);
+        expect(c.sagas()).toEqual(rows);
+        expect(c.error()).toContain('past the last page (20)');
+        expect(text(fixture.nativeElement.querySelector('.banner--error'))).toContain('Choose a saga type with the sagaType filter');
+        expect(c.totalPages()).toBe(20);
+        expect(c.hasNextPage()).toBe(false);
+        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: 20 }) }));
+
+        // The cap belongs to the request that met it: changing a filter lifts it.
+        c.onFilterChange();
+        expect(c.totalPages()).toBe(40);
+      });
+
+      it('returns to the page on screen without asking again when that is already maxPage', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 20, 1000)), pastTheEnd(20)], 20);
+        const c = fixture.componentInstance;
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+
+        c.nextPage();
+
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(c.page()).toBe(20);
+        expect(c.sagas()).toHaveLength(1);
+        expect(c.error()).toContain('past the last page');
+        expect(c.hasNextPage()).toBe(false);
+      });
+
+      it('does not ask for a page it was told is beyond the end when the pager is used', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 20, 1000)), pastTheEnd(20)], 20);
+        fixture.componentInstance.nextPage();
+        apiMock.list.mockClear();
+
+        fixture.componentInstance.nextPage();
+
+        expect(apiMock.list).not.toHaveBeenCalled();
+      });
+
+      it('never navigates to page 0: a bookmarked deep page with a maxPage of 0 lands on page 1 and asks once', () => {
+        const { fixture } = open({}, [pastTheEnd(0, 'Choose a saga type.')], 3);
+        const c = fixture.componentInstance;
+
+        expect(c.page()).toBe(1);
+        expect(c.error()).toBe('Choose a saga type.');
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+        expect(apiMock.list).toHaveBeenCalledWith(expect.objectContaining({ page: 3 }));
+      });
+
+      it('brings a bookmarked page beyond the end back to maxPage, with the message', () => {
+        const { fixture } = open({}, [pastTheEnd(20), of(page([makeSummary()], 20, 1000))], 30);
+        const c = fixture.componentInstance;
+
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 20 }));
+        expect(c.page()).toBe(20);
+        expect(c.sagas()).toHaveLength(1);
+        expect(c.error()).toContain('past the last page (20)');
+      });
+
+      it('says that no page can be served for a maxPage of 0: the API text, no rows, page 1, no retry', () => {
+        const message = 'You can see 60 saga types, more than the 10 a list sorted by status, filtered by status or kind, or searched can combine. Choose a saga type with the sagaType filter.';
+        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 90)), pastTheEnd(0, message)]);
+        const c = fixture.componentInstance;
+        c.nextPage();
+        fixture.detectChanges();
+
+        expect(c.error()).toBe(message);
+        expect(text(fixture.nativeElement.querySelector('.banner--error'))).toBe(message);
+        expect(c.page()).toBe(1);
+        expect(c.sagas()).toEqual([]);
+        expect(c.totalCount()).toBe(0);
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }) }));
+        // The filter that always works is still offered, and a pager with nothing to page through is not.
+        expect(fixture.nativeElement.querySelector('.toolbar select[class~="input"]')).not.toBeNull();
+        expect(fixture.nativeElement.querySelector('.pagination')).toBeNull();
+      });
+
+      it('asks for a saga type filter in its own words when the API sent no text with a maxPage of 0', () => {
+        const { fixture } = open({}, [throwError(() => httpError(400, { maxPage: 0 }))]);
+
+        expect(fixture.componentInstance.error()).toBe('Too many saga types are visible to list them together. Choose a saga type with the filter.');
+        expect(fixture.componentInstance.page()).toBe(1);
+      });
+
+      it('does not loop when the API names a maxPage that is not below the page it refused', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 75)), pastTheEnd(5)]);
+        fixture.componentInstance.nextPage();
+
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(fixture.componentInstance.page()).toBe(1);
+        expect(fixture.componentInstance.error()).toContain('past the last page');
+      });
+    });
   });
 });

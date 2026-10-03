@@ -307,6 +307,24 @@ describe('SagaTimeline', () => {
     expect(rows[0].querySelector('.tl-error')).toBeNull();
   });
 
+  // The API strips error text for a viewer without sagas.data; a row still must not print one that
+  // arrives (a session that is out of date, an older API) while the page says the data is hidden.
+  it('prints no error text without canViewData, and keeps the row and its marking', () => {
+    const entries = numbered([
+      started('m0'),
+      succeeded('m0', 'Initial', 'Submitted'),
+      received('m1'),
+      failed('m1', 'Submitted', { errorMessage: 'card declined' }),
+    ]);
+    const el: HTMLElement = render(entries, { canViewData: false }).nativeElement;
+
+    expect(el.textContent).not.toContain('card declined');
+    expect(el.querySelector('.tl-error')).toBeNull();
+    const rows = el.querySelectorAll('.tl-step')[1].querySelectorAll('.tl-row');
+    expect(text(rows[rows.length - 1].querySelector('.entry-type'))).toBe('StepFailed');
+    expect(rows[rows.length - 1].classList).toContain('tl-row--error');
+  });
+
   it('heads a step opened by a dead letter without saying dead-lettered twice', () => {
     const el: HTMLElement = render(
       numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), deliveryExhausted('m1')]),
