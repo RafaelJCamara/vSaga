@@ -199,21 +199,22 @@ public sealed class AdminUsersEndpointsTests : IAsyncLifetime, IAsyncDisposable
     }
 
     [Theory]
-    [InlineData("POST", """{"username":"carol","displayName":"Carol","password":"a temporary password","teamIds":[]}""", "teamIds")]
-    [InlineData("POST", """{"username":"carol","displayName":"Carol","password":"a temporary password","enabled":true}""", "enabled")]
-    [InlineData("PUT", """{"teamIds":[]}""", "teamIds")]
-    [InlineData("PUT", """{"enabled":false}""", "enabled")]
-    [InlineData("PUT", """{"grants":[{"roleId":"a0000000-0000-0000-0000-000000000003","allSagaTypes":true,"builtIn":false}]}""", "grants[0].builtIn")]
-    [InlineData("PUT", """{"isEnabled":"no"}""", "isEnabled")]
-    [InlineData("PUT", """{"isEnabled":false,"IsEnabled":true}""", "IsEnabled")]
-    public async Task AnUnknownMemberOrAWrongValue_Is400_NamingItsPath_AndChangesNothing(string method, string body, string member)
+    [InlineData("POST", "", """{"username":"carol","displayName":"Carol","password":"a temporary password","teamIds":[]}""", "teamIds")]
+    [InlineData("POST", "", """{"username":"carol","displayName":"Carol","password":"a temporary password","enabled":true}""", "enabled")]
+    [InlineData("PUT", "/{id}", """{"teamIds":[]}""", "teamIds")]
+    [InlineData("PUT", "/{id}", """{"enabled":false}""", "enabled")]
+    [InlineData("PUT", "/{id}", """{"grants":[{"roleId":"a0000000-0000-0000-0000-000000000003","allSagaTypes":true,"builtIn":false}]}""", "grants[0].builtIn")]
+    [InlineData("PUT", "/{id}", """{"isEnabled":"no"}""", "isEnabled")]
+    [InlineData("PUT", "/{id}", """{"isEnabled":false,"IsEnabled":true}""", "IsEnabled")]
+    [InlineData("POST", "/{id}/password", """{"newPassword":"another temporary password","isEnabled":true}""", "isEnabled")]
+    public async Task AnUnknownMemberOrAWrongValue_Is400_NamingItsPath_AndChangesNothing(string method, string route, string body, string member)
     {
         var (_, admin) = await SignInAdministratorAsync(_host);
         using (admin)
         {
             var id = await CreateAliceAsync(admin);
 
-            using var response = string.Equals(method, "POST", StringComparison.Ordinal) ? await admin.PostAsync(Users, body) : await admin.PutAsync($"{Users}/{id}", body);
+            using var response = await admin.SendAsync(new HttpMethod(method), Users + route.Replace("{id}", id.ToString(), StringComparison.Ordinal), body);
 
             Assert.Equal([member], await AssertValidationErrorsAsync(response));
             using var list = await admin.GetAsync(Users);
@@ -222,6 +223,12 @@ public sealed class AdminUsersEndpointsTests : IAsyncLifetime, IAsyncDisposable
             var alice = users.Single(u => string.Equals(u!["username"]!.GetValue<string>(), "alice", StringComparison.Ordinal))!;
             Assert.True(alice["isEnabled"]!.GetValue<bool>());
             Assert.Equal(2, alice["grants"]!.AsArray().Count);
+
+            // A refused reset must not have set the password: Alice still signs in with the one she was created with.
+            var password = JsonNode.Parse(FixtureText("create-user.request.json"))!["password"]!.GetValue<string>();
+            using var relogin = await SignInClient.StartAsync(_host);
+            using var login = await relogin.LoginAsync("alice", password);
+            Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         }
     }
 

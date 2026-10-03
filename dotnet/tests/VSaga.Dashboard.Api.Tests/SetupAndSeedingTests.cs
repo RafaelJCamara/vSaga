@@ -121,6 +121,29 @@ public sealed partial class SetupAndSeedingTests : IAsyncLifetime, IAsyncDisposa
     }
 
     [Fact]
+    public async Task Setup_WithTheCodeAndAnUnknownMember_Is400NamingIt_CreatesNobody_AndKeepsTheCodeUsable()
+    {
+        await using var host = Host(null, (FirstAdministratorSettings.SetupCodeKey, PresetCode));
+        using var client = await SignInClient.StartAsync(host);
+
+        using var response = await client.PostAsync(
+            "/api/auth/setup",
+            JsonSerializer.Serialize(new { username = "root", displayName = "Root", password = SetupPassword, code = PresetCode, rememberMe = true }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await SignInClient.ReadJsonAsync(response);
+        Assert.Equal(AuthProblems.ValidationCode, problem.GetProperty("code").GetString());
+        Assert.Equal(["rememberMe"], problem.GetProperty("errors").EnumerateObject().Select(e => e.Name), StringComparer.Ordinal);
+        Assert.Null(await FindUserAsync(host, "root"));
+        Assert.True((await client.SessionAsync()).GetProperty("setupAvailable").GetBoolean());
+
+        // The refusal spent nothing: the same body without the stray member still claims the dashboard.
+        using var retry = await PostSetupAsync(client, PresetCode);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        Assert.NotNull(await FindUserAsync(host, "root"));
+    }
+
+    [Fact]
     public async Task Setup_IsRateLimitedPerClientAddress_BeforeTheCodeIsChecked()
     {
         await using var host = Host(null, (FirstAdministratorSettings.SetupCodeKey, PresetCode), (DashboardSecuritySettings.AuthPerMinuteKey, "2"));

@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -455,6 +457,51 @@ public sealed class AuthEndpointsTests : IAsyncLifetime, IAsyncDisposable
 
         var problem = await AssertProblemAsync(response, HttpStatusCode.BadRequest, AuthProblems.ValidationCode);
         Assert.True(problem.GetProperty("errors").TryGetProperty("rememberMe", out _));
+    }
+
+    [Fact]
+    public async Task PasswordChange_WithAnUnknownJsonMember_Is400Validation_NamingIt_AndChangesNothing()
+    {
+        await using var host = WithObserver();
+        await CreateUserWithPasswordAsync(host.Services, "alice", Password, grants: AllTypes(BuiltInRoles.ViewerId));
+        using var client = await SignInClient.StartAsync(host);
+        using var login = await client.LoginAsync("alice", Password);
+
+        using var response = await client.PostAsync(
+            "/api/auth/password", JsonSerializer.Serialize(new { currentPassword = Password, newPassword = NewPassword, signOutOtherSessions = false }));
+
+        var problem = await AssertProblemAsync(response, HttpStatusCode.BadRequest, AuthProblems.ValidationCode);
+        Assert.Equal(["signOutOtherSessions"], problem.GetProperty("errors").EnumerateObject().Select(e => e.Name), StringComparer.Ordinal);
+        Assert.Empty(_observer.Changed);
+        Assert.True((await client.SessionAsync()).GetProperty("authenticated").GetBoolean());
+        using var again = await SignInClient.StartAsync(host);
+        using var withNew = await again.LoginAsync("alice", NewPassword);
+        Assert.Equal(HttpStatusCode.Unauthorized, withNew.StatusCode);
+        using var withOld = await again.LoginAsync("alice", Password);
+        Assert.Equal(HttpStatusCode.OK, withOld.StatusCode);
+    }
+
+    [Fact]
+    public void EveryRequestRecord_RefusesAnUnknownMember()
+    {
+        // The request records of /api/auth and /api/admin, found as the golden-fixture test finds them, and the
+        // grant they nest: a record that lost the attribute would silently ignore a member it does not know.
+        var requests = typeof(AuthEndpoints).Assembly.GetExportedTypes()
+            .Where(t => string.Equals(t.Namespace, typeof(AuthEndpoints).Namespace, StringComparison.Ordinal)
+                && t.GetMethod("<Clone>$") is not null
+                && t.Name.EndsWith("Request", StringComparison.Ordinal))
+            .Append(typeof(GrantDto))
+            .ToList();
+
+        Type[] known =
+        [
+            typeof(LoginRequest), typeof(SetupRequest), typeof(ChangePasswordRequest), typeof(CreateUserRequest),
+            typeof(UpdateUserRequest), typeof(ResetPasswordRequest), typeof(TeamRequest), typeof(RoleRequest),
+        ];
+        Assert.All(known, type => Assert.Contains(type, requests));
+        Assert.Empty(requests
+            .Where(t => t.GetCustomAttribute<JsonUnmappedMemberHandlingAttribute>()?.UnmappedMemberHandling != JsonUnmappedMemberHandling.Disallow)
+            .Select(t => t.Name));
     }
 
     [Theory]
