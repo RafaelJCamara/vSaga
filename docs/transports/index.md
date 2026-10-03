@@ -178,7 +178,11 @@ Tear one down the same way you brought it up, naming the same `-p` project:
 **Viewing an overlay's dashboard.** Open that stack's Dashboard UI port from the table above, e.g.
 http://localhost:4300 for the Wolverine overlay; there is nothing to edit. Each stack's UI container
 proxies `/api` and `/hubs` to its own stack's dashboard API, so several stacks' dashboards can be open
-side by side (see [`../dashboard.md`](../dashboard.md#how-it-is-served)). To point the SPA's dev server
+side by side (see [`../dashboard.md`](../dashboard.md#how-it-is-served)); in one browser each stack keeps its
+own sign-in, because compose names the session cookie after the project (`vsaga.session.vsaga-wolverine`, say)
+and cookies are scoped by host, not port, while the one cookie they share, `XSRF-TOKEN`, is handled by the
+SPA reading the session again and retrying once when the API refuses a token from the other stack (see
+[CSRF protection](../dashboard.md#csrf-protection)). To point the SPA's dev server
 at an overlay instead, start it with `VSAGA_API_URL` set to that overlay's Dashboard API port — see
 [`dashboard-web/README.md`](../../dashboard-web/README.md#run-it).
 

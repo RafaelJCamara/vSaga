@@ -35,7 +35,8 @@ services:
     # dashboard deliberately, change the bind address here and on dashboard-web, change Dashboard__ApiKey,
     # and change the administrator's password: once the identity volume exists Dashboard__Admin__Password
     # no longer applies, so sign in and change it (or set Dashboard__Admin__ResetOnStart=true for one
-    # start, or start over with `down -v`). Put TLS in front.
+    # start, together with the new Dashboard__Admin__Password, which that start applies; or start over
+    # with `down -v`). Put TLS in front.
     ports:
       - "127.0.0.1:5080:8080"
     environment:

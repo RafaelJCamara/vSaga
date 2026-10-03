@@ -70,8 +70,10 @@ docker compose -p vsaga-http -f docker-compose.yml -f docker-compose.http.yml up
 
 Each of these also serves that stack's dashboard UI: http://localhost:4200 for the base and chaos
 stacks, and the API port minus 880 for each overlay (Redis 4800, MongoDB 4700, Wolverine 4300,
-MassTransit 4400, Brighter 4500, HTTP 4600). Verify a UI change there, in the container, not only
-under `ng serve`: the Content Security Policy and the nginx proxy in front of the API exist only in
+MassTransit 4400, Brighter 4500, HTTP 4600). Every page needs a signed-in user: each stack seeds
+`admin` / `dev-local-only-change-me` into its own identity volume on its first start (see
+[`docs/dashboard.md`](docs/dashboard.md#the-first-administrator)). Verify a UI change there, in the container,
+not only under `ng serve`: the Content Security Policy and the nginx proxy in front of the API exist only in
 the `dashboard-web` image, so a page can work on the dev server's port 4201 and still break in the
 stack. Load each page you touched through the stack's UI port with the browser's devtools open and
 check the console for CSP violations.

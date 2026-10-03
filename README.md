@@ -8,9 +8,9 @@ The engine gives you a fluent saga DSL for both orchestrated and choreographed s
 event log, EF Core (Postgres), MongoDB, Redis and in-memory persistence, six interchangeable `IMessageTransport`
 adapters, a transport-agnostic `.CallHttp` step for calling plain REST APIs, an in-memory testing
 harness, OpenTelemetry instrumentation, and a chaos-engineering fault-injection package. A
-saga-type-agnostic ops dashboard (ASP.NET Core API + Angular SPA) adds live updates, a per-saga visual
-service map, a timeline of steps with the saga's data after each one, and a retry that re-runs the
-step a failed saga failed in.
+saga-type-agnostic ops dashboard (ASP.NET Core API + Angular SPA) adds sign-in with access scoped by role
+and saga type, live updates, a per-saga visual service map, a timeline of steps with the saga's data after
+each one, and a retry that re-runs the step a failed saga failed in.
 
 ## Install
 
@@ -134,6 +134,7 @@ there is nothing to edit.
 > change the bind address in the compose file, change `Dashboard__ApiKey`, and change the administrator's
 > password (below), put TLS in front, and narrow `Dashboard__TrustedProxies` to your proxy's address or
 > network, since the compose value trusts every private range — see
+> [Deploying beyond localhost](docs/dashboard.md#deploying-beyond-localhost),
 > [`docs/dashboard.md`](docs/dashboard.md#behind-your-own-proxy-or-tls) and
 > [`Dashboard:TrustedProxies`](docs/configuration.md#dashboardtrustedproxies).
 >
@@ -204,12 +205,14 @@ Full index: [`docs/README.md`](docs/README.md). Straight to the reference docs:
   business-key correlation), compensation, timeouts.
 - [`docs/saga-dsl.md`](docs/saga-dsl.md) — the complete DSL method reference.
 - [`docs/configuration.md`](docs/configuration.md) — every options class, including the
-  transactional outbox and transport options.
+  transactional outbox and transport options, and every `Dashboard:*` key (sign-in, sessions, the identity
+  store, the API key).
 - [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, MongoDB, Redis, in-memory, migrations.
 - [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log and its
   state snapshots, OTLP wiring.
 - [`docs/dashboard.md`](docs/dashboard.md) — API endpoints, the targeted manual retry, state snapshots,
-  authentication, live updates over SignalR, the SPA and its saga detail page, the Saga Map.
+  sign-in and the API key, access control (roles and per-saga-type grants, the identity store), the audit
+  log, live updates over SignalR, the SPA and its saga detail page, deploying beyond localhost, the Saga Map.
 - [`docs/testing.md`](docs/testing.md) — `SagaTestHarness`.
 - [`docs/chaos.md`](docs/chaos.md) — `VSaga.Chaos` fault injection.
 - [`docs/transports/index.md`](docs/transports/index.md) — the transport contract and all six

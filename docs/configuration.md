@@ -2,9 +2,10 @@
 
 This page covers vSaga's options classes. None of them participate in .NET's options-binding pipeline:
 there is no `services.Configure<T>(...)` step for any of them anywhere in this library, and calling one yourself is a silent no-op (it registers an `IOptions<T>` nobody reads — every
-options class below is resolved as a plain `T` singleton, with the two ASP.NET Core options classes
-noted under [`Dashboard:ApiKey`](#dashboardapikey) and
-[`Dashboard:TrustedProxies`](#dashboardtrustedproxies) as the only exceptions). Every adapter's own options
+options class below is resolved as a plain `T` singleton). The one exception is the dashboard host's
+use of ASP.NET Core's own framework-owned options (cookie authentication, antiforgery, forwarded headers,
+key management and the API-key scheme's options): see
+[Framework-owned options](#framework-owned-options-the-one-exception) under [Dashboard](#dashboard). Every adapter's own options
 (`RabbitMqOptions`, `HttpTransportOptions`, ...) are set the same way: pass an `Action<TOptions>` to
 that adapter's `AddVSaga*` extension, e.g. `AddVSagaRabbitMq(o => o.ConnectionString = "...")`.
 
@@ -379,36 +380,75 @@ gets no chaos at all no matter what `Chaos__Enabled` says, and no error either.
 
 ## Dashboard
 
-Four plain configuration keys, all read by `VSaga.Dashboard.Api` directly — none is an options
-class. `docker-compose.yml` sets `Dashboard__ApiKey` and `Dashboard__TrustedProxies`; it leaves
-`Dashboard:WebOrigin` empty, because the bundled UI is served on the API's own origin (see
-[`dashboard.md`](dashboard.md#the-spa)).
+Every `Dashboard:*` key that `VSaga.Dashboard.Api` reads is in this table, with its default. They are plain
+configuration keys (as an environment variable `:` is written `__`, so `Dashboard:Session:CookieName` is
+`Dashboard__Session__CookieName`), not an options class bound from a section. The API reads each one once,
+while it composes itself, and validates it there: a value outside the range given below stops the API from
+starting with an `InvalidOperationException` that names the key and the value, instead of surfacing at the
+first sign-in or the first retry, and a change needs a restart. The exceptions are `Dashboard:ApiKey`, which
+the API-key handler reads from `IConfiguration` on each request, and `Dashboard:Identity:Sqlite:Path`, whose
+problem does not stop the API (see its row). `docker-compose.yml` sets `Dashboard__ApiKey`,
+`Dashboard__ApiKeyRole`, `Dashboard__TrustedProxies`, the identity path, the seeded administrator and the
+session cookie name; it leaves `Dashboard:WebOrigin` empty, because the bundled UI is served on the API's own
+origin (see [`dashboard.md`](dashboard.md#the-spa)).
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `Dashboard:ApiKey` | *(empty in `appsettings.json`)* | The one shared secret `ApiKeyAuthenticationHandler` checks. |
-| `Dashboard:WebOrigin` | *(empty: CORS off)* | Optional. The one browser origin, other than the API's own, that a credentialed CORS policy admits. Validated at startup. |
-| `Dashboard:TrustedProxies` | *(empty: forwarded headers ignored)* | Optional. Comma-separated addresses or CIDR networks whose `X-Forwarded-For`/`X-Forwarded-Proto` the API honours. Validated at startup. |
-| `Dashboard:StateSnapshots:MaxBytes` | `262144` (256 KiB) | Caps, in UTF-8 bytes, the `StatePersisted` entry the API records after a [manual retry](dashboard.md#manual-retry) resets a saga; a larger state is recorded as the size marker, `0` records size-only markers. The cap actually applied is the smaller of this and the `limit` of the saga's latest `$vsagaStateOmitted` marker, so a host that set [`MaxStateSnapshotBytes`](#sagaorchestratoroptions) lower is not overridden. Must be a non-negative whole number; anything else stops the API at startup. |
+| Group | Key | Default | Meaning |
+| --- | --- | --- | --- |
+| Identity store | `Dashboard:Identity:Provider` | `Sqlite` | Which identity store the API composes. `Sqlite` is the only value; anything else stops the API at start. See [The identity store](dashboard.md#the-identity-store). |
+| Identity store | `Dashboard:Identity:Sqlite:Path` | Outside a container `{LocalApplicationData}/vSaga/dashboard/identity.db`; **none in a container** | The identity database file, made absolute. When `DOTNET_RUNNING_IN_CONTAINER` is `true` (the official images set it) there is deliberately no default: an unset path does not stop the API but is reported by the `identity` health check (`Degraded`, sign-in unavailable), because a file in the container layer would lose every user and the key ring when the container is recreated. The dashboard API image and compose set `/var/lib/vsaga-dashboard/identity.db`, on a named volume. |
+| First administrator | `Dashboard:Admin:Username` | unset | With `Dashboard:Admin:Password`: the administrator created at the first start against an empty identity store (never touched afterwards). While either is set, first-run setup is never offered. Compose seeds `admin`. See [The first administrator](dashboard.md#the-first-administrator). |
+| First administrator | `Dashboard:Admin:Password` | unset | The seed administrator's password, which must meet the password policy; never logged. Compose seeds the public `dev-local-only-change-me`. |
+| First administrator | `Dashboard:Admin:ResetOnStart` | `false` | `true` or `false`. When `true`, every start resets the seed user's password, re-enables and unlocks the account, ends its sessions and restores an Administrator grant for all saga types. Needs at least one of the two seed keys, or the API refuses to start. Set it back to `false` once you can sign in. |
+| First administrator | `Dashboard:Setup:Code` | unset: a code is generated and logged at start when there is no user and no seed key | The one-time setup code, presetting the generated one: 16 to 128 characters not counting spaces and hyphens, never logged. |
+| Sessions | `Dashboard:Session:CookieName` | `vsaga.session` | The session cookie's name: 1 to 128 letters, digits, dots, hyphens or underscores, not starting with `__`. Compose sets `vsaga.session.<compose project>`, so stacks side by side on `localhost` do not share a sign-in. |
+| Sessions | `Dashboard:Session:IdleTimeoutMinutes` | `480` | The sliding idle window: a request made once more than half of it has passed since the session was issued renews the session for the whole window (so one idle for less than half never ends, and one idle for all of it always does). 1 to 10080. |
+| Sessions | `Dashboard:Session:AbsoluteTimeoutHours` | `24` | A session ends this long after sign-in, however active it is; an open hub socket is closed by then too. 1 to 720. |
+| Sessions | `Dashboard:Session:RequireHttps` | `false` | `true` or `false`. `true` makes the session and antiforgery cookies `Secure` always, adds the `__Host-` name prefix and sends HSTS. The API refuses to start with it unless `Dashboard:TrustedProxies` is set. |
+| Passwords | `Dashboard:Password:MinLength` | `12` | The shortest password accepted, 8 to 128 (the longest password is always 128). |
+| Passwords | `Dashboard:Lockout:MaxFailedAttempts` | `5` | Wrong passwords since the last successful sign-in that lock an account. `0` never locks; at most 100. |
+| Passwords | `Dashboard:Lockout:Minutes` | `15` | How long a locked account refuses sign-in, 1 to 1440. |
+| Rate limits | `Dashboard:RateLimit:AuthPerMinute` | `20` | Sign-in and password-change attempts per one-minute window for one client address and username; first-run setup gets the same number per address. 1 to 1000. |
+| API key | `Dashboard:ApiKey` | *(empty in `appsettings.json`)* | The machine credential `ApiKeyAuthenticationHandler` checks. Empty fails closed: every request that presents a key is refused. See [`Dashboard:ApiKey`](#dashboardapikey). |
+| API key | `Dashboard:ApiKeyRole` | `Viewer` | The built-in or custom role the key acts as, for every saga type, never with `access.manage`. At most 64 characters; a name that matches no role makes every request with the key `401` and logs a Warning at start. |
+| Browser origin and proxies | `Dashboard:WebOrigin` | *(empty: CORS off)* | Optional. The one browser origin, other than the API's own, that a credentialed CORS policy admits, and that the hub's origin check accepts. Validated at startup. See [`Dashboard:WebOrigin`](#dashboardweborigin). |
+| Browser origin and proxies | `Dashboard:TrustedProxies` | *(empty: forwarded headers ignored)* | Optional. Comma-separated addresses or CIDR networks whose `X-Forwarded-For`/`X-Forwarded-Proto` the API honours. Validated at startup. See [`Dashboard:TrustedProxies`](#dashboardtrustedproxies). |
+| State snapshots | `Dashboard:StateSnapshots:MaxBytes` | `262144` (256 KiB) | Caps, in UTF-8 bytes, the `StatePersisted` entry the API records after a [manual retry](dashboard.md#manual-retry) resets a saga; a larger state is recorded as the size marker, `0` records size-only markers. The cap actually applied is the smaller of this and the `limit` of the saga's latest `$vsagaStateOmitted` marker, so a host that set [`MaxStateSnapshotBytes`](#sagaorchestratoroptions) lower is not overridden. Must be a non-negative whole number; anything else stops the API at startup. |
 
-`Dashboard:WebOrigin` and `Dashboard:TrustedProxies` are read once, while the API composes itself
-(`Hosting/DashboardEdge.cs` is the only code that reads them), so a change needs a restart, and an
-invalid value stops the API from starting with an `InvalidOperationException` that names the key and
-the value, instead of surfacing at the first request.
+The engine side of state snapshots is not a `Dashboard:*` key: the host that runs the sagas records them,
+configured by the `Orchestrator:*` keys the `OrderProcessing` sample binds (`RecordStateSnapshots`,
+`MaxStateSnapshotBytes`, `MaxStateSnapshotBytesPerSaga`, `StateSnapshotTimeout`; see
+[`SagaOrchestratorOptions`](#sagaorchestratoroptions)). The dashboard API runs no engine.
+
+`Dashboard:WebOrigin` and `Dashboard:TrustedProxies` are read by `Hosting/DashboardEdge.cs`, the only code
+that reads them, and the security and sign-in keys by `DashboardSecuritySettings`,
+`FirstAdministratorSettings` and `DashboardIdentitySettings` in `VSaga.Dashboard.Identity`. How each setting
+behaves is described in [`dashboard.md`](dashboard.md#authentication).
+
+### Framework-owned options: the one exception
+
+The dashboard host hands what it read to ASP.NET Core's **own** options classes. They are the only options on
+this page that go through the framework's options pipeline, and they are not vSaga's: `CookieAuthenticationOptions`
+(the session cookie: its name, HttpOnly, `SameSite=Strict`, the `Secure` policy, the idle timeout and sliding
+renewal), `AntiforgeryOptions` (the `X-XSRF-TOKEN` header, and the cookie token's name, the session cookie's name
+plus `.af`), `ForwardedHeadersOptions` (only when `Dashboard:TrustedProxies` is not empty), `KeyManagementOptions`
+(the Data Protection key ring's repository, which is the identity store) and `ApiKeyAuthenticationSchemeOptions`,
+a marker type that declares no members, required because `AddScheme<TOptions, THandler>` wants a distinct
+`AuthenticationSchemeOptions` subtype. None is bound from a configuration section and no `Dashboard:*` key names
+one of their properties: the code fills them from the values it read once, so the rule that vSaga's own settings
+are plain singletons read once and validated at composition still holds.
 
 ### `Dashboard:ApiKey`
 
-See [`dashboard.md`](dashboard.md#authentication) for the full three-places-it-can-arrive model and why
-the dashboard fails closed on an unconfigured key.
+See [`dashboard.md`](dashboard.md#api-key) for the full model: where the key is accepted (`X-Api-Key`,
+`Authorization: Bearer`, and `?access_token=` on the hub endpoints only), why the dashboard fails closed on an
+unconfigured key, the role it acts as (`Dashboard:ApiKeyRole`, `Viewer` by default, never `access.manage`) and
+why a retry made with it needs a role that holds `sagas.retry`. The key is for scripts and probes; the SPA signs
+in with a username and password and has no key in its bundle.
 
-This key is also one of the two places in the codebase where an options class is resolved as
-`IOptions<T>` rather than a plain singleton (the other is
-[`Dashboard:TrustedProxies`](#dashboardtrustedproxies)) — but it isn't a vSaga options class. `AddScheme<TOptions, THandler>`
-requires a distinct `AuthenticationSchemeOptions` subtype, so
-`ApiKeyAuthenticationSchemeOptions` exists solely to satisfy that signature (it declares no members)
-and is injected into the handler as `IOptionsMonitor<ApiKeyAuthenticationSchemeOptions>` by ASP.NET
-Core's own machinery. It carries no vSaga settings: the handler reads `Dashboard:ApiKey` straight off
-`IConfiguration`, per request.
+Unlike the other `Dashboard:*` keys the handler reads the key straight off `IConfiguration`, on each request,
+not once at composition, so there is nothing to validate at start; the API only logs a Warning at start when a
+configured key is shorter than 24 characters. Its options type is one of the
+[framework-owned options](#framework-owned-options-the-one-exception).
 
 ### `Dashboard:WebOrigin`
 
@@ -419,7 +459,14 @@ put the SPA and a proxy to the API on one origin, so the browser never makes a c
 Set it only for a browser app served from a different origin that must call the API directly. The API
 then registers a single-origin CORS policy, `WithOrigins(origin).AllowAnyHeader().AllowAnyMethod()
 .AllowCredentials()`, and applies it before authentication. Empty (the default) registers no policy at
-all, so a cross-origin browser call gets no CORS headers and the browser refuses the response.
+all, so a cross-origin browser call gets no CORS headers and the browser refuses the response. The hub's
+origin check accepts the same origin, in addition to the API's own.
+
+Treat it as **read-only cross-origin access**. The antiforgery check on every unsafe request assumes a
+same-origin page that can read the `XSRF-TOKEN` cookie and echo it in `X-XSRF-TOKEN` (Angular's own XSRF
+handling, which the bundled SPA relies on, skips cross-origin requests, and a page on another host cannot read
+the cookie), so a request from that page that changes something is refused with `400` `antiforgery`. See
+[Deploying beyond localhost](dashboard.md#deploying-beyond-localhost).
 
 The value must be an origin: an absolute `http` or `https` URI with no user info, path, query or
 fragment, such as `https://ops.example.com` or `http://localhost:3000`. A trailing slash is dropped,
@@ -457,8 +504,9 @@ bundled proxies pass the browser's `Host` through unchanged.
   ends. A proxy you forgot to list shows up there rather than failing silently.
 - **How it is applied.** The parsed list feeds ASP.NET Core's own `ForwardedHeadersOptions`
   (`XForwardedFor | XForwardedProto`, `ForwardLimit = 1`, the default loopback entries cleared, the
-  networks added to `KnownIPNetworks`) through `services.Configure` — the second framework options class
-  on this page, not a vSaga one — and only when the list is non-empty.
+  networks added to `KnownIPNetworks`) through `services.Configure` — one of the
+  [framework-owned options](#framework-owned-options-the-one-exception), not a vSaga class — and only when
+  the list is non-empty.
 
 **Do not trust more than your proxy.** A listed peer can assert any client address and scheme, so a
 client that can reach the API directly from inside a trusted range can spoof both. `docker-compose.yml`

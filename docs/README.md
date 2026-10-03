@@ -13,21 +13,27 @@ new here; the rest of this index is organized by topic, roughly in the order you
   `ChoreographyEventBuilder`, `TimeoutBuilder`, `RetryPolicy`, `ISagaContext`, and `.CallHttp`.
 - [`configuration.md`](configuration.md) — every options class: `SagaOrchestratorOptions`, the
   outbox, each transport adapter, persistence (the `Persistence:Provider` switch, `VSagaRedisOptions`,
-  `VSagaMongoOptions`, `ConnectionStrings:VSaga`), `.CallHttp`'s `HttpCallOptions`, chaos, the
-  dashboard's keys (API key, CORS origin, trusted proxies) and the UI container's variables,
-  OpenTelemetry wiring.
+  `VSagaMongoOptions`, `ConnectionStrings:VSaga`), `.CallHttp`'s `HttpCallOptions`, chaos, every
+  `Dashboard:*` key in one table (the identity store, the first administrator, sessions, passwords and
+  lockout, rate limits, the API key and its role, CORS origin, trusted proxies, snapshots) and the UI
+  container's variables, OpenTelemetry wiring.
 - [`persistence.md`](persistence.md) — EF Core/Postgres (migrations, the Postgres-volume caveat),
   MongoDB (the replica-set prerequisite, pinned write concern, the collections and indexes, supported
   servers), Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
   persistence. Each provider has a runnable sample in
-  [`dotnet/samples/Persistence/`](../dotnet/samples/Persistence/).
+  [`dotnet/samples/Persistence/`](../dotnet/samples/Persistence/). The dashboard's users are not in any of
+  them: they live in their own SQLite file (see [the identity store](dashboard.md#the-identity-store)).
 - [`observability.md`](observability.md) — the persisted event log and its state snapshots,
-  OpenTelemetry traces/metrics, and the one-line OTLP exporter wiring.
-- [`dashboard.md`](dashboard.md) — API endpoints, the manual retry that re-runs the failed step for one
-  saga type, state snapshots, API-key authentication, live updates over SignalR, the Angular SPA (the
-  saga detail page's timeline steps, data views and map jump) and how it is served (an nginx container
-  in the compose stack, on the API's own origin, and what to keep behind your own proxy or TLS), and the
-  Saga Map.
+  OpenTelemetry traces/metrics, the one-line OTLP exporter wiring, and the dashboard's own log events
+  (the audit log category and its event ids).
+- [`dashboard.md`](dashboard.md) — API endpoints and the permission each needs, the manual retry that
+  re-runs the failed step for one saga type, state snapshots, sign-in (cookie sessions, the first
+  administrator and its setup code, passwords, lockout and rate limits, CSRF protection), the API key,
+  access control (permissions, roles, grants scoped to saga types, the identity store), the audit log, live
+  updates over SignalR and the access checks behind them, the Angular SPA (sign-in, the administration area,
+  the saga detail page's timeline steps, data views and map jump) and how it is served (an nginx container
+  in the compose stack, on the API's own origin, and what to keep behind your own proxy or TLS), a
+  checklist for deploying beyond localhost, and the Saga Map.
 - [`testing.md`](testing.md) — `SagaTestHarness`, for unit-testing saga definitions against the real
   engine with no broker/database.
 - [`chaos.md`](chaos.md) — `VSaga.Chaos`'s fault-injection middleware (delay/drop/duplicate).

@@ -1,11 +1,13 @@
 # vSaga dashboard (Angular SPA)
 
-The web UI for the vSaga ops dashboard: a saga list with filtering and live updates, a per-instance
+The web UI for the vSaga ops dashboard: sign-in, a saga list with filtering and live updates, a per-instance
 detail page with two tabs, a service map and a timeline of numbered steps, a Saga data bar (the data at
-start, at end, and a comparison) and each step's data, and a retry that re-runs the step a failed saga
-failed in (see [`docs/dashboard.md`](../docs/dashboard.md#the-saga-detail-page)). It is
+start, at end, and a comparison) and each step's data, a retry that re-runs the step a failed saga
+failed in (see [`docs/dashboard.md`](../docs/dashboard.md#the-saga-detail-page)), and, for users who may
+manage access, an administration area for users, teams and roles. It is
 a thin client over the Dashboard API — every screen here is backed by an endpoint documented in
-[`docs/dashboard.md`](../docs/dashboard.md).
+[`docs/dashboard.md`](../docs/dashboard.md) — and decides nothing about access itself: it shows what the API
+would allow and hides what it would refuse.
 
 ## Prerequisites
 
@@ -21,6 +23,13 @@ compose stack's:
 ```bash
 docker compose up -d --build      # from the repository root: Postgres, RabbitMQ, dashboard API and UI, sample
 ```
+
+Every page needs a signed-in user, so sign in as the stack's administrator: the compose stack seeds
+`admin` / `dev-local-only-change-me` into its empty identity volume (see
+[The first administrator](../docs/dashboard.md#the-first-administrator)). Browsers scope cookies by host, not
+port, and each compose project names its session cookie differently (`vsaga.session.<project>`), so the dev
+server on http://localhost:4201 shares its sign-in with the compose UI of the stack whose API it proxies to,
+and needs its own sign-in against another stack's.
 
 ## Run it
 
@@ -81,7 +90,6 @@ host or port:
 ```ts
 export const API_BASE_URL = '';
 export const HUB_URL = `${API_BASE_URL}/hubs/saga`;   // '/hubs/saga'
-export const DASHBOARD_API_KEY = 'dev-local-only-change-me';
 ```
 
 So every request goes to whatever served the page, which forwards `/api` and `/hubs` to the API:
@@ -96,22 +104,123 @@ So every request goes to whatever served the page, which forwards `/api` and `/h
 Both pass WebSocket upgrades through for the SignalR hub and leave the `Host` header as the browser
 sent it, so the API sees `localhost:4200` or `localhost:4201`. Because the browser only ever talks to
 its own origin, the API's CORS setting (`Dashboard__WebOrigin`) plays no part, and no port in this app
-has to match any server setting. A `dotnet run` API ships an empty `Dashboard:ApiKey`, which denies
-every request, so start it with `Dashboard__ApiKey` set to `DASHBOARD_API_KEY`'s value.
+has to match any server setting. A `dotnet run` API has no user yet: it logs a one-time setup code at start,
+which the app's `/setup` page asks for, or start it with `Dashboard__Admin__Username` and
+`Dashboard__Admin__Password` set to be seeded (see
+[The first administrator](../docs/dashboard.md#the-first-administrator)).
 
-The key is attached to every request by an HTTP interceptor
-([`src/app/interceptors/api-key.interceptor.ts`](src/app/interceptors/api-key.interceptor.ts)) as the
-`X-Api-Key` header, and passed to the SignalR hub via `accessTokenFactory`.
+**There is no API key in this app.** `DASHBOARD_API_KEY` and `api-key.interceptor.ts` are gone: the browser
+authenticates with the HttpOnly session cookie the API sets at sign-in, which no script can read, and the
+SignalR connection is built without an access token (the same cookie authenticates its negotiate and its
+WebSocket). `Dashboard:ApiKey` is a credential for scripts and probes only — see
+[API key](../docs/dashboard.md#api-key). A change to the server's key therefore touches nothing here, and a
+search of the served bundle finds neither the demo's key nor `X-Api-Key`.
 
-Two consequences worth knowing before you change anything:
+## Signing in: the auth service, guards and interceptor
 
-- **Changing the server's key means editing this file too.** The API reads `Dashboard:ApiKey` from
-  its own configuration (`Dashboard__ApiKey` in `docker-compose.yml`); the two are not wired
-  together, so they have to be changed in both places, and the image rebuilt.
-- **The key ships in the bundle.** It is a build-time constant in client-side JavaScript, so anyone
-  who can load the page can read it. That is an accepted trade-off for an internal ops dashboard on
-  a trusted network — see [`docs/dashboard.md#authentication`](../docs/dashboard.md#authentication)
-  for the reasoning and what deploying this beyond that setting would require.
+Sign-in is one service, four guards and one interceptor, wired in
+[`src/app/app.config.ts`](src/app/app.config.ts) and [`src/app/app.routes.ts`](src/app/app.routes.ts). What
+the API does on its side is in [`docs/dashboard.md`](../docs/dashboard.md#authentication).
+
+- **`AuthService`** ([`services/auth.service.ts`](src/app/services/auth.service.ts)) holds the session as
+  signals (`status`, `isAuthenticated`, `user`, `access`, `setupRequired`, `setupAvailable`, `setupProblem`,
+  `passwordMinLength`, `canManageAccess`, `signInUnavailable`) and the flows as promises (`login`, `logout`,
+  `setup`, `changePassword`, `refresh`); the HTTP services elsewhere stay Observable. `can(permission,
+  sagaType?)` and `canAny(permission)` answer from the access the server computed, and `PermissionKey` is the
+  one permission type. Its rules: a failed read of the session never signs anyone out (it keeps the last known
+  session, and only an app with none yet is marked `unreachable`), so an API restart does not end the UI's
+  session; after every sign-in, sign-out, setup and password change the session is read again, which also
+  re-issues the `XSRF-TOKEN` cookie, because the API binds antiforgery tokens to the identity; a different user
+  id after a read (another tab signed in as someone else) reloads the page; and the dependency on the hub is
+  one way: the service stops, resumes and probes it, the hub knows nothing of the service.
+- **The app initializer** (`provideAppInitializer(() => inject(AuthService).bootstrap())`) reads
+  `GET /api/auth/session` before the first navigation, because the first page is chosen from the session. It
+  never rejects, and a session request that does not answer within 8 s counts as failed, so the app starts
+  anyway. Until then `index.html` shows a "Loading the dashboard…" placeholder, written as plain markup because
+  the container's Content Security Policy allows no inline script.
+- **Guards** ([`guards/auth.guards.ts`](src/app/guards/auth.guards.ts)): `authGuard` sends a visitor with no
+  session to `/login?returnUrl=…`, to `/setup` while no user exists, and a user who must change their password
+  to `/account`; `anonymousGuard` guards `/login` (a signed-in visitor goes on to the page the sign-in was
+  for); `setupGuard` guards `/setup`; `adminGuard` guards `/admin` as a **`canMatch`** guard, so the admin chunk
+  is never requested for a user without `access.manage` for every saga type. `safeReturnUrl` accepts only an
+  absolute path of the app as a return address: not `//host`, not a full URL, not `/login` or `/setup`. A
+  guard runs before its route's chunk is requested, so a visitor who is turned away downloads nothing.
+- **`authInterceptor`** ([`interceptors/auth.interceptor.ts`](src/app/interceptors/auth.interceptor.ts))
+  adds no credential. Angular's built-in XSRF interceptor, which runs before it, copies the `XSRF-TOKEN` cookie
+  into `X-XSRF-TOKEN` on same-origin unsafe requests. The interceptor reacts to what the API answers, for
+  `/api/` URLs on the page's own origin only: a **401** outside the sign-in endpoints means the session ended
+  behind the app's back, so it signs out locally, stops the hub and goes to `/login` (`reason=expired`); a
+  **403** reads the session again (at most every 5 s), since access may have changed; a **400** with the code
+  `antiforgery` reads the session again, which re-issues the cookie, and sends the request **once** more with
+  the new token. A failure always reaches the caller unchanged.
+- **The identity-epoch contract.** `AuthService` counts the moments the identity behind the cookie may have
+  changed (`identityEpoch`: a local sign-out, and every sign-in, sign-out, setup and password-change request
+  settling, whether it succeeded or not). A 401 to a request that was sent before the latest change says
+  nothing about the session there is now, so the interceptor reads `currentIdentityEpoch()` **when it sends**
+  the request (and again for the antiforgery retry) and passes it to `handleUnauthorized(epoch)`, which
+  ignores a stale one; `noteForbidden` takes none. A session read that was sent before a change and answers
+  after it is dropped for the same reason. A change to either side of this contract needs the other changed
+  with it.
+- **A tab left open across a rebuild** asks for lazy chunks whose hashed names no longer exist: the router's
+  navigation error handler (`stale-chunk-reload.ts`) reloads the page once, and never more than once a minute.
+
+## Routes, lazy chunks and the bundle budget
+
+| Route | Chunk | Guard |
+| --- | --- | --- |
+| `/sagas` | initial | `authGuard` |
+| `/sagas/:sagaType/:id` | lazy (`saga-detail`) | `authGuard` |
+| `/login`, `/setup`, `/account` | lazy, one each | `anonymousGuard`, `setupGuard`, `authGuard` |
+| `/admin/{users,teams,roles}` with `new` and `:id` | lazy, the area (`admin-routes`) and each of its pages | `adminGuard` (`canMatch`) |
+
+The production build warns when the **initial** bundle passes 500 kB and fails at 1 MB, and warns at 4 kB per
+component style and fails at 8 kB (the `budgets` in [`angular.json`](angular.json)). `npx ng build` prints the
+Initial total; the project keeps it under the warning, so a new page is a lazy route and eager code stays
+minimal. The saga detail page, the heaviest in the app (the timeline, the map and the data inspector), is lazy
+for that reason: the initial bundle had no room for it beside the session code. The sign-in pages and the whole
+administration area are lazy too, and the area's pages are lazy in turn, so a manager downloads only the ones
+they open. `@angular/forms` is in the initial bundle (the saga list's filters use it), which is why the
+forms of the lazy pages are built as described below.
+
+## The administration area
+
+[`src/app/pages/admin/`](src/app/pages/admin) is the biggest lazy tree of the app. `app.routes.ts` loads it with
+`loadChildren` under `canMatch: [adminGuard]`; `AdminShell` is its frame (the heading, the Users / Teams / Roles
+tabs) and provides `AdminStore` from the route, so the store lives and dies with the area. Around them:
+
+- **`AdminApiService`** is one method per `/api/admin` endpoint, with no state. Its request bodies carry only the
+  members the API reads, because the API rejects any other. The golden JSON files under
+  [`src/app/testing/contracts/admin/`](src/app/testing/contracts/admin) pin both sides of the wire contract: the
+  .NET endpoint tests and `admin-api.service.spec.ts` assert the same files.
+- **`AdminStore`** loads users, teams, roles, the permission catalogue and the saga types once for the shell;
+  every change awaits the API and then reads the lists again, so what the pages show is what the server stores.
+  It never rejects a read (a failure becomes the sentence to show, with a way to try again) and a page seeds
+  its draft from it only after it has loaded.
+- **The pages** (users, teams and roles, each a list and an edit page) share the pieces under `components/` and
+  `pages/admin/`: the `GrantsEditor` (one grant per role, all saga types or a selection, and an "exact saga
+  type name" field for a type that has not run yet), `explainAccess` (the browser's copy of the server's access
+  rule, driven by the catalogue's `scopable` and `implies`, for the effective-access preview) and
+  `confirm-button`. A `409 last_administrator` shows a banner and keeps the draft. Team membership is written
+  only through the team: a user page shows teams read-only and sends no `teamIds`.
+
+## Forms: the `ngNoForm` pattern
+
+The sign-in, account and administration forms are template-driven (`FormsModule`, `ngModel` bound to signals)
+with `ngNoForm` on the `<form>`: the fields are standalone controls and `submit` is the native event, and the
+checks (required, lengths, the confirmation) are made in the component instead of by Angular's validator
+directives. `@angular/forms` is already in the initial bundle, so `NgForm` and its validators, which nothing
+else uses, would add about 7 kB to it. Follow the pattern in a new form (see `pages/login/login.ts`).
+
+## Unit tests and `splitting: false`
+
+`npx ng test` runs Vitest through `@angular/build:unit-test`, and [`angular.json`](angular.json) sets
+`"splitting": false` on the test target. Without it a spec's `vi.mock` could be bypassed: the builder runs with
+`isolate: false` and code splitting on, so modules several spec files share become one chunk per worker, and a
+worker that has already evaluated that chunk for one spec (the real `saga-hub.service`, say, and the real
+`@microsoft/signalr` it imports) never applies the next spec's mock to it. Without the option 12 of 20 full runs
+failed all 39 hub specs with `Cannot resolve '/hubs/saga'`; with it, 24 consecutive runs passed. The builder marks the option deprecated ("No longer needed with Vitest 5") and says so at the start of
+every run; remove it when the project moves to Vitest 5, or use `"isolate": true`, the more thorough but about
+9 s slower alternative measured at the time.
 
 ## The container image
 
@@ -162,8 +271,15 @@ Dockerfile                  The two-stage container image (npm ci + ng build, th
 nginx/default.conf.template The nginx configuration: static files, the /api and /hubs proxy, headers
 proxy.conf.mjs              The dev server's proxy for /api and /hubs (VSAGA_API_URL)
 src/app/
+  guards/                   authGuard, anonymousGuard, setupGuard, adminGuard (canMatch), safeReturnUrl
+  interceptors/             The auth interceptor: 401 / 403 handling and the antiforgery retry
+  pages/login/, setup/, account/   The sign-in pages, lazy routes
+  pages/admin/              The administration area, a lazy tree: shell, store, API service, users, teams, roles
   pages/saga-list/          The filterable, sortable, paged saga list
-  pages/saga-detail/        One instance: summary, Saga data bar, map/timeline tabs, retry, URL state
+  pages/saga-detail/        One instance (lazy): summary, Saga data bar, map/timeline tabs, retry, URL state
+  components/user-menu/     The signed-in user's menu in the top bar
+  components/access-summary/ What a session, user or team may do, as sentences
+  components/confirm-button/ An inline "are you sure?" for destructive actions
   components/saga-map/      The service-graph renderer, its replay scrubber and the as-of-entry banner
   components/saga-timeline/ The timeline as numbered steps, with Recorded at times and the failed-step marker
   components/saga-data-inspector/  One state: changes against an earlier one, full state, message, copy
@@ -171,12 +287,13 @@ src/app/
   components/local-time/    A <time> in the browser's local zone, UTC on hover
   components/kind-badge/    The Orchestrated/Choreographed pill
   components/status-badge/  The saga-status pill
-  services/                 HTTP client and the SignalR hub client
-  interceptors/             The HTTP interceptor that adds the X-Api-Key header
-  models/                   DTOs mirroring the API's response shapes
+  services/                 AuthService, the HTTP client and the SignalR hub client
+  models/                   DTOs mirroring the API's response shapes (sessions, sagas)
   util/                     Pure helpers: the step fold, JSON diff, state JSON and markers, time formats,
-                            entry-type labels
-  testing/                  Spec-only fixtures (timeline entries and steps), excluded from the app build
+                            entry-type labels, the API's problem bodies, session access checks
+  testing/                  Spec-only fixtures (timeline entries and steps, the admin API's golden JSON),
+                            excluded from the app build
+  stale-chunk-reload.ts     Reloads once when a lazy chunk of a rebuilt image no longer exists
 ```
 
 Generated with Angular CLI 21.2.10 and since moved to Angular 22; `npx ng generate component <name>`

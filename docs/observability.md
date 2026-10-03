@@ -30,7 +30,11 @@ That body is what lets the dashboard re-run a failed step (see
 [`dashboard.md`](dashboard.md#manual-retry)); a saga recorded before `MessageReceived` carried it can
 be retried only from a `StepFailed` entry or its first step. On MongoDB a body above
 `MaxPayloadJsonBytes` is stored as a size marker instead (see
-[`configuration.md`](configuration.md#vsagamongooptions-vsagapersistencemongodb)).
+[`configuration.md`](configuration.md#vsagamongooptions-vsagapersistencemongodb)). These bodies, the state
+snapshots and the exception text in `ErrorMessage` are business data: the dashboard API serves them only to a
+caller who holds `sagas.data` for the saga's type, and nulls them, entry by entry, for everyone else (see
+[What a scoped caller sees](dashboard.md#what-a-scoped-caller-sees)). The log itself is the same for every
+reader.
 
 ### State snapshots
 
@@ -210,3 +214,41 @@ silently drop it.
 ```csharp
 services.AddVSagaOpenTelemetry();   // sources registered, propagator set — no exporter without the delegates above
 ```
+
+## Dashboard log events
+
+`VSaga.Dashboard.Api` logs its sign-in, access and live-connection events with stable event ids (source
+generated `LoggerMessage`s, so the id and name are fixed and a filter or alert can key on them). The ids are
+in the 7000s; the range says what produced them.
+
+| Event ids | Produced by | What |
+| --- | --- | --- |
+| 7100–7102, 7110–7115 | the **audit log**, category `VSaga.Dashboard.Audit` | Sign-ins and sign-outs, failed sign-ins, lockouts, rate-limited attempts, and every committed or refused change to users, teams and roles. Each event carries the actor, the action, the target, the outcome and the client address; never passwords, hashes or setup codes. The event ids, levels and what each means are listed under [Audit log](dashboard.md#audit-log). |
+| 7200–7204 | the identity store's start-up | `7200` the resolved database path (Information), `7201` ready (Information), `7202` not ready, with the reason, at Error, `7203` still not ready (Debug), `7204` the file's mode could not be restricted to its owner (Warning). |
+| 7210–7215 | the first administrator | `7210` first-run setup is open, **with the one-time setup code in the message** (Warning), `7211` setup is open with the code from `Dashboard:Setup:Code` (Warning), `7212` the administrator was seeded (Information), `7213` the seed could not be applied (Error), `7214` `ResetOnStart` reset the account (Warning; it repeats at every start while the setting is `true`), `7215` a seed was ignored because users exist (Debug). |
+| 7300–7303 | sessions and the API key | `7300` a session was rejected, and why (Debug; the response never says), `7301` the API key is shorter than 24 characters, `7302` `Dashboard:ApiKeyRole` names no role, `7303` that role holds `access.manage`, which the key never gets (each Warning, at start). |
+| 7310–7311 | antiforgery and the hub's origin check | `7310` a request failed the antiforgery check (Debug), `7311` a hub request from a foreign origin was refused, with the received and the expected origin (Warning). Behind a proxy a burst of 7311 means the proxy rewrites the host or the scheme. |
+| 7320–7322 | live hub connections | `7320` N connections were closed because access changed (Information), `7321` one could not be closed for reconnect and was aborted instead (Warning), `7322` it could not even be aborted and may stay open on access it lost (Error). |
+
+The audit events are the ones to ship: route the `VSaga.Dashboard.Audit` category to wherever you keep
+security logs (a `Logging:LogLevel:VSaga.Dashboard.Audit` entry sets its level; any logging provider's own
+filter can select it). Event `7210` is the exception that needs the opposite care: while it is the only way to
+claim the first administrator, whoever can read the API's log can read the code, so treat the log of a fresh
+install with no users as sensitive until the first administrator exists (or preset the code with
+`Dashboard:Setup:Code` and do not log it).
+
+### The `identity` health check
+
+`GET /health` on the dashboard API lists a third check, `identity`, next to `persistence` and `rabbitmq`: the
+dashboard's own SQLite identity store (see [`dashboard.md`](dashboard.md#the-identity-store)), separate from
+the saga store the `persistence` check watches. It is registered to fail as `Degraded`, never `Unhealthy`:
+without the store nobody can sign in, but the saga views, the API key with a built-in role and the saga host
+do not depend on it, so `/health` stays `200` and compose's `service_healthy` gate on `dashboard-api` still
+opens for `order-processing`. A probe also gives a store that failed to initialise its chance to retry (at most
+once every 10 s) and waits for that at most 2 s; the description carries the reason, naming the setting to fix
+but not the file's path (the log has the path, event `7200`). The check is `Degraded` too while a configured
+first administrator could not be created, with the setting named. CI asserts that it is `healthy` on a fresh
+compose stack.
+
+Each retry made through the dashboard is also in the saga's own event log rather than here: the
+`ManualRetryRequested` entry's `sourceService` is `dashboard:<username>` or `dashboard:api-key`.

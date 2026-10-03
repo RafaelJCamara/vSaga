@@ -25,6 +25,12 @@ Each provider has a small runnable sample in
 [`dotnet/samples/Persistence/`](../dotnet/samples/Persistence/): the same saga on each store, the
 provider's wiring marked out in its `Program.cs`, and a compose file for its database.
 
+**The dashboard's identity store is not one of these.** The dashboard API keeps its users, teams, roles, grants
+and the key ring that protects its sessions in a SQLite file of its own (`Dashboard:Identity:Sqlite:Path`, on
+the `vsaga-dashboard-identity` volume in compose), whatever `Persistence:Provider` says. It implements none of
+the store contracts above, the engine hosts never read it, and it has its own migrations and its own backup
+story: see [`dashboard.md`](dashboard.md#the-identity-store).
+
 ## EF Core / Postgres
 
 `VSaga.Persistence.EFCore` implements every store against `VSagaDbContext` and is **provider-agnostic**
@@ -132,6 +138,10 @@ redeploy. Two consequences worth knowing:
   compose down -v` once before bringing the stack back up if your volume predates the migrations pass.
   This does **not** apply to a volume that has already had the versioned migrations applied at least
   once: those upgrade in place, and wiping one only costs you saga history, not correctness.
+
+The dashboard's `vsaga-dashboard-identity` volume is a second, separate one. It holds the dashboard's users and
+session keys, not saga data, so wiping only the Postgres volume leaves every user in place, and `docker compose
+down -v` removes both (the demo administrator is then seeded again on the next start).
 
 ## Redis
 
