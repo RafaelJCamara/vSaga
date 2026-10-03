@@ -1,0 +1,30 @@
+@if (run(); as current) {
+  <div class="guide-shield" (mousedown)="$event.preventDefault()"></div>
+  <div class="guide-spot" aria-hidden="true"></div>
+  <section
+    class="guide-popover"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="guide-title"
+    aria-describedby="guide-body"
+  >
+    <div class="guide-text" aria-live="polite">
+      <h2 class="guide-title" id="guide-title">{{ step()?.title }}</h2>
+      <p class="guide-body" id="guide-body">{{ step()?.body }}</p>
+    </div>
+    <p class="guide-progress muted">Step {{ index() + 1 }} of {{ current.steps.length }}</p>
+    <div class="guide-actions">
+      <a class="btn btn--quiet" [href]="userGuideUrl()" target="_blank" rel="noopener noreferrer"
+        >User guide</a
+      >
+      <button type="button" class="btn btn--quiet" (click)="skip()">Skip tour</button>
+      <span class="guide-spacer"></span>
+      @if (index() > 0) {
+        <button type="button" class="btn" (click)="back()">Back</button>
+      }
+      <button type="button" class="btn guide-primary" (click)="next()">
+        {{ isLast() ? 'Done' : 'Next' }}
+      </button>
+    </div>
+  </section>
+}

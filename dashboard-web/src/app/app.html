@@ -16,6 +16,7 @@
     }
     <div class="topbar-end">
       @if (auth.isAuthenticated()) {
+        <app-guide-toggle />
         <app-user-menu />
       }
     </div>
@@ -24,3 +25,6 @@
     <router-outlet />
   </main>
 </div>
+@defer (when guide.enabled()) {
+  <app-guide-overlay />
+}

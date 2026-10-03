@@ -13,7 +13,12 @@ input[type='search'] {
   min-width: 220px;
 }
 
-button {
+/* The page's action buttons (Refresh, the pager). Scoped to where they sit, not to every button: a rule on
+   `button` here would also win over the global `.btn` and make the sort headings, which are buttons too,
+   look like accent buttons. */
+.toolbar button,
+.banner button,
+.pagination button {
   background: var(--accent);
   color: #fff;
   border: none;
@@ -23,7 +28,9 @@ button {
   font-weight: 600;
 }
 
-button:hover {
+.toolbar button:hover,
+.banner button:hover,
+.pagination button:hover {
   filter: brightness(1.1);
 }
 
@@ -48,6 +55,20 @@ button:hover {
   color: var(--text);
 }
 
+/* A sort heading is a button that looks like the heading it replaces: the cell's text, in the cell's colour,
+   with the global focus ring. */
+.sort-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
 .sort-indicator {
   margin-left: 0.3rem;
   font-size: 0.65rem;
@@ -57,8 +78,19 @@ button:hover {
   cursor: pointer;
 }
 
-.saga-row:hover {
+.saga-row:hover,
+.saga-row:focus-within {
   background: var(--bg-hover);
+}
+
+/* The correlation id is the row's link: it reads as the id, and shows it is a link on hover and focus. */
+.row-link {
+  color: inherit;
+}
+
+.row-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .pagination {

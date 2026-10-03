@@ -2,6 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { BehaviorSubject, Observable, Subject, of, throwError } from 'rxjs';
 import { vi } from 'vitest';
+import { GUIDE_ANCHORS, GUIDE_TOURS, GuideAnchor } from '../../components/guide-overlay/guide-tours';
+import { guideAreaOf } from '../../services/guide-areas';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import { PagedResult, SagaSummary } from '../../models/saga.model';
@@ -668,6 +670,321 @@ describe('SagaList', () => {
 
   // What the session lets the viewer list: the API enforces it, and the page follows the session so it
   // neither asks for what it would refuse nor words a refusal as an outage.
+  describe('the anchors of the guide tour', () => {
+    const twoSagas = () =>
+      setup({
+        items: [makeSummary({ correlationId: 'id-1' }), makeSummary({ correlationId: 'id-2', status: 'Failed' })],
+        page: 1,
+        pageSize: 25,
+        totalCount: 2,
+      });
+    const anchorsIn = (el: Element) => Array.from(el.querySelectorAll('[data-tour]'), (e) => e.getAttribute('data-tour'));
+
+    it('marks the filters, the table, the Status heading, every row and the pager, and nothing else', () => {
+      const el: HTMLElement = twoSagas().nativeElement;
+
+      expect(el.querySelector('.toolbar')?.getAttribute('data-tour')).toBe('list-filters');
+      expect(el.querySelector('table.data-table')?.getAttribute('data-tour')).toBe('list-table');
+      expect(el.querySelector('.pagination')?.getAttribute('data-tour')).toBe('list-pagination');
+      const headings = Array.from(el.querySelectorAll('thead th'));
+      expect(headings.filter((th) => th.hasAttribute('data-tour')).map((th) => th.textContent?.trim())).toEqual(['Status']);
+      expect(headings.find((th) => th.textContent?.includes('Status'))?.getAttribute('data-tour')).toBe('list-sort');
+      const rows = Array.from(el.querySelectorAll('tbody tr'));
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.getAttribute('data-tour'))).toEqual(['list-row', 'list-row']);
+
+      expect(anchorsIn(el).sort()).toEqual(['list-filters', 'list-pagination', 'list-row', 'list-row', 'list-sort', 'list-table']);
+    });
+
+    it('uses only names of the vocabulary', () => {
+      for (const name of anchorsIn(twoSagas().nativeElement)) expect(GUIDE_ANCHORS).toContain(name);
+    });
+
+    it('has every element the list tour and the list area point at, apart from the top bar toggle', () => {
+      const el: HTMLElement = twoSagas().nativeElement;
+      const names = GUIDE_TOURS.list.flatMap((step) => [step.anchor, step.fallbackAnchor, step.reveal]);
+      const wanted: string[] = [guideAreaOf('list')?.readyAnchor, ...names].filter(
+        (name): name is GuideAnchor => !!name && name !== 'topbar-guide',
+      );
+
+      expect(wanted.length).toBeGreaterThan(0);
+      for (const name of new Set(wanted)) expect(el.querySelector(`[data-tour="${name}"]`), name).not.toBeNull();
+    });
+
+    it('has no table, heading, row or pager to point at while there is nothing to list, so the tour drops those steps', () => {
+      const el: HTMLElement = setup().nativeElement;
+
+      expect(anchorsIn(el)).toEqual(['list-filters']);
+    });
+  });
+
+  describe('the sort headings', () => {
+    const sortable = (el: HTMLElement) => Array.from(el.querySelectorAll<HTMLElement>('th.sortable'));
+    const oneSaga = () => setup({ items: [makeSummary()], page: 1, pageSize: 25, totalCount: 1 });
+
+    it('are buttons inside the heading cells, named by the heading, with the cell keeping its place in the table', () => {
+      const el: HTMLElement = oneSaga().nativeElement;
+
+      expect(sortable(el).map((th) => th.querySelector('button')?.textContent?.trim())).toEqual(['Status', 'Updated']);
+      for (const th of sortable(el)) {
+        expect(th.tagName).toBe('TH');
+        expect(th.querySelectorAll('button')).toHaveLength(1);
+        expect(th.querySelector('button')?.getAttribute('type')).toBe('button');
+        expect(th.parentElement?.parentElement?.tagName).toBe('THEAD');
+      }
+    });
+
+    it('can be reached and held by the keyboard focus', () => {
+      const el: HTMLElement = oneSaga().nativeElement;
+      const [status, updated] = sortable(el).map((th) => th.querySelector('button') as HTMLButtonElement);
+      (document.body as HTMLElement).focus();
+
+      status.focus();
+      expect(document.activeElement).toBe(status);
+      updated.focus();
+      expect(document.activeElement).toBe(updated);
+    });
+
+    it('sorts once when the button is activated: its click bubbles to the cell, which sorts', () => {
+      const fixture = oneSaga();
+      fixture.detectChanges();
+      apiMock.list.mockClear();
+
+      (sortable(fixture.nativeElement)[0].querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      expect(apiMock.list).toHaveBeenCalledTimes(1);
+      expect(apiMock.list).toHaveBeenCalledWith(expect.objectContaining({ sortBy: 'Status', sortDescending: false }));
+
+      (sortable(fixture.nativeElement)[0].querySelector('button') as HTMLButtonElement).click();
+      expect(apiMock.list).toHaveBeenCalledTimes(2);
+      expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: 'Status', sortDescending: true }));
+    });
+
+    it('says which one the list is sorted by, and which way, on the heading cell', () => {
+      const fixture = oneSaga();
+      const ariaSort = () => sortable(fixture.nativeElement).map((th) => th.getAttribute('aria-sort'));
+      expect(ariaSort()).toEqual([null, null]);
+
+      fixture.componentInstance.toggleSort('Status');
+      fixture.detectChanges();
+      expect(ariaSort()).toEqual(['ascending', null]);
+
+      fixture.componentInstance.toggleSort('Status');
+      fixture.detectChanges();
+      expect(ariaSort()).toEqual(['descending', null]);
+
+      fixture.componentInstance.toggleSort('UpdatedAt');
+      fixture.detectChanges();
+      expect(ariaSort()).toEqual([null, 'ascending']);
+    });
+
+    describe('after sorting from the keyboard', () => {
+      const one = { items: [makeSummary()], page: 1, pageSize: 25, totalCount: 1 };
+      const heading = (el: HTMLElement, label: string) =>
+        sortable(el).find((th) => th.textContent?.includes(label))?.querySelector('button') as HTMLButtonElement;
+
+      /** The page, with the next read of the list held open until the spec answers it. */
+      function sortWhileReading() {
+        const fixture = setup(one);
+        const answer = new Subject<PagedResult<SagaSummary>>();
+        apiMock.list.mockReturnValue(answer);
+        return { fixture, answer, el: fixture.nativeElement as HTMLElement };
+      }
+
+      it('has the focus on the new heading button when the sorted list is back: the table was replaced meanwhile', () => {
+        const { fixture, answer, el } = sortWhileReading();
+        const old = heading(el, 'Status');
+        old.focus();
+        expect(document.activeElement).toBe(old);
+
+        old.click();
+        fixture.detectChanges();
+        expect(el.querySelector('table')).toBeNull(); // "Loading…": the heading button is gone
+        expect(old.isConnected).toBe(false);
+        expect(document.activeElement).toBe(document.body);
+
+        answer.next({ ...one });
+        fixture.detectChanges();
+
+        const again = heading(el, 'Status');
+        expect(again).not.toBe(old);
+        expect(document.activeElement).toBe(again);
+      });
+
+      it('does the same for the Updated heading, and a second activation reverses the sort', () => {
+        const { fixture, answer, el } = sortWhileReading();
+        heading(el, 'Updated').focus();
+        heading(el, 'Updated').click();
+        fixture.detectChanges();
+        answer.next({ ...one });
+        fixture.detectChanges();
+        expect(document.activeElement).toBe(heading(el, 'Updated'));
+
+        (document.activeElement as HTMLElement).click();
+        expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: 'UpdatedAt', sortDescending: true }));
+      });
+
+      it('takes nothing from a user who moved the focus while the list was loading', () => {
+        const { fixture, answer, el } = sortWhileReading();
+        heading(el, 'Status').focus();
+        heading(el, 'Status').click();
+        fixture.detectChanges();
+        const search = el.querySelector('input[type="search"]') as HTMLInputElement;
+        search.focus();
+
+        answer.next({ ...one });
+        fixture.detectChanges();
+
+        expect(document.activeElement).toBe(search);
+      });
+
+      it('does not move the focus for a click on the heading cell outside its button', () => {
+        const { fixture, answer, el } = sortWhileReading();
+        sortable(el)[0].click(); // the cell itself, as a pointer click on its padding would
+        fixture.detectChanges();
+        answer.next({ ...one });
+        fixture.detectChanges();
+
+        expect(document.activeElement).toBe(document.body);
+      });
+
+      it('has the focus on the button too when the sorted list could not be read and the old rows are back', () => {
+        const { fixture, answer, el } = sortWhileReading();
+        heading(el, 'Status').focus();
+        heading(el, 'Status').click();
+        fixture.detectChanges();
+
+        answer.error(new Error('network down'));
+        fixture.detectChanges();
+
+        expect(el.querySelector('.banner--error')).not.toBeNull();
+        expect(document.activeElement).toBe(heading(el, 'Status'));
+      });
+
+      it('forgets the focus when there is no table to give it to, and does not take it later', () => {
+        const { fixture, answer, el } = sortWhileReading();
+        heading(el, 'Status').focus();
+        heading(el, 'Status').click();
+        fixture.detectChanges();
+
+        answer.error(httpError(403, problem('forbidden', 'no')));
+        fixture.detectChanges();
+        expect(el.querySelector('table')).toBeNull(); // the refusal cleared the rows
+        expect(document.activeElement).toBe(document.body);
+
+        apiMock.list.mockReturnValue(of({ ...one }));
+        fixture.componentInstance.refresh();
+        fixture.detectChanges();
+
+        expect(el.querySelector('table')).not.toBeNull();
+        expect(document.activeElement).toBe(document.body);
+      });
+    });
+
+    it('keeps the direction arrow in the button, hidden from assistive technology, which has aria-sort', () => {
+      const fixture = oneSaga();
+      fixture.componentInstance.toggleSort('Status');
+      fixture.detectChanges();
+
+      const indicator = sortable(fixture.nativeElement)[0].querySelector('button .sort-indicator');
+      expect(indicator?.textContent).toContain('▲');
+      expect(indicator?.getAttribute('aria-hidden')).toBe('true');
+    });
+  });
+
+  describe('opening a saga from the keyboard', () => {
+    let router: Router;
+
+    function withRows() {
+      const fixture = setup({
+        items: [makeSummary({ correlationId: 'abcdef012345' }), makeSummary({ correlationId: 'id-2', sagaType: 'Ship Saga' })],
+        page: 1,
+        pageSize: 25,
+        totalCount: 2,
+      });
+      router = TestBed.inject(Router);
+      const navigate = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+      const navigateByUrl = vi.spyOn(router, 'navigateByUrl').mockResolvedValue(true);
+      const rows = Array.from(fixture.nativeElement.querySelectorAll('tbody tr')) as HTMLElement[];
+      return { fixture, rows, navigate, navigateByUrl };
+    }
+
+    it('gives every row a link in its first cell: the correlation id, to that saga', () => {
+      const { rows } = withRows();
+
+      const links = rows.map((row) => row.querySelector('td:first-child a') as HTMLAnchorElement);
+      expect(links.map((a) => a.getAttribute('href'))).toEqual(['/sagas/OrderSaga/abcdef012345', '/sagas/Ship%20Saga/id-2']);
+      expect(links.map((a) => a.textContent?.trim())).toEqual(['abcdef01…', 'id-2…']);
+    });
+
+    it('has one tab stop in a row, the link, and the row itself cannot take the focus', () => {
+      const { rows } = withRows();
+
+      for (const row of rows) {
+        expect(row.hasAttribute('tabindex')).toBe(false);
+        expect(row.querySelectorAll('a[href], button, input, select, [tabindex]')).toHaveLength(1);
+      }
+    });
+
+    it('lets the link take the keyboard focus', () => {
+      const { rows } = withRows();
+      const link = rows[0].querySelector('a') as HTMLAnchorElement;
+      (document.body as HTMLElement).focus();
+
+      link.focus();
+
+      expect(document.activeElement).toBe(link);
+    });
+
+    // Enter on a focused link is the browser's own activation, which fires this click: jsdom has no such
+    // behaviour, so the click is what a spec can send.
+    it('opens the saga once when the link is activated: the row does not open it a second time', () => {
+      const { rows, navigate, navigateByUrl } = withRows();
+
+      (rows[0].querySelector('a') as HTMLAnchorElement).click();
+
+      expect(navigateByUrl).toHaveBeenCalledTimes(1);
+      expect(router.serializeUrl(navigateByUrl.mock.calls[0][0] as never)).toBe('/sagas/OrderSaga/abcdef012345');
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it('leaves a modified click on the link to the browser (a new tab), and does not open the saga here', () => {
+      const { rows, navigate, navigateByUrl } = withRows();
+      // What the browser would do with the click (open a tab) is a navigation jsdom does not implement.
+      const browserDefault = (event: Event) => event.preventDefault();
+      document.addEventListener('click', browserDefault);
+
+      try {
+        (rows[0].querySelector('a') as HTMLAnchorElement).dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }),
+        );
+      } finally {
+        document.removeEventListener('click', browserDefault);
+      }
+
+      expect(navigateByUrl).not.toHaveBeenCalled();
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it('still opens the saga on a click anywhere else in the row', () => {
+      const { rows, navigate } = withRows();
+
+      (rows[1].querySelectorAll('td')[3] as HTMLElement).click();
+
+      expect(navigate).toHaveBeenCalledTimes(1);
+      expect(navigate).toHaveBeenCalledWith(['/sagas', 'Ship Saga', 'id-2']);
+    });
+
+    it('opens the saga of the row that was clicked, not of another', () => {
+      const { rows, navigate } = withRows();
+
+      rows[0].click();
+
+      expect(navigate).toHaveBeenCalledWith(['/sagas', 'OrderSaga', 'abcdef012345']);
+    });
+  });
+
   describe('access by permission', () => {
     const none = { permissions: [], scoped: [] };
     const scopedView = { permissions: [], scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }] };

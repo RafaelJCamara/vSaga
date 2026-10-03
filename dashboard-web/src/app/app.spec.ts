@@ -3,7 +3,11 @@ import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { App } from './app';
 import { routes } from './app.routes';
+import { GUIDE_ANCHORS } from './components/guide-overlay/guide-tours';
+import { USER_GUIDE_URL } from './services/guide-areas';
+import { GuideService } from './services/guide.service';
 import { AuthMock, AuthMockOptions, createAuthMock, provideAuthMock } from './testing/auth-mock';
+import { provideGuideStorage } from './testing/guide';
 
 /** A page for the router to show, so a link can be the current one. */
 @Component({
@@ -27,6 +31,7 @@ describe('App', () => {
           { path: 'admin', component: PageStub },
         ]),
         provideAuthMock(auth),
+        provideGuideStorage(),
       ],
     });
     const fixture = TestBed.createComponent(App);
@@ -60,6 +65,14 @@ describe('App', () => {
       expect(navLinks(root)).toContain('Sagas');
       expect(bar(root).querySelector('.topbar-end app-user-menu')).not.toBeNull();
       expect(root.querySelector('app-user-menu')?.textContent).toContain('Administrator');
+    });
+
+    it('puts the guide toggle in front of the user menu, in the same group', () => {
+      const root = create().nativeElement as HTMLElement;
+
+      expect(
+        Array.from(bar(root).querySelectorAll('.topbar-end > *'), (e) => e.tagName.toLowerCase()),
+      ).toEqual(['app-guide-toggle', 'app-user-menu']);
     });
 
     it('links to the saga list from the navigation and from the brand', () => {
@@ -133,6 +146,8 @@ describe('App', () => {
         expect(root.querySelector('.brand-mark')?.textContent).toContain('vSaga');
         expect(root.querySelector('nav')).toBeNull();
         expect(root.querySelector('app-user-menu')).toBeNull();
+        expect(root.querySelector('app-guide-toggle')).toBeNull();
+        expect(root.querySelector('[data-tour]')).toBeNull();
         expect(root.querySelector('.topbar-end')?.children.length).toBe(0);
       },
     );
@@ -147,6 +162,53 @@ describe('App', () => {
 
       expect(root.querySelector('nav')).toBeNull();
       expect(root.querySelector('app-user-menu')).toBeNull();
+      expect(root.querySelector('app-guide-toggle')).toBeNull();
+    });
+  });
+
+  describe('guide mode', () => {
+    it('has the top bar anchor on the toggle, once, and no other anchor in the shell', () => {
+      const root = create().nativeElement as HTMLElement;
+
+      const anchors = Array.from(root.querySelectorAll('[data-tour]'));
+      expect(anchors.map((a) => a.getAttribute('data-tour'))).toEqual(['topbar-guide']);
+      expect(anchors[0].tagName.toLowerCase()).toBe('app-guide-toggle');
+      expect(bar(root).contains(anchors[0])).toBe(true);
+      expect(GUIDE_ANCHORS).toContain('topbar-guide');
+    });
+
+    it('has no overlay while Guide is off', async () => {
+      const fixture = create();
+      await fixture.whenStable();
+
+      expect((fixture.nativeElement as HTMLElement).querySelector('app-guide-overlay')).toBeNull();
+    });
+
+    it('loads the overlay as the last child of the shell once Guide is switched on, and keeps it', async () => {
+      const fixture = create();
+      const root = fixture.nativeElement as HTMLElement;
+
+      TestBed.inject(GuideService).setEnabled(true);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      const overlay = root.querySelector('app-guide-overlay');
+      expect(overlay).not.toBeNull();
+      expect(root.lastElementChild).toBe(overlay);
+      expect(root.querySelector('.shell')?.nextElementSibling).toBe(overlay);
+
+      TestBed.inject(GuideService).setEnabled(false);
+      fixture.detectChanges();
+      expect(root.querySelector('app-guide-overlay')).toBe(overlay); // a defer block does not unload
+    });
+
+    it('does not make the toggle appear for someone who is not signed in, even with Guide on', async () => {
+      const fixture = create({ status: 'anonymous', user: null, access: null });
+      TestBed.inject(GuideService).setEnabled(true);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect((fixture.nativeElement as HTMLElement).querySelector('app-guide-toggle')).toBeNull();
     });
   });
 
@@ -163,13 +225,24 @@ describe('App', () => {
 
     it('every link leads to a route of the app', () => {
       const root = create().nativeElement as HTMLElement; // an administrator: every link is shown
-      const hrefs = Array.from(root.querySelectorAll('header a[href]')).map(
+      const hrefs = Array.from(root.querySelectorAll('header a[href^="/"]')).map(
         (a) => a.getAttribute('href') ?? '',
       );
 
       expect(hrefs).toContain('/sagas');
       expect(hrefs).toContain('/admin');
       expect(hrefs.filter((href) => !hasRoute(href))).toEqual([]);
+    });
+
+    it('has one link that leaves the app, the user guide, which opens in a new tab', () => {
+      const root = create().nativeElement as HTMLElement;
+      const external = Array.from(root.querySelectorAll('header a[href]')).filter(
+        (a) => !(a.getAttribute('href') ?? '').startsWith('/'),
+      );
+
+      expect(external).toHaveLength(1);
+      expect(external[0].getAttribute('href')).toBe(USER_GUIDE_URL);
+      expect(external[0].getAttribute('target')).toBe('_blank');
     });
   });
 });

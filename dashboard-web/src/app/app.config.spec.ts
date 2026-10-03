@@ -6,6 +6,7 @@ import { Router } from '@angular/router';
 import { Mock, vi } from 'vitest';
 import { appConfig } from './app.config';
 import { PAGE_RELOAD } from './services/auth.service';
+import { GUIDE_PERMISSION_CHECK } from './services/guide.service';
 import { STALE_CHUNK_RELOAD_KEY } from './stale-chunk-reload';
 import { AuthMock, createAuthMock, provideAuthMock } from './testing/auth-mock';
 
@@ -53,6 +54,56 @@ describe('app config', () => {
       finish();
       await status.donePromise;
       expect(status.done).toBe(true);
+    });
+  });
+
+  describe('guide mode', () => {
+    const scopedViewer = {
+      permissions: ['sagas.view' as const],
+      scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.data', 'sagas.retry'] }],
+    };
+
+    it('asks the session: for a saga type, what the session holds for that type', () => {
+      auth.access.set(scopedViewer);
+      const check = TestBed.inject(GUIDE_PERMISSION_CHECK);
+
+      expect(check('sagas.data', 'OrderSaga')).toBe(true);
+      expect(check('sagas.retry', 'OrderSaga')).toBe(true);
+      expect(check('sagas.data', 'ShipSaga')).toBe(false);
+      expect(check('sagas.view', 'ShipSaga')).toBe(true); // held for every type
+    });
+
+    it('asks, without a saga type, whether the session holds the permission for any type', () => {
+      auth.access.set({
+        permissions: [],
+        scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }],
+      });
+      const check = TestBed.inject(GUIDE_PERMISSION_CHECK);
+
+      expect(check('sagas.view')).toBe(true); // the list is there for a user scoped to one type
+      expect(check('sagas.retry')).toBe(false);
+    });
+
+    it('never counts access.manage as held by a session that only has it scoped', () => {
+      auth.access.set({
+        permissions: ['sagas.view'],
+        scoped: [{ sagaType: 'OrderSaga', permissions: ['access.manage'] }],
+      });
+      const check = TestBed.inject(GUIDE_PERMISSION_CHECK);
+
+      expect(check('access.manage')).toBe(false);
+      auth.access.set({ permissions: ['sagas.view', 'access.manage'], scoped: [] });
+      expect(check('access.manage')).toBe(true);
+    });
+
+    it('holds nothing once the session is gone', () => {
+      const check = TestBed.inject(GUIDE_PERMISSION_CHECK);
+      expect(check('sagas.view')).toBe(true);
+
+      auth.status.set('anonymous');
+
+      expect(check('sagas.view')).toBe(false);
+      expect(check('sagas.view', 'OrderSaga')).toBe(false);
     });
   });
 

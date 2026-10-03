@@ -66,12 +66,14 @@
   color: var(--text);
 }
 
-/* What sits at the right of the bar (the user menu). `margin-left: auto` pushes it there whether or not
-   the navigation is shown. */
+/* What sits at the right of the bar (the guide toggle and the user menu). `margin-left: auto` pushes it
+   there whether or not the navigation is shown. */
 .topbar-end {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  justify-content: flex-end;
+  gap: 0.5rem 0.75rem;
   margin-left: auto;
 }
 

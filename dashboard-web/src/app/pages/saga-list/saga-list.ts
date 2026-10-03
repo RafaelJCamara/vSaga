@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, effect, signal, untracked } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, afterRenderEffect, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
+import { CommonModule, DOCUMENT } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Subject, Subscription, debounceTime } from 'rxjs';
@@ -104,6 +104,14 @@ export class SagaList implements OnInit, OnDestroy {
   /** Set while a list that had started is shown without access; regaining it reads the list again. */
   private accessLost = false;
 
+  private readonly document = inject(DOCUMENT);
+  private readonly statusSort = viewChild<ElementRef<HTMLButtonElement>>('statusSort');
+  private readonly updatedSort = viewChild<ElementRef<HTMLButtonElement>>('updatedSort');
+  /** The column whose heading button sorted the list: the page swaps its table for "Loading…" while it reads
+   *  the sorted list, so that button is gone when the rows come back, and the keyboard focus it held is
+   *  handed to its replacement (see the render hook in the constructor). */
+  private sortFocus: SagaSortColumn | null = null;
+
   constructor(
     private readonly api: SagaApiService,
     private readonly hub: SagaHubService,
@@ -111,6 +119,20 @@ export class SagaList implements OnInit, OnDestroy {
     private readonly route: ActivatedRoute,
     private readonly router: Router,
   ) {
+    // A sort heading is a button, and the table it sits in is replaced while the sorted list loads: the
+    // focus would drop to the page, and a keyboard user would have to Tab back to the heading to reverse the
+    // sort. Once the list is back, the button that sorted it has the focus again, unless the user moved
+    // it somewhere else meanwhile (then nothing is taken from them).
+    afterRenderEffect(() => {
+      const loading = this.loading();
+      const column = this.sortFocus;
+      const button = column === 'Status' ? this.statusSort() : this.updatedSort();
+      if (column === null || loading) return;
+      this.sortFocus = null;
+      const active = this.document.activeElement;
+      if (button && (active === null || active === this.document.body)) button.nativeElement.focus();
+    });
+
     // The session can change under an open list (the interceptor refreshes it after a 403, and it is read
     // again when the tab is shown): a list opened without access starts when it gains it, and one that
     // lost it reads again when it comes back, so it never shows rows from before.
@@ -285,7 +307,8 @@ export class SagaList implements OnInit, OnDestroy {
   /** Sorting reorders the whole server-side result set, not just the rows already on screen — the
    * previous page number's rows would land somewhere else entirely under the new order, so (like a
    * filter change) this lands back on page 1 and re-fetches rather than reshuffling in place. */
-  toggleSort(column: SagaSortColumn): void {
+  toggleSort(column: SagaSortColumn, event?: Event): void {
+    this.sortFocus = (event?.target as Element | null)?.closest('.sort-button') ? column : null;
     if (this.sortColumn() === column) {
       this.sortDirection.set(this.sortDirection() === 'asc' ? 'desc' : 'asc');
     } else {
@@ -296,6 +319,21 @@ export class SagaList implements OnInit, OnDestroy {
     this.pageCap.set(null);
     this.refresh();
     this.syncUrlFromFilters();
+  }
+
+  /** The `aria-sort` of a sortable heading: only the column the list is sorted by says so. */
+  ariaSort(column: SagaSortColumn): 'ascending' | 'descending' | null {
+    if (this.sortColumn() !== column) return null;
+    return this.sortDirection() === 'asc' ? 'ascending' : 'descending';
+  }
+
+  /**
+   * A click anywhere in a row opens the saga. The correlation id in the first cell is a link, which does its
+   * own navigation (and keeps what a link does with a modifier key), so a click that came from it is left alone.
+   */
+  openFromRow(event: MouseEvent, saga: SagaSummary): void {
+    if ((event.target as Element | null)?.closest('a, button')) return;
+    void this.router.navigate(['/sagas', saga.sagaType, saga.correlationId]);
   }
 
   /** The filters, sort and page size of the next request: what a page number is relative to. */

@@ -1,0 +1,106 @@
+/* The overlay has no box of its own: everything in it is fixed to the viewport. */
+:host {
+  display: contents;
+}
+
+/* Takes the mouse: a click on the dimmed page must not reach it or move the focus. Without a highlighted
+   element it is also what dims the page. */
+.guide-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.guide-shield--dim {
+  background: rgba(5, 8, 14, 0.72);
+}
+
+/* The highlight: the page is dimmed by a shadow far larger than the screen, cast from a box the size of the
+   element. The outline stays when the shadow does not (forced colours). */
+.guide-spot {
+  position: fixed;
+  z-index: 1001;
+  display: none;
+  border-radius: 8px;
+  outline: 2px solid var(--accent);
+  box-shadow: 0 0 0 200vmax rgba(5, 8, 14, 0.72);
+  pointer-events: none;
+}
+
+/* Hidden until it is placed: the first frame would otherwise show it in the corner. */
+.guide-popover {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1002;
+  visibility: hidden;
+  width: min(22rem, calc(100vw - 24px));
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: guide-fade 140ms ease-out;
+}
+
+@keyframes guide-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.guide-title {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+
+.guide-body {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+}
+
+.guide-progress {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+}
+
+.guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.guide-actions a.btn:hover {
+  text-decoration: none;
+}
+
+.guide-spacer {
+  flex: 1;
+}
+
+.guide-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  /* The page's own dark, not white: white on the accent is under the 4.5:1 a small label needs. */
+  color: var(--bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guide-popover {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .guide-spot {
+    outline-color: Highlight;
+  }
+
+  .guide-popover {
+    border-color: CanvasText;
+  }
+}

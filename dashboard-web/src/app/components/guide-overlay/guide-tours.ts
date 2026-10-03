@@ -1,0 +1,110 @@
+// THE RULE: a change to the dashboard UI updates the user guide (docs/dashboard-guide.md) and the tours in
+// this file in the same change. A label, a control, a banner or a behaviour that a step names but the page no
+// longer has makes the tour wrong, and nothing but this rule notices (a missing anchor is caught by the
+// anchor-contract spec of each page, a stale sentence by nobody). When a step's copy changes, bump the
+// `version` of its area in `services/guide-areas.ts`: everyone who saw the old tour sees the new one once.
+
+import { GuideAreaId, GuideStep } from '../../models/guide.model';
+
+/**
+ * The one vocabulary of `data-tour` anchors: a template writes one of these as the attribute's value, and a
+ * step, a fallback, a reveal control or an area's ready anchor names one. Each page's spec has an
+ * anchor-contract case, and `guide-tours.spec.ts` checks every name used here against this list, so a
+ * renamed or removed anchor fails a test instead of silently turning a step into a centred popover.
+ *
+ * Only the guide commits add `data-tour` attributes, and only with these names.
+ */
+export const GUIDE_ANCHORS = [
+  // The top bar.
+  'topbar-guide',
+  // The saga list.
+  'list-filters',
+  'list-table',
+  'list-sort',
+  'list-row',
+  'list-pagination',
+  // The saga detail page.
+  'detail-summary',
+  'detail-data',
+  'detail-retry',
+  'detail-tab-map',
+  'detail-tab-timeline',
+  'map-canvas',
+  'map-controls',
+  'timeline',
+  'timeline-entry',
+  'timeline-step-data',
+  // The administration area.
+  'admin-nav',
+  'admin-nav-users',
+  'admin-nav-teams',
+  'admin-nav-roles',
+  'admin-list',
+] as const;
+
+export type GuideAnchor = (typeof GUIDE_ANCHORS)[number];
+
+/**
+ * The steps of every area's tour. An area with no steps has no tour: a request for it ends at once and
+ * nothing is remembered.
+ *
+ * Copy is written against the shipped labels. Keep a title short (it is a heading) and a body to a few
+ * sentences: the popover is a glance, and the user guide is where the detail lives.
+ */
+export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]> = {
+  list: [
+    {
+      id: 'list-welcome',
+      title: 'Welcome to the saga dashboard',
+      body: 'This page lists the sagas your account can see, across all saga types. The tour takes about a minute. Press Esc to leave it; Guide in the top bar brings it back.',
+      anchor: null,
+    },
+    {
+      id: 'list-filters',
+      title: 'Narrow the list',
+      body: 'Filter by status, kind or saga type, or search by saga type or correlation id. Filters, sort and page live in the address bar, so a view can be bookmarked or shared.',
+      anchor: 'list-filters',
+    },
+    {
+      id: 'list-table',
+      title: 'One row per saga instance',
+      body: "Each row shows a saga's correlation id (shortened), type, kind, current state, status and last update. Rows update live; a banner appears if live updates disconnect.",
+      anchor: 'list-table',
+    },
+    {
+      id: 'list-sort',
+      title: 'Sort by status or last update',
+      body: 'Select Status or Updated to sort by it, and again to reverse. The server sorts the whole result, not only this page. Status follows the lifecycle, from Running to Cancelled.',
+      anchor: 'list-sort',
+      fallbackAnchor: 'list-table',
+    },
+    {
+      id: 'list-row',
+      title: 'Open a saga',
+      body: 'Select a row to open that saga: its summary, service map and timeline, and the data it held at each step if your account may see saga data. From the keyboard, Tab to a correlation id and press Enter.',
+      anchor: 'list-row',
+      fallbackAnchor: 'list-table',
+    },
+    {
+      id: 'list-pagination',
+      title: 'Page through results',
+      body: 'Choose the rows per page, move between pages or jump to one. When new sagas arrive while you are past page 1, a banner offers a refresh instead of moving the rows you are reading.',
+      anchor: 'list-pagination',
+      fallbackAnchor: 'list-table',
+      placement: 'top',
+    },
+    {
+      id: 'list-guide',
+      title: 'Guide mode',
+      body: 'While Guide is on, a page explains itself the first time you open it. Replay tour runs the current one again; User guide opens the full documentation. Switch Guide off here when you are done.',
+      anchor: 'topbar-guide',
+    },
+  ],
+  // The detail page's areas and the administration area: no steps yet.
+  summary: [],
+  map: [],
+  timeline: [],
+  data: [],
+  retry: [],
+  admin: [],
+};

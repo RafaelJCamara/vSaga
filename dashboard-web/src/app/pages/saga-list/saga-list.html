@@ -12,7 +12,7 @@
     Your account has no access to any saga type yet. Ask an administrator for sagas.view.
   </div>
 } @else {
-  <div class="toolbar">
+  <div class="toolbar" data-tour="list-filters">
     <select class="input" [(ngModel)]="status" (change)="onFilterChange()">
       <option value="">All statuses</option>
       <option *ngFor="let s of statuses" [value]="s">{{ s }}</option>
@@ -63,31 +63,48 @@
          "No sagas match these filters yet." on top of it would read as contradictory. -->
     <div class="empty">No sagas match these filters yet.</div>
   } @else if (sagas().length > 0) {
-    <table class="data-table">
+    <table class="data-table" data-tour="list-table">
       <thead>
         <tr>
           <th>Correlation Id</th>
           <th>Saga Type</th>
           <th>Kind</th>
           <th>Current State</th>
-          <th class="sortable" (click)="toggleSort('Status')">
-            Status
-            @if (sortColumn() === 'Status') {
-              <span class="sort-indicator">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
-            }
+          <!-- The heading is a button, so the keyboard reaches it; the click handler stays on the cell, which
+               the button's click (Enter and Space included) bubbles to, so the whole heading sorts. -->
+          <th
+            class="sortable"
+            data-tour="list-sort"
+            [attr.aria-sort]="ariaSort('Status')"
+            (click)="toggleSort('Status', $event)"
+          >
+            <button #statusSort type="button" class="sort-button">
+              Status
+              @if (sortColumn() === 'Status') {
+                <span class="sort-indicator" aria-hidden="true">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
+              }
+            </button>
           </th>
-          <th class="sortable" (click)="toggleSort('UpdatedAt')">
-            Updated
-            @if (sortColumn() === 'UpdatedAt') {
-              <span class="sort-indicator">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
-            }
+          <th class="sortable" [attr.aria-sort]="ariaSort('UpdatedAt')" (click)="toggleSort('UpdatedAt', $event)">
+            <button #updatedSort type="button" class="sort-button">
+              Updated
+              @if (sortColumn() === 'UpdatedAt') {
+                <span class="sort-indicator" aria-hidden="true">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
+              }
+            </button>
           </th>
         </tr>
       </thead>
       <tbody>
         @for (saga of sagas(); track saga.sagaType + ':' + saga.correlationId) {
-          <tr [routerLink]="['/sagas', saga.sagaType, saga.correlationId]" class="saga-row">
-            <td class="mono">{{ saga.correlationId | slice: 0 : 8 }}…</td>
+          <!-- A row opens its saga on a click anywhere in it; for the keyboard and for assistive technology the
+               correlation id is a link (one tab stop per row, opened with Enter). -->
+          <tr class="saga-row" data-tour="list-row" (click)="openFromRow($event, saga)">
+            <td class="mono">
+              <a class="row-link" [routerLink]="['/sagas', saga.sagaType, saga.correlationId]"
+                >{{ saga.correlationId | slice: 0 : 8 }}…</a
+              >
+            </td>
             <td>{{ saga.sagaType }}</td>
             <td><app-kind-badge [kind]="saga.kind" /></td>
             <td>{{ saga.currentState }}</td>
@@ -98,7 +115,7 @@
       </tbody>
     </table>
 
-    <div class="pagination">
+    <div class="pagination" data-tour="list-pagination">
       <label class="page-size">
         Rows per page
         <select class="input" [(ngModel)]="pageSize" (change)="onFilterChange()">
