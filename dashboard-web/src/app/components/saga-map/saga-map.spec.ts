@@ -171,6 +171,36 @@ describe('SagaMap', () => {
     expect(card?.querySelector('p')).toBeNull();
   });
 
+  // The API nulls the text for a viewer without sagas.data, but the map a page holds can be older than the
+  // session (the permission was revoked since): the card must not print what it still carries.
+  it('prints no error text without canViewData, whatever the map carries, and keeps naming the entry', () => {
+    const fixture = TestBed.createComponent(SagaMap);
+    fixture.componentRef.setInput('map', makeMap());
+    fixture.componentRef.setInput('canViewData', false);
+    fixture.detectChanges();
+    fixture.componentInstance.scrubTo(2);
+    fixture.detectChanges();
+
+    const card = (fixture.nativeElement as HTMLElement).querySelector('.error-card');
+    expect(card?.querySelector('strong')?.textContent).toBeTruthy();
+    expect(card?.textContent).not.toContain('boom');
+
+    fixture.componentRef.setInput('canViewData', true);
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('.error-card')?.textContent).toContain('boom');
+  });
+
+  it('prints no error text without canViewData on a map with nothing to draw either', () => {
+    const fixture = TestBed.createComponent(SagaMap);
+    fixture.componentRef.setInput('map', makeBareFailedMap());
+    fixture.componentRef.setInput('canViewData', false);
+    fixture.detectChanges();
+
+    const card = (fixture.nativeElement as HTMLElement).querySelector('.error-card');
+    expect(card?.textContent).toContain('This saga failed with nothing to map');
+    expect(card?.textContent).not.toContain('unroutable');
+  });
+
   it('does not render the error card before the failure step', () => {
     const fixture = createComponent();
     fixture.detectChanges();

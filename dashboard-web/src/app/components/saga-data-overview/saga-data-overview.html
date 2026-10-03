@@ -5,6 +5,7 @@
     class="btn btn--quiet"
     aria-label="Data at start"
     [disabled]="!canViewData()"
+    [attr.aria-describedby]="canViewData() ? null : 'saga-data-hidden'"
     [attr.aria-pressed]="shown() === 'start'"
     (click)="toggle('start')"
   >At start</button>
@@ -13,6 +14,7 @@
     class="btn btn--quiet"
     [attr.aria-label]="terminal() ? 'Data at end' : 'Current data'"
     [disabled]="!canViewData()"
+    [attr.aria-describedby]="canViewData() ? null : 'saga-data-hidden'"
     [attr.aria-pressed]="shown() === 'end'"
     (click)="toggle('end')"
   >{{ terminal() ? 'At end' : 'Current' }}</button>
@@ -20,12 +22,13 @@
     type="button"
     class="btn btn--quiet"
     [disabled]="!canViewData() || !canCompare()"
+    [attr.aria-describedby]="canViewData() ? null : 'saga-data-hidden'"
     [attr.title]="compareBlockedReason()"
     [attr.aria-pressed]="shown() === 'compare'"
     (click)="toggle('compare')"
   >Compare</button>
   @if (!canViewData()) {
-    <span class="muted">Saga data is hidden for your role. It needs the sagas.data permission.</span>
+    <span id="saga-data-hidden" class="muted">Saga data is hidden for your role. It needs the sagas.data permission.</span>
   }
 </div>
 

@@ -1,11 +1,14 @@
 <div class="page-header">
   <h1>Sagas</h1>
-  <span class="count" *ngIf="hasAccess() && !loading()">{{ totalCount() }} total</span>
+  <span class="count" *ngIf="signedIn() && hasAccess() && !loading()">{{ totalCount() }} total</span>
 </div>
 
-@if (!hasAccess()) {
-  <!-- No request is made for a session without sagas.view: the API would answer 403 to every one. -->
-  <div class="empty" role="status">
+@if (!signedIn()) {
+  <!-- The session is ending: nothing is said about access, and nothing is shown, until the sign-in page replaces this one. -->
+} @else if (!hasAccess()) {
+  <!-- No request is made for a session without sagas.view: the API would answer 403 to every one. An alert,
+       not a status: the text arrives with the element, and only an alert region announced that way. -->
+  <div class="empty" role="alert">
     Your account has no access to any saga type yet. Ask an administrator for sagas.view.
   </div>
 } @else {
@@ -43,7 +46,7 @@
   }
 
   @if (error(); as message) {
-    <div class="banner banner--error">{{ message }}</div>
+    <div class="banner banner--error" role="alert">{{ message }}</div>
   }
 
   @if (newSagasAvailable() > 0) {

@@ -118,7 +118,7 @@
   @if (failureReached() && failureEvent(); as failure) {
     <div class="error-card">
       <strong>{{ label(failure.entryType) }}</strong>
-      @if (failure.errorMessage) {
+      @if (failure.errorMessage && canViewData()) {
         <p>{{ failure.errorMessage }}</p>
       }
     </div>
@@ -128,7 +128,7 @@
       <p>
         {{ label(failure.entryType) }} on its first outbound step, before any hop was ever recorded — press Play
         or step forward to see it in the timeline below.
-        @if (failure.errorMessage) {
+        @if (failure.errorMessage && canViewData()) {
           {{ failure.errorMessage }}
         }
       </p>

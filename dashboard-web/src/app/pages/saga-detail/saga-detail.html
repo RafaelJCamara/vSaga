@@ -6,16 +6,20 @@
   <div class="banner banner--warning">Live updates disconnected.</div>
 }
 
-@if (loading()) {
+@if (!signedIn()) {
+  <!-- The session is ending: nothing is said about access, and nothing is shown, until the sign-in page replaces this one. -->
+} @else if (loading()) {
   <div class="empty">Loading…</div>
 } @else if (forbidden()) {
   <!-- Not an error banner: the viewer is signed in, and the saga is none of their business. The back link
-       above is the way out. -->
-  <div class="empty" role="status">
+       above is the way out. An alert, not a status: the text arrives with the element, and only an alert
+       region is announced that way. The heading is the page's, as the saga's own page has one. -->
+  <h1 class="sr-only">{{ sagaType }}</h1>
+  <div class="empty" role="alert">
     You do not have access to {{ sagaType }} sagas. Ask an administrator for sagas.view on this saga type.
   </div>
 } @else if (error(); as message) {
-  <div class="banner banner--error">{{ message }}</div>
+  <div class="banner banner--error" role="alert">{{ message }}</div>
 } @else if (detail(); as d) {
   <div class="card summary-card">
     <div class="summary-top">
@@ -185,6 +189,7 @@
     @if (map(); as m) {
       <app-saga-map
         [map]="m"
+        [canViewData]="canViewData()"
         [focusSequence]="mapFocus()"
         (focusCleared)="clearFocus()"
         (timelineRequested)="showInTimeline($event)"

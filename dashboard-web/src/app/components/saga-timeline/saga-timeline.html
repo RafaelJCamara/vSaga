@@ -42,7 +42,7 @@
               <button
                 type="button"
                 class="tl-row"
-                [class.tl-row--error]="e.errorMessage"
+                [class.tl-row--error]="isFailure(e)"
                 [class.tl-row--focused]="focused"
                 [attr.aria-current]="focused ? 'true' : null"
                 [attr.data-seq]="e.sequenceNumber"

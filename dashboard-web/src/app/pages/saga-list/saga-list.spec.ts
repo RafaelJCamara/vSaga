@@ -6,7 +6,7 @@ import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import { PagedResult, SagaSummary } from '../../models/saga.model';
 import { AuthMock, AuthMockOptions, createAuthMock, provideAuthMock } from '../../testing/auth-mock';
-import { httpError } from '../../testing/http-error';
+import { httpError, problem } from '../../testing/http-error';
 import { SagaList } from './saga-list';
 
 function makeSummary(overrides: Partial<SagaSummary> = {}): SagaSummary {
@@ -170,19 +170,21 @@ describe('SagaList', () => {
     expect(fixture.componentInstance.sagas()).toEqual([summary]);
   });
 
-  // Mirrors the guard hasEverConnected already uses: only a reconnect that follows an actual failure
-  // should force an extra refetch. A first-ever connect (or an ordinary reconnect blip that never
-  // surfaced an error) must not double up on the refresh() ngOnInit already fired.
-  it('does not trigger a redundant refresh on an ordinary connect/reconnect when there was no prior error', () => {
+  // The first connect adds nothing to the load ngOnInit fired. A later reconnect re-reads the list: the
+  // pushes sent while the hub was down are lost, and the server closes a user's connection whenever their
+  // access changes, so the reconnect is how a narrowed or widened list is noticed. (This replaces the
+  // test that pinned "no refresh on an ordinary reconnect", which is exactly the behaviour that missed it.)
+  it('adds no request on the first connect, and reads the list again on a later reconnect', () => {
     const fixture = setup({ items: [], page: 1, pageSize: 25, totalCount: 0 });
 
     expect(apiMock.list).toHaveBeenCalledTimes(1);
     expect(fixture.componentInstance.error()).toBeNull();
 
     hubMock.connectionState$.next('reconnecting');
+    expect(apiMock.list).toHaveBeenCalledTimes(1);
     hubMock.connectionState$.next('connected');
 
-    expect(apiMock.list).toHaveBeenCalledTimes(1);
+    expect(apiMock.list).toHaveBeenCalledTimes(2);
   });
 
   it('refresh() re-queries the API with the current filter values', () => {
@@ -717,6 +719,7 @@ describe('SagaList', () => {
         expect(apiMock.getSagaTypes).not.toHaveBeenCalled();
         expect(hubMock.subscribeToList).not.toHaveBeenCalled();
         expect(text(el.querySelector('.empty'))).toBe(noAccessText);
+        expect(el.querySelector('.empty')?.getAttribute('role')).toBe('alert');
         expect(el.querySelector('.toolbar')).toBeNull();
         expect(el.querySelector('.count')).toBeNull();
         expect(el.textContent).not.toContain('Loading…');
@@ -732,7 +735,7 @@ describe('SagaList', () => {
         expect(fixture.nativeElement.querySelectorAll('.saga-row')).toHaveLength(1);
       });
 
-      it('starts when the session gains sagas.view, once', () => {
+      it('starts when the session gains sagas.view, and asks for nothing twice', () => {
         const { fixture } = open({ access: none });
 
         auth.access.set(scopedView);
@@ -742,6 +745,7 @@ describe('SagaList', () => {
         expect(hubMock.subscribeToList).toHaveBeenCalledTimes(1);
         expect(fixture.nativeElement.querySelector('.toolbar')).not.toBeNull();
 
+        // Another read of the session that still allows listing adds nothing (the allowed state did not change).
         auth.access.set({ permissions: ['sagas.view'], scoped: [] });
         fixture.detectChanges();
         expect(apiMock.list).toHaveBeenCalledTimes(1);
@@ -768,22 +772,36 @@ describe('SagaList', () => {
     });
 
     describe('a request the API refuses', () => {
-      it('words a 403 as no access, not as an outage, and leaves it alone when live updates reconnect', () => {
-        const { fixture } = open({}, [of(page([makeSummary()], 1, 1)), throwError(() => httpError(403, { title: 'Forbidden', detail: 'This needs the sagas.view permission.' }))]);
+      it('words a 403 from the API as no access, not as an outage, and reads again when live updates reconnect', () => {
+        const refused = httpError(403, problem('forbidden', 'This needs the sagas.view permission. See docs/dashboard.md#authentication.'));
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 1)), throwError(() => refused), of(page([makeSummary()], 1, 1))]);
         fixture.componentInstance.refresh();
         fixture.detectChanges();
 
         expect(fixture.componentInstance.error()).toBe('You do not have access to these sagas.');
         expect(text(fixture.nativeElement.querySelector('.banner--error'))).toBe('You do not have access to these sagas.');
+        expect(fixture.nativeElement.querySelector('.banner--error')?.getAttribute('role')).toBe('alert');
         expect(fixture.componentInstance.sagas()).toEqual([]);
         expect(fixture.nativeElement.textContent).not.toContain('Could not reach');
 
+        // The server closes a connection when access changes; the client's reconnect is the cue to ask again.
         hubMock.connectionState$.next('reconnecting');
         hubMock.connectionState$.next('connected');
-        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(apiMock.list).toHaveBeenCalledTimes(3);
+        expect(fixture.componentInstance.error()).toBeNull();
+        expect(fixture.componentInstance.sagas()).toHaveLength(1);
       });
 
-      it('shows the API text of a 400, not "Could not reach", and leaves it alone when live updates reconnect', () => {
+      it('shows a 403 that is not the API saying "forbidden" in its own words, and one without a code as an outage', () => {
+        const change = httpError(403, problem('password_change_required', 'Change your password before using the dashboard.'));
+        const { fixture } = open({}, [throwError(() => change), throwError(() => httpError(403, '<html>Forbidden</html>'))]);
+        expect(fixture.componentInstance.error()).toBe('Change your password before using the dashboard.');
+
+        fixture.componentInstance.refresh();
+        expect(fixture.componentInstance.error()).toBe('Could not reach the vSaga Dashboard API. Is it running?');
+      });
+
+      it('shows the API text of a 400, not "Could not reach", and reads again when live updates reconnect', () => {
         const text400 = 'The search reads too many sagas. Narrow it with a saga type, a status or a kind.';
         const { fixture } = open({}, [of(page([makeSummary()], 1, 30)), throwError(() => httpError(400, { error: text400 }))]);
         fixture.componentInstance.refresh();
@@ -791,13 +809,13 @@ describe('SagaList', () => {
 
         expect(fixture.componentInstance.error()).toBe(text400);
         expect(text(fixture.nativeElement.querySelector('.banner--error'))).toBe(text400);
-        // The rows on screen are still the last good page's.
+        // The rows on screen are still the last good page's, read under the same filters.
         expect(fixture.componentInstance.sagas()).toHaveLength(1);
         expect(fixture.componentInstance.page()).toBe(1);
 
         hubMock.connectionState$.next('reconnecting');
         hubMock.connectionState$.next('connected');
-        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(apiMock.list).toHaveBeenCalledTimes(3);
       });
 
       it('goes back to the last good page after a 400 with no maxPage, and writes it to the URL', () => {
@@ -808,7 +826,7 @@ describe('SagaList', () => {
         expect(fixture.componentInstance.error()).toBe('Too broad.');
         expect(fixture.componentInstance.page()).toBe(1);
         expect(apiMock.list).toHaveBeenCalledTimes(2);
-        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }) }));
+        expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }), replaceUrl: true }));
       });
 
       it('still says an unreachable API is one', () => {
@@ -819,31 +837,159 @@ describe('SagaList', () => {
         expect(fixture.componentInstance.error()).toBe('Could not reach the vSaga Dashboard API. Is it running?');
       });
 
+      // RxJS reports an error nobody subscribed to from a timer, outside the test: fake timers bring that
+      // throw inside it, so a missing error handler fails this spec itself.
       it('survives a failing saga type request', () => {
-        auth = createAuthMock();
-        apiMock = {
-          list: vi.fn().mockReturnValue(of(page([makeSummary()], 1, 1))),
-          getSagaTypes: vi.fn().mockReturnValue(throwError(() => httpError(403, null))),
-        };
-        hubMock = {
-          sagaUpdated$: new Subject<SagaSummary>(),
-          connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
-          subscribeToList: vi.fn().mockResolvedValue(undefined),
-        };
-        TestBed.configureTestingModule({
-          imports: [SagaList],
-          providers: [
-            provideRouter([]),
-            provideAuthMock(auth),
-            { provide: SagaApiService, useValue: apiMock },
-            { provide: SagaHubService, useValue: hubMock },
-          ],
-        });
-        const fixture = TestBed.createComponent(SagaList);
+        vi.useFakeTimers();
+        try {
+          auth = createAuthMock();
+          apiMock = {
+            list: vi.fn().mockReturnValue(of(page([makeSummary()], 1, 1))),
+            getSagaTypes: vi.fn().mockReturnValue(throwError(() => httpError(403, null))),
+          };
+          hubMock = {
+            sagaUpdated$: new Subject<SagaSummary>(),
+            connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
+            subscribeToList: vi.fn().mockResolvedValue(undefined),
+          };
+          TestBed.configureTestingModule({
+            imports: [SagaList],
+            providers: [
+              provideRouter([]),
+              provideAuthMock(auth),
+              { provide: SagaApiService, useValue: apiMock },
+              { provide: SagaHubService, useValue: hubMock },
+            ],
+          });
+          const fixture = TestBed.createComponent(SagaList);
 
-        expect(() => fixture.detectChanges()).not.toThrow();
-        expect(fixture.componentInstance.sagaTypes()).toEqual([]);
+          fixture.detectChanges();
+          expect(() => vi.runAllTimers()).not.toThrow();
+
+          expect(fixture.componentInstance.sagaTypes()).toEqual([]);
+          expect(fixture.componentInstance.sagas()).toHaveLength(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    });
+
+    describe('answers that arrive late', () => {
+      /** The page with each request answered by hand: every `list` call returns the next subject. */
+      function openByHand() {
+        const answers = [0, 1, 2, 3].map(() => new Subject<PagedResult<SagaSummary>>());
+        const { fixture, navigate } = open({}, [...answers]);
+        return { fixture, navigate, answers };
+      }
+
+      it('ignores a 400 with a maxPage that answers an earlier request: page, cap and URL stay', () => {
+        const { fixture, navigate, answers } = openByHand();
+        const c = fixture.componentInstance;
+        answers[0].next(page([makeSummary()], 1, 1000));
+        c.nextPage(); // request 2, left in flight
+        c.status = 'Failed';
+        c.onFilterChange(); // request 3
+        answers[2].next(page([makeSummary({ correlationId: 'failed-1', status: 'Failed' })], 1, 1000));
+        navigate.mockClear();
+
+        answers[1].error(httpError(400, { error: 'Page 2 is past the last page (20).', maxPage: 20 }));
+
+        expect(apiMock.list).toHaveBeenCalledTimes(3);
+        expect(c.page()).toBe(1);
+        expect(c.totalPages()).toBe(40);
+        expect(c.error()).toBeNull();
+        expect(c.sagas().map((s) => s.correlationId)).toEqual(['failed-1']);
+        expect(navigate).not.toHaveBeenCalled();
+      });
+
+      it("ignores a late success: the rows stay the latest request's, and it is not the page a refusal returns to", () => {
+        const { fixture, answers } = openByHand();
+        const c = fixture.componentInstance;
+        answers[0].next(page([makeSummary()], 1, 1000));
+        c.nextPage(); // request 2, left in flight
+        c.onFilterChange(); // request 3
+        answers[2].next(page([makeSummary({ correlationId: 'latest' })], 1, 1000));
+
+        answers[1].next(page([makeSummary({ correlationId: 'late' })], 2, 1000));
+        expect(c.sagas().map((s) => s.correlationId)).toEqual(['latest']);
+
+        c.refresh(); // request 4 is refused
+        answers[3].error(httpError(400, { error: 'Too broad.' }));
+        expect(c.page()).toBe(1);
+        expect(c.sagas().map((s) => s.correlationId)).toEqual(['latest']);
+      });
+    });
+
+    describe('rows that would contradict the toolbar', () => {
+      const change: Array<[string, (c: SagaList) => void]> = [
+        ['a status filter', (c) => { c.status = 'Failed'; c.onFilterChange(); }],
+        ['the sort', (c) => c.toggleSort('Status')],
+        ['the page size', (c) => { c.pageSize = 50; c.onFilterChange(); }],
+      ];
+
+      it.each(change)('are cleared with the total and the page when %s changes and the API refuses the new request', (_, apply) => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 90)), throwError(() => httpError(400, { error: 'Too broad.' }))]);
+        const c = fixture.componentInstance;
+        expect(c.sagas()).toHaveLength(1);
+
+        apply(c);
+        fixture.detectChanges();
+
+        expect(c.error()).toBe('Too broad.');
+        expect(c.sagas()).toEqual([]);
+        expect(c.totalCount()).toBe(0);
+        expect(c.page()).toBe(1);
+        expect(fixture.nativeElement.querySelector('.saga-row')).toBeNull();
+      });
+
+      it('stay when the refused request is the one they were read under', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 90)), throwError(() => httpError(400, { error: 'Too broad.' }))]);
+        fixture.componentInstance.refresh();
+
         expect(fixture.componentInstance.sagas()).toHaveLength(1);
+      });
+    });
+
+    describe('live updates under a refusal', () => {
+      it.each([
+        ['a maxPage of 0', () => throwError(() => httpError(400, { error: 'Choose a saga type.', maxPage: 0 }))],
+        ['a 403 from the API', () => throwError(() => httpError(403, problem('forbidden', 'No.')))],
+      ])('paint no row after %s, and paint rows again once a request succeeds', (_, refusal) => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 1)), refusal()]);
+        fixture.componentInstance.refresh();
+        fixture.detectChanges();
+        expect(fixture.componentInstance.sagas()).toEqual([]);
+
+        hubMock.sagaUpdated$.next(makeSummary({ correlationId: 'pushed' }));
+        fixture.detectChanges();
+        expect(fixture.componentInstance.sagas()).toEqual([]);
+        expect(fixture.componentInstance.totalCount()).toBe(0);
+        expect(fixture.nativeElement.querySelector('.saga-row')).toBeNull();
+
+        apiMock.list.mockReturnValue(of(page([], 1, 0)));
+        fixture.componentInstance.refresh();
+        hubMock.sagaUpdated$.next(makeSummary({ correlationId: 'pushed' }));
+        expect(fixture.componentInstance.sagas().map((s) => s.correlationId)).toEqual(['pushed']);
+      });
+    });
+
+    describe('while the session is ending', () => {
+      it('says nothing about access and shows no list, and shows the list again if the session returns', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 1))]);
+        const el: HTMLElement = fixture.nativeElement;
+
+        auth.status.set('anonymous');
+        fixture.detectChanges();
+        expect(el.querySelector('h1')?.textContent).toBe('Sagas');
+        expect(el.querySelector('.empty')).toBeNull();
+        expect(el.querySelector('.toolbar')).toBeNull();
+        expect(el.querySelector('.saga-row')).toBeNull();
+        expect(el.querySelector('.count')).toBeNull();
+        expect(el.textContent).not.toContain('no access');
+
+        auth.status.set('authenticated');
+        fixture.detectChanges();
+        expect(el.querySelectorAll('.saga-row')).toHaveLength(1);
       });
     });
 
@@ -869,7 +1015,7 @@ describe('SagaList', () => {
         expect(text(fixture.nativeElement.querySelector('.banner--error'))).toContain('Choose a saga type with the sagaType filter');
         expect(c.totalPages()).toBe(20);
         expect(c.hasNextPage()).toBe(false);
-        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: 20 }) }));
+        expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: 20 }), replaceUrl: true }));
 
         // The cap belongs to the request that met it: changing a filter lifts it.
         c.onFilterChange();
@@ -910,6 +1056,27 @@ describe('SagaList', () => {
         expect(apiMock.list).toHaveBeenCalledWith(expect.objectContaining({ page: 3 }));
       });
 
+      // The bound the API names can be far beyond the pages that really exist: the page it sends the list to
+      // is then empty, and the list moves on to the last real page. The refusal's message is not the
+      // correction's to clear.
+      it('keeps the refusal message when the page it sent the list to is itself past the real end', () => {
+        const message = 'Page 999 is past the last page (400) a list across several saga types can reach. Choose a saga type with the sagaType filter.';
+        const { fixture } = open({}, [pastTheEnd(400, message), of(page([], 400, 150)), of(page([makeSummary()], 6, 150))], 999);
+        const c = fixture.componentInstance;
+        fixture.detectChanges();
+
+        expect(apiMock.list).toHaveBeenCalledTimes(3);
+        expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 6 }));
+        expect(c.page()).toBe(6);
+        expect(c.sagas()).toHaveLength(1);
+        expect(c.error()).toBe(message);
+        expect(text(fixture.nativeElement.querySelector('.banner--error'))).toBe(message);
+
+        // The next thing the viewer asks for clears it.
+        c.prevPage();
+        expect(c.error()).toBeNull();
+      });
+
       it('brings a bookmarked page beyond the end back to maxPage, with the message', () => {
         const { fixture } = open({}, [pastTheEnd(20), of(page([makeSummary()], 20, 1000))], 30);
         const c = fixture.componentInstance;
@@ -934,7 +1101,7 @@ describe('SagaList', () => {
         expect(c.sagas()).toEqual([]);
         expect(c.totalCount()).toBe(0);
         expect(apiMock.list).toHaveBeenCalledTimes(2);
-        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }) }));
+        expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }), replaceUrl: true }));
         // The filter that always works is still offered, and a pager with nothing to page through is not.
         expect(fixture.nativeElement.querySelector('.toolbar select[class~="input"]')).not.toBeNull();
         expect(fixture.nativeElement.querySelector('.pagination')).toBeNull();

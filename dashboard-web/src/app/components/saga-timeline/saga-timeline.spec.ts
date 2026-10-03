@@ -325,6 +325,23 @@ describe('SagaTimeline', () => {
     expect(rows[rows.length - 1].classList).toContain('tl-row--error');
   });
 
+  // The API nulls the error text for a viewer without sagas.data, so the red mark cannot hang on it: a
+  // row that records a failure keeps it by its entry type.
+  it.each([
+    ['StepFailed', () => failed('m1', 'Submitted', { errorMessage: null })],
+    ['DeliveryExhausted', () => deliveryExhausted('m1', { errorMessage: null })],
+    ['CompensationStepFailed', () => failed('m1', 'Submitted', { entryType: 'CompensationStepFailed', errorMessage: null })],
+  ])('marks a %s row as an error even when its text was withheld', (_, make) => {
+    const el: HTMLElement = render(numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), received('m1'), make()]), {
+      canViewData: false,
+    }).nativeElement;
+
+    const rows = Array.from(el.querySelectorAll('.tl-row'));
+    expect(rows[rows.length - 1].classList).toContain('tl-row--error');
+    expect(rows.slice(0, -1).filter((r) => r.classList.contains('tl-row--error'))).toEqual([]);
+    expect(el.querySelector('.tl-error')).toBeNull();
+  });
+
   it('heads a step opened by a dead letter without saying dead-lettered twice', () => {
     const el: HTMLElement = render(
       numbered([started('m0'), succeeded('m0', 'Initial', 'Submitted'), deliveryExhausted('m1')]),

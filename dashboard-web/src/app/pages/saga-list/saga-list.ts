@@ -23,6 +23,9 @@ const FORBIDDEN = 'You do not have access to these sagas.';
 /** What a 400 says when its body carries no text of its own: for a `maxPage` of 0, and for any other. */
 const TOO_MANY_TYPES = 'Too many saga types are visible to list them together. Choose a saga type with the filter.';
 const REFUSED = 'The API could not list sagas for these filters.';
+/** The `code` of a 403 that is the API saying the session lacks a permission (see `AuthProblems`); another
+ *  code (`password_change_required`) is a different refusal, and a 403 with none is not the API's. */
+const FORBIDDEN_CODE = 'forbidden';
 
 /**
  * The `maxPage` of the scoped list's 400 body, `{ error, maxPage }`: the last page the request's shape can
@@ -66,6 +69,13 @@ export class SagaList implements OnInit, OnDestroy {
   readonly hasNextPage = computed(() => this.page() < this.totalPages());
   /** The page the rows on screen belong to: where a rejected request returns to. Null before the first answer. */
   private lastGoodPage: number | null = null;
+  /** The filters, sort and page size `lastGoodPage` was read under: a page number means nothing under others. */
+  private lastGoodKey: string | null = null;
+  /** The latest list request; the answer to an earlier one is dropped, whatever it says. */
+  private listRequest = 0;
+  /** Set while the API refuses the list as asked (a 403, or no page to serve): a live push must not paint
+   *  rows under the refusal. Cleared when the next request starts. */
+  private listRefused = false;
   /** Whether the banner's failure may pass when the hub reconnects (an API that could not be reached);
    *  a 403 or a 400 would answer the same again. */
   private errorIsTransient = false;
@@ -90,6 +100,9 @@ export class SagaList implements OnInit, OnDestroy {
   /** Whether the session may list sagas at all (`sagas.view` for some type, or for every one). A computed
    *  signal: a session refreshed while the page is open shows or removes the list without a reload. */
   readonly hasAccess = computed(() => this.auth.canAny('sagas.view'));
+  /** False while the session is ending (sign-out clears the access at once, and the page stays until the
+   *  navigation): the page then shows nothing, not a no-access state that would be a lie. */
+  readonly signedIn = computed(() => this.auth.isAuthenticated());
   private started = false;
   /** Set while a list that had started is shown without access; regaining it reads the list again. */
   private accessLost = false;
@@ -142,18 +155,18 @@ export class SagaList implements OnInit, OnDestroy {
     this.subs.push(
       this.hub.sagaUpdated$.subscribe((summary) => this.upsert(summary)),
       this.hub.connectionState$.subscribe((s) => {
-        // Captured before the error signal is touched by anything below -- a reconnect after an
-        // ordinary first-ever connect (error() still null, nothing has failed yet) must not trigger
-        // a redundant extra refresh() on top of the one ngOnInit already fired.
+        // Captured before the error signal is touched by anything below.
         const hadError = this.error() !== null && this.errorIsTransient;
         this.connectionState.set(s);
         if (s === 'connected') {
+          const wasConnected = this.hasEverConnected();
           this.hasEverConnected.set(true);
-          // A prior REST load failure (e.g. the API was down on page load) leaves the error banner
-          // and stale/empty data on screen even after the hub reconnects and live push updates
-          // resume -- reconnecting only proves the SignalR channel is back, not that the failed
-          // GET /api/sagas has been retried. Re-run it now so both clear together.
-          if (hadError) this.refresh();
+          // The first connect adds nothing to the load ngOnInit fired. A later one re-reads the list: the
+          // pushes sent while the hub was down are lost, and the server closes a user's connection when
+          // their access changes, so this is how a narrowed or widened list is noticed (a 403 then goes
+          // through the interceptor, which refreshes the session). A REST failure that is still on
+          // screen (e.g. the API was down on page load) is retried the same way, so both clear together.
+          if (hadError || wasConnected) this.refresh();
         }
       }),
     );
@@ -196,8 +209,9 @@ export class SagaList implements OnInit, OnDestroy {
 
   /** The inverse of readFiltersFromUrl — called after every filter/sort/page change so the URL always
    * reflects what's on screen. Empty/default values are cleared (`null`) rather than written, keeping
-   * the URL free of noise for the common all-sagas, page-1, unsorted view. */
-  private syncUrlFromFilters(): void {
+   * the URL free of noise for the common all-sagas, page-1, unsorted view. A correction of the page
+   * replaces the history entry: Back must not land on the page that was refused. */
+  private syncUrlFromFilters(replaceUrl = false): void {
     const queryParams: Record<string, string | number | null> = {
       status: this.status || null,
       kind: this.kind || null,
@@ -208,7 +222,7 @@ export class SagaList implements OnInit, OnDestroy {
       sortBy: this.sortColumn(),
       sortDescending: this.sortColumn() && this.sortDirection() === 'desc' ? 'true' : null,
     };
-    void this.router.navigate([], { relativeTo: this.route, queryParams, queryParamsHandling: '' });
+    void this.router.navigate([], { relativeTo: this.route, queryParams, queryParamsHandling: '', replaceUrl });
   }
 
   /** Filter changes must land back on page 1 — the previous page number may no longer exist under
@@ -273,14 +287,22 @@ export class SagaList implements OnInit, OnDestroy {
     this.syncUrlFromFilters();
   }
 
+  /** The filters, sort and page size of the next request: what a page number is relative to. */
+  private requestKey(): string {
+    return JSON.stringify([this.status, this.kind, this.sagaType, this.search, this.sortColumn(), this.sortDirection(), this.pageSize]);
+  }
+
   /** `notice` is the message a rejected request left behind, kept on show while the page it sent the list to loads. */
   refresh(notice: string | null = null): void {
     this.loading.set(true);
     this.error.set(notice);
     this.errorIsTransient = false;
+    this.listRefused = false;
     this.newSagasAvailable.set(0);
 
+    const request = ++this.listRequest;
     const requestedPage = this.page();
+    const key = this.requestKey();
     this.api
       .list({
         status: this.status || undefined,
@@ -294,76 +316,95 @@ export class SagaList implements OnInit, OnDestroy {
       })
       .subscribe({
         next: (result) => {
+          // Requests overlap (a filter changed while one was in flight) and can answer out of order: only
+          // the latest one may touch the page, the pager or the URL.
+          if (request !== this.listRequest) return;
           this.sagas.set(result.items);
           this.totalCount.set(result.totalCount);
           this.loading.set(false);
           this.lastGoodPage = requestedPage;
+          this.lastGoodKey = key;
 
           // A shared/bookmarked link's page number (restored in readFiltersFromUrl) can be stale by
           // the time it's opened, if the result set has since shrunk -- totalPages() only becomes
           // knowable once totalCount arrives here, so it can't be clamped any earlier. Left
           // uncorrected, the user lands on an empty "No sagas match these filters yet." view showing
           // e.g. "Page 40 of 3", with no way back to page 1 except 39 clicks of Previous.
+          // The message a refusal left behind (the page it sent the list to may itself be past the end)
+          // belongs to the refusal, not to this correction: it stays until the viewer asks for something.
           if (this.page() > this.totalPages()) {
             this.page.set(this.totalPages());
-            this.syncUrlFromFilters();
-            this.refresh();
+            this.syncUrlFromFilters(true);
+            this.refresh(this.error());
           }
         },
-        error: (err) => this.onListRejected(err, requestedPage),
+        error: (err) => {
+          if (request === this.listRequest) this.onListRejected(err, requestedPage, key);
+        },
       });
   }
 
   /**
-   * What a failed list request says. A 403 means the session holds no `sagas.view` (the interceptor
-   * refreshes it, and the page then shows its no-access state); a 400 is the API refusing this request,
-   * in its own words; anything else is an API that could not be reached, which clears when live updates
-   * come back.
+   * What a failed list request says. A 403 from the API (`forbidden`) means the session holds no
+   * `sagas.view` (the interceptor refreshes it, and the page then shows its no-access state); any other
+   * 403 says its own reason. A 400 is the API refusing this request, in its own words; anything else is an
+   * API that could not be reached, which clears when live updates come back.
    */
-  private onListRejected(err: unknown, requestedPage: number): void {
+  private onListRejected(err: unknown, requestedPage: number, key: string): void {
     const maxPage = maxPageOf(err);
     const problem = problemOf(err, maxPage === 0 ? TOO_MANY_TYPES : REFUSED);
     this.loading.set(false);
 
-    if (problem.status === 403) {
-      this.sagas.set([]);
-      this.totalCount.set(0);
+    if (problem.status === 403 && problem.code === FORBIDDEN_CODE) {
+      this.clearRows();
       this.error.set(FORBIDDEN);
+    } else if (problem.status === 403 && problem.code !== null) {
+      this.error.set(problem.message);
     } else if (problem.status === 400) {
-      this.onListRefused(problem.message, maxPage, requestedPage);
+      this.onListRefused(problem.message, maxPage, requestedPage, key);
     } else {
       this.error.set(UNREACHABLE);
       this.errorIsTransient = true;
     }
   }
 
+  /** Nothing on screen: the API refuses the list as asked, so no row (nor a pushed one) may stand under it. */
+  private clearRows(): void {
+    this.sagas.set([]);
+    this.totalCount.set(0);
+    this.listRefused = true;
+  }
+
   /**
-   * A 400: the request cannot be served as asked. The rows on screen are still the last good page's, so the
-   * page goes back to it (never to 0). The scoped list's body names the last page its shape can reach
-   * (`maxPage`): when that is below the page asked for, the list goes there instead and the pager stops
-   * offering pages beyond it. A `maxPage` of 0 says no page of this request can be served at all (too many
-   * visible saga types): the rows go too, the message asks for a saga type filter, and the page is 1 again.
+   * A 400: the request cannot be served as asked. The scoped list's body names the last page its shape can
+   * reach (`maxPage`): when that is below the page asked for, the list goes there and the pager stops
+   * offering pages beyond it. Otherwise the rows on screen are the last good page's, and the page goes back
+   * to it (never to 0), provided they were read under the filters, sort and page size now in the toolbar;
+   * if not (the 400 is the answer to a change of those) they would contradict the toolbar, so they go, and
+   * the page is 1. A `maxPage` of 0 says no page of this request can be served at all (too many visible
+   * saga types), which is the same: no rows, page 1, and the message asks for a saga type filter.
    */
-  private onListRefused(message: string, maxPage: number | null, requestedPage: number): void {
+  private onListRefused(message: string, maxPage: number | null, requestedPage: number, key: string): void {
     this.error.set(message);
 
-    if (maxPage === 0) {
-      this.sagas.set([]);
-      this.totalCount.set(0);
+    if (maxPage !== null && maxPage >= 1 && maxPage < requestedPage) {
+      this.pageCap.set(maxPage);
+      this.page.set(maxPage);
+      if (key !== this.lastGoodKey || this.lastGoodPage !== maxPage) this.refresh(message);
+    } else if (maxPage === 0 || key !== this.lastGoodKey) {
+      this.clearRows();
       this.page.set(1);
       this.pageCap.set(null);
       this.lastGoodPage = null;
-    } else if (maxPage !== null && maxPage < requestedPage) {
-      this.pageCap.set(maxPage);
-      this.page.set(maxPage);
-      if (this.lastGoodPage !== maxPage) this.refresh(message);
+      this.lastGoodKey = null;
     } else {
       this.page.set(this.lastGoodPage ?? 1);
     }
-    this.syncUrlFromFilters();
+    this.syncUrlFromFilters(true);
   }
 
   private upsert(summary: SagaSummary): void {
+    if (this.listRefused) return;
     const current = this.sagas();
     // Matched on both halves of the identity: a correlation id alone can be tracked by more than
     // one saga type, and matching on it alone would let one saga's update overwrite the other's row.

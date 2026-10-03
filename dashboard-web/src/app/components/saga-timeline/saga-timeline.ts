@@ -11,7 +11,7 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { SagaLogEntry } from '../../models/saga.model';
+import { SagaEntryType, SagaLogEntry } from '../../models/saga.model';
 import { entryTypeLabel } from '../../util/entry-type-label';
 import {
   PENDING_SNAPSHOT_MS,
@@ -27,6 +27,13 @@ import { SagaDataInspector } from '../saga-data-inspector/saga-data-inspector';
 
 /** Past the pending window, so the re-check after it never lands a millisecond early. */
 const PENDING_RECHECK_SLACK_MS = 50;
+
+/** The entry types that record a failure, and carry the exception's text when the viewer may see it. */
+const FAILURE_ENTRY_TYPES: ReadonlySet<SagaEntryType> = new Set<SagaEntryType>([
+  'StepFailed',
+  'CompensationStepFailed',
+  'DeliveryExhausted',
+]);
 
 const OUTCOME_LABELS: Record<Exclude<SagaTransition['outcome'], 'in-flight' | 'requested'>, string> = {
   succeeded: 'succeeded',
@@ -172,6 +179,12 @@ export class SagaTimeline {
 
   label(entryType: string): string {
     return entryTypeLabel(entryType);
+  }
+
+  /** Whether a row records a failure: by its type, since the API withholds the error text a viewer without
+   *  sagas.data would otherwise be marked by; any entry that carries error text counts too. */
+  isFailure(entry: SagaLogEntry): boolean {
+    return !!entry.errorMessage || FAILURE_ENTRY_TYPES.has(entry.entryType);
   }
 
   at(row: TimelineRow): RecordedAt {

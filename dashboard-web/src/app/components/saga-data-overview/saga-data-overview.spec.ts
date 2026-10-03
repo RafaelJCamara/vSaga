@@ -283,10 +283,20 @@ describe('SagaDataOverview', () => {
       expect(fixture.nativeElement.querySelector('pre')).toBeNull();
     });
 
+    // A disabled button takes no focus, and a screen reader would say only "dimmed": the sentence is each one's description.
+    it('describes every button by the sentence that names the permission', () => {
+      const fixture = render({ canViewData: false });
+      const sentence = fixture.nativeElement.querySelector('.ov-bar .muted') as HTMLElement;
+
+      expect(sentence.id).not.toBe('');
+      expect(buttons(fixture).map((b) => b.getAttribute('aria-describedby'))).toEqual([sentence.id, sentence.id, sentence.id]);
+    });
+
     it('says nothing about permissions to a viewer who has it', () => {
       const fixture = render();
 
       expect(fixture.nativeElement.querySelector('.ov-bar .muted')).toBeNull();
+      expect(buttons(fixture).map((b) => b.getAttribute('aria-describedby'))).toEqual([null, null, null]);
     });
   });
 });

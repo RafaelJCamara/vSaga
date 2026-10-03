@@ -25,8 +25,9 @@ const LIVE_STATUSES: ReadonlySet<SagaStatus> = new Set<SagaStatus>(['Running', '
  *   the missing side, without either.
  *
  * Without `canViewData` the buttons stay, disabled, beside a sentence naming the permission, so the
- * viewer learns the data exists. The open view is the page's (it lives in the URL): a click asks for
- * it through `viewChange`, and clicking the open one asks for none.
+ * viewer learns the data exists; each button is described by that sentence, since a disabled button takes
+ * no focus and a screen reader would otherwise say only that it is dimmed. The open view is the page's
+ * (it lives in the URL): a click asks for it through `viewChange`, and clicking the open one asks for none.
  */
 @Component({
   selector: 'app-saga-data-overview',

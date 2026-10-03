@@ -44,6 +44,9 @@ export class SagaMap {
   readonly map = input.required<SagaMapModel>();
   /** The sequence number of the timeline entry to show the map as of; null for a free replay. */
   readonly focusSequence = input<number | null>(null);
+  /** Whether the viewer may see saga data: the failure card names the entry either way, but shows the
+   *  error text (exception messages, which often name customers or ids) only with it. */
+  readonly canViewData = input(true);
   /**
    * The viewer took over the replay (play, restart, step or scrub), whether or not a focus was
    * active: a focus that arrives afterwards (the page's default failure focus) must not jump it.
