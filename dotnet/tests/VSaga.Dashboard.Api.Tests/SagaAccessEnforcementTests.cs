@@ -90,7 +90,7 @@ public sealed class SagaAccessEnforcementTests : IAsyncLifetime, IAsyncDisposabl
         using var inScope = await viewer.GetAsync($"/api/sagas/{Order}/{order}{route}");
 
         await AssertForbiddenAsync(outOfScope, Permissions.SagasView, Payment);
-        await AssertForbiddenAsync(blankType, Permissions.SagasView, sagaType: null);
+        await AssertForbiddenAsync(blankType, Permissions.SagasView, sagaType: " ");
         Assert.DoesNotContain(Reads.Calls, call => call.CorrelationId == payment);
         Assert.DoesNotContain(TimelineReads.Calls, call => call.CorrelationId == payment);
         Assert.Equal(HttpStatusCode.OK, inScope.StatusCode);

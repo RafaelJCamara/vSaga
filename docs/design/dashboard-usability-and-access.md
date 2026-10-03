@@ -961,13 +961,14 @@ ticket expired.
    otherwise `GetSagaTypesAsync` filtered to the scope, cached for a few seconds, so a caller granted
    more named types than the shape can merge is refused only when more than that many have run. One type
    is a single call with no bound.
-4. Bounds: for the rank-served shape (the `UpdatedAt` sort with no status or kind filter or a search),
+4. Bounds: for the rank-served shape (the `UpdatedAt` sort with no status or kind filter and no search),
    at most 50 types and `page × pageSize ≤ 10 000`; for every other shape, at most 10 types and
    `page × pageSize ≤ 500` (one chunk, so no refill). Past a bound: 400 `{ error, maxPage }` naming the
    saga-type filter. ADR 0006 says that on Redis these other shapes read every member of every visible
    type.
-5. Merge: each type's stream is primed with `pageSize` rows and refilled with doubling chunks up to
-   500; the smallest head wins under the provider's comparer for that sort arm; ties across types break
+5. Merge: for the rank-served shape each type's stream is primed with `pageSize` rows and refilled with
+   doubling chunks up to 500, each a whole provider page starting where the stream stopped; for every
+   other shape each stream is read once with `page × pageSize` rows; the smallest head wins under the provider's comparer for that sort arm; ties across types break
    by saga type, ordinal ascending. `TotalCount` comes from the primes. A set of emitted
    `(sagaType, correlationId)` pairs skips repeats caused by updates between fetches.
 6. Every result is filtered by scope (ordinal) before returning, so a provider quirk cannot widen it.

@@ -255,9 +255,9 @@ public sealed class ScopedSagaLister(ISagaSummaryReader reader, SagaTypeNameCach
 
     /// <summary>
     /// <paramref name="result"/> without the rows outside the scope. The provider counted those rows in its
-    /// total too, so they come off <c>TotalCount</c> as well, which neither reveals how many out-of-scope rows
-    /// matched nor leaves the pager pointing past the end; the total never drops below the rows this page
-    /// returns plus the ones before it.
+    /// total too, so the ones removed from this page come off <c>TotalCount</c> (never below the rows this page
+    /// returns plus the ones before it). Out-of-scope rows on other pages cannot be seen here, so for such a
+    /// provider the total stays an upper bound.
     /// </summary>
     private static PagedResult<SagaSummary> WithinScope(PagedResult<SagaSummary> result, SagaTypeScope scope)
     {

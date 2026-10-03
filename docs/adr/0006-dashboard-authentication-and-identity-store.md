@@ -231,10 +231,12 @@ persistence contracts. A caller scoped to several types is served by a `ScopedSa
   ties across types broken by saga type, ordinal. Rows of one type keep the provider's own order.
   Repeated `(sagaType, correlationId)` pairs are dropped, and every row is checked against the scope
   again before it is returned.
-- Bounds: at most 50 visible types, and `page × pageSize` at most 10,000. Beyond either, `400` with an
-  error that names the `sagaType` filter and the last reachable page. On Redis, list shapes the provider
-  cannot serve from a rank (a `Status` sort, a status or kind filter, or a search) are limited to one
-  chunk of depth and a lower type bound.
+- Bounds: for the shape Redis serves from a rank (the `UpdatedAt` sort with no status or kind filter and
+  no search), at most 50 types and `page × pageSize` at most 10,000; for every other shape (a `Status`
+  sort, a status or kind filter, or a search), on every provider, at most 10 types and one 500-row chunk,
+  because on Redis they read every member of every visible type. Scoped names beyond a shape's type
+  bound are narrowed to the types that have run (read through a short cache). Beyond a bound, `400` with
+  an error that names the `sagaType` filter and the last reachable page.
 - `TotalCount` is the sum of separate per-type counts, as loose under concurrent writes as offset paging
   already is.
 

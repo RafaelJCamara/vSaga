@@ -54,9 +54,12 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
         return Task.CompletedTask;
     }
 
-    /// <summary>The route's saga type for the 403 body, or null when the endpoint has none (or it is blank).</summary>
+    /// <summary>
+    /// The route's saga type for the 403 body exactly as the request gave it, a blank one included (that is the
+    /// value the decision was made for), or null only when the endpoint has no saga type route value.
+    /// </summary>
     public static string? SagaTypeOf(HttpContext context) =>
-        context.GetRouteValue(SagaTypeRouteValue) is string sagaType && !string.IsNullOrWhiteSpace(sagaType) ? sagaType : null;
+        context.GetRouteValue(SagaTypeRouteValue) as string;
 
     /// <summary>
     /// An endpoint whose route has a saga type is decided for that value exactly as the request gave it, a
