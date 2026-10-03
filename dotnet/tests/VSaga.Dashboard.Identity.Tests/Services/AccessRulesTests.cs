@@ -223,6 +223,22 @@ public sealed class AccessRulesTests : IAsyncLifetime
         Assert.Empty(_context.Observer.UserNotifications);
     }
 
+    /// <summary>
+    /// The API key can act as a custom role (<c>Dashboard:ApiKeyRole</c>) that no grant names, so deleting a role
+    /// changes what live connections may do even though no user or team held it.
+    /// </summary>
+    [Fact]
+    public async Task DeleteRole_NotifiesEveryone()
+    {
+        var role = await _context.SeedRoleAsync("Readers", Permissions.SagasView);
+
+        await _context.NewAdministration().DeleteRoleAsync(role.Id, Admin, None);
+
+        Assert.Null(await _context.NewStore().FindRoleAsync(role.Id, None));
+        Assert.Equal(1, _context.Observer.AllUsersNotifications);
+        Assert.Empty(_context.Observer.UserNotifications);
+    }
+
     [Fact]
     public async Task DeleteRole_InUse_IsRoleInUse()
     {

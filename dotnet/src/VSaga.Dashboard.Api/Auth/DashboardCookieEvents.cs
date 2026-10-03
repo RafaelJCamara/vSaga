@@ -9,7 +9,8 @@ namespace VSaga.Dashboard.Api.Auth;
 /// <summary>
 /// The session cookie's events. Every request re-checks the session against the store: the user must exist,
 /// be enabled and still hold the security stamp the cookie was issued under, and the session must be
-/// younger than <see cref="DashboardSecuritySettings.SessionAbsoluteTimeout"/> however often it slid.
+/// younger than <see cref="DashboardSecuritySettings.SessionAbsoluteTimeout"/> however often it slid; the
+/// ticket's expiry is capped at that point too, so a hub socket opened under it closes by then.
 /// Failures answer the shared problem bodies instead of the cookie handler's redirects, which an API has no
 /// use for.
 /// </summary>
@@ -41,11 +42,14 @@ public sealed partial class DashboardCookieEvents(
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.Principal is null || !WithinAbsoluteLifetime(context.Properties))
+        if (context.Principal is null || SignedInAt(context.Properties) is not { } signedInAt
+            || timeProvider.GetUtcNow() - signedInAt > settings.SessionAbsoluteTimeout)
         {
             await RejectAsync(context, signOut: true, "the session is past its absolute lifetime or has no sign-in time");
             return;
         }
+
+        CapExpiryAtAbsoluteLifetime(context.Properties, signedInAt + settings.SessionAbsoluteTimeout);
 
         // Readiness is read before resolving: it only ever goes from false to true, so a store that became
         // ready mid-resolution must not turn the resolver's "not ready" answer into a sign-out.
@@ -75,10 +79,23 @@ public sealed partial class DashboardCookieEvents(
         return AuthProblems.WriteForbiddenAsync(context.HttpContext, context.HttpContext.GetCaller(), permission: null, sagaType: null);
     }
 
-    private bool WithinAbsoluteLifetime(AuthenticationProperties properties) =>
+    private static DateTimeOffset? SignedInAt(AuthenticationProperties properties) =>
         properties.Items.TryGetValue(SignedInAtItem, out var value)
         && DateTimeOffset.TryParseExact(value, "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var signedInAt)
-        && timeProvider.GetUtcNow() - signedInAt <= settings.SessionAbsoluteTimeout;
+            ? signedInAt
+            : null;
+
+    /// <summary>
+    /// SignalR reads the ticket's <c>ExpiresUtc</c> when a hub connection opens and closes the socket then
+    /// (<c>CloseOnAuthenticationExpiration</c>). That is the sliding idle expiry, so left alone an open socket
+    /// would outlive the absolute lifetime by up to the idle timeout. This caps the expiry on this request's view
+    /// of the ticket only: the cookie's own renewal works from a copy of the ticket taken before this event.
+    /// </summary>
+    private static void CapExpiryAtAbsoluteLifetime(AuthenticationProperties properties, DateTimeOffset absoluteEnd)
+    {
+        if (properties.ExpiresUtc is not { } expiresUtc || expiresUtc > absoluteEnd)
+            properties.ExpiresUtc = absoluteEnd;
+    }
 
     private async Task RejectAsync(CookieValidatePrincipalContext context, bool signOut, string reason)
     {

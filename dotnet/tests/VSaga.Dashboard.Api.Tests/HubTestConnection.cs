@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using VSaga.Dashboard.Api.Auth;
 
 namespace VSaga.Dashboard.Api.Tests;
 
@@ -36,9 +37,12 @@ internal sealed class HubTestConnection : IAsyncDisposable
 
     private HubTestConnection(WebSocket socket) => _socket = socket;
 
-    /// <summary>POSTs the negotiate request with <paramref name="cookieHeader"/> and <paramref name="origin"/>, each only when given.</summary>
+    /// <summary>
+    /// POSTs the negotiate request with <paramref name="cookieHeader"/>, <paramref name="origin"/> and
+    /// <paramref name="apiKey"/> (as the <c>X-Api-Key</c> header), each only when given.
+    /// </summary>
     public static async Task<HttpResponseMessage> NegotiateAsync(
-        WebApplicationFactory<Program> host, string? cookieHeader, string? origin = null, string path = NegotiatePath)
+        WebApplicationFactory<Program> host, string? cookieHeader, string? origin = null, string path = NegotiatePath, string? apiKey = null)
     {
         using var http = host.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         using var request = new HttpRequestMessage(HttpMethod.Post, path);
@@ -46,20 +50,31 @@ internal sealed class HubTestConnection : IAsyncDisposable
             request.Headers.Add("Cookie", cookieHeader);
         if (origin is not null)
             request.Headers.Add("Origin", origin);
+        if (apiKey is not null)
+            request.Headers.Add(ApiKeyAuthenticationDefaults.HeaderName, apiKey);
 
         return await http.SendAsync(request);
     }
 
-    /// <summary>Negotiates and opens a WebSocket connection authenticated by <paramref name="cookieHeader"/>, then completes the handshake.</summary>
-    public static async Task<HubTestConnection> ConnectAsync(WebApplicationFactory<Program> host, string cookieHeader)
+    /// <summary>
+    /// Negotiates and opens a WebSocket connection authenticated by <paramref name="cookieHeader"/> (a session) or by
+    /// <paramref name="apiKey"/> (the API key, sent as a header on both requests), then completes the handshake.
+    /// </summary>
+    public static async Task<HubTestConnection> ConnectAsync(WebApplicationFactory<Program> host, string? cookieHeader, string? apiKey = null)
     {
-        using var negotiate = await NegotiateAsync(host, cookieHeader);
+        using var negotiate = await NegotiateAsync(host, cookieHeader, apiKey: apiKey);
         negotiate.EnsureSuccessStatusCode();
         var body = await SignInClient.ReadJsonAsync(negotiate);
         var token = body.GetProperty("connectionToken").GetString();
 
         var client = host.Server.CreateWebSocketClient();
-        client.ConfigureRequest = request => request.Headers.Cookie = cookieHeader;
+        client.ConfigureRequest = request =>
+        {
+            if (cookieHeader is not null)
+                request.Headers.Cookie = cookieHeader;
+            if (apiKey is not null)
+                request.Headers[ApiKeyAuthenticationDefaults.HeaderName] = apiKey;
+        };
         var socket = await client.ConnectAsync(new Uri($"ws://localhost/hubs/saga?id={Uri.EscapeDataString(token!)}"), CancellationToken.None);
 
         var connection = new HubTestConnection(socket);
@@ -109,29 +124,32 @@ internal sealed class HubTestConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// True once the server ends the connection (a close message, a close frame or a broken socket) within
-    /// <see cref="Timeout"/>; false when it is still open then. Messages read meanwhile are discarded.
+    /// The close message the server ends the connection with, once it does so within <paramref name="within"/>
+    /// (<see cref="Timeout"/> by default): the protocol's own message (<c>{"type":7}</c>, with
+    /// <c>allowReconnect</c> when the client may reconnect). When the socket ends without one (a close frame or
+    /// a broken socket) the answer is a bare <c>{"type":7}</c>, so it never claims <c>allowReconnect</c>. Null
+    /// when the connection is still open then. Messages read meanwhile are discarded.
     /// </summary>
-    public async Task<bool> WaitForCloseAsync()
+    public async Task<JsonElement?> WaitForCloseAsync(TimeSpan? within = null)
     {
-        using var timeout = new CancellationTokenSource(Timeout);
+        using var timeout = new CancellationTokenSource(within ?? Timeout);
         try
         {
             while (true)
             {
                 var message = await ReceiveAsync(timeout.Token);
                 if (Type(message) == CloseType)
-                    return true;
+                    return message;
             }
         }
         catch (Exception ex) when (ex is WebSocketException or IOException
             || (ex is OperationCanceledException && !timeout.IsCancellationRequested))
         {
-            return true;
+            return ClosedByServer;
         }
         catch (OperationCanceledException)
         {
-            return false;
+            return null;
         }
     }
 

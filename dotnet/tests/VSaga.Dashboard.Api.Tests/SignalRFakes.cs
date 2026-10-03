@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using VSaga.Abstractions.Persistence;
 using VSaga.Dashboard.Api.Hubs;
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
 using VSaga.Dashboard.Identity.Model;
@@ -91,17 +92,31 @@ internal sealed class RecordingGroupManager : IGroupManager
 
 /// <summary>
 /// Minimal <see cref="HubCallerContext"/>: the connection id, the principal the connection authenticated as
-/// (none by default), the per-connection items, and whether <see cref="Abort"/> was called.
+/// (none by default), the per-connection items, and how often the connection was closed gracefully
+/// (<see cref="Closes"/>, through the <see cref="IConnectionLifetimeNotificationFeature"/> a real connection
+/// offers, left out when <c>offersGracefulClose</c> is false) or aborted (<see cref="Abort"/>).
 /// </summary>
-internal sealed class TestHubCallerContext(string connectionId, ClaimsPrincipal? user = null) : HubCallerContext
+internal sealed class TestHubCallerContext : HubCallerContext
 {
+    private readonly RecordingLifetimeFeature? _lifetime;
     private int _aborts;
 
-    public override string ConnectionId { get; } = connectionId;
+    public TestHubCallerContext(string connectionId, ClaimsPrincipal? user = null, bool offersGracefulClose = true)
+    {
+        ConnectionId = connectionId;
+        User = user;
+        if (offersGracefulClose)
+        {
+            _lifetime = new RecordingLifetimeFeature();
+            Features.Set<IConnectionLifetimeNotificationFeature>(_lifetime);
+        }
+    }
+
+    public override string ConnectionId { get; }
 
     public override string? UserIdentifier => null;
 
-    public override ClaimsPrincipal? User { get; } = user;
+    public override ClaimsPrincipal? User { get; }
 
     public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
 
@@ -109,10 +124,35 @@ internal sealed class TestHubCallerContext(string connectionId, ClaimsPrincipal?
 
     public override CancellationToken ConnectionAborted => CancellationToken.None;
 
+    /// <summary>How many times the connection was asked to close gracefully (so its client may reconnect).</summary>
+    public int Closes => _lifetime?.Closes ?? 0;
+
+    /// <summary>Makes every later close request fail with <paramref name="failure"/>, as a connection that cannot be closed would.</summary>
+    public void FailToClose(Exception failure) => (_lifetime ?? throw new InvalidOperationException("This connection offers no graceful close.")).Fails = failure;
+
     /// <summary>How many times the connection was aborted.</summary>
     public int Aborts => Volatile.Read(ref _aborts);
 
     public override void Abort() => Interlocked.Increment(ref _aborts);
+}
+
+/// <summary>Counts <see cref="RequestClose"/>, and throws <see cref="Fails"/> from it when that is set.</summary>
+internal sealed class RecordingLifetimeFeature : IConnectionLifetimeNotificationFeature
+{
+    private int _closes;
+
+    public CancellationToken ConnectionClosedRequested { get; set; }
+
+    public Exception? Fails { get; set; }
+
+    public int Closes => Volatile.Read(ref _closes);
+
+    public void RequestClose()
+    {
+        Interlocked.Increment(ref _closes);
+        if (Fails is { } failure)
+            throw failure;
+    }
 }
 
 /// <summary>

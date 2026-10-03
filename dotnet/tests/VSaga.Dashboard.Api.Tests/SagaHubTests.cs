@@ -93,8 +93,24 @@ public sealed class SagaHubTests
     {
         var (hub, groups) = NewHub();
 
-        await hub.SubscribeToSaga("OrderSaga", "not-a-guid");
+        var joined = await hub.SubscribeToSaga("OrderSaga", "not-a-guid");
 
+        Assert.False(joined);
+        Assert.Empty(groups.Added);
+    }
+
+    /// <summary>
+    /// A hand-made invocation can send a null saga type: it answers false like any refusal and joins no group,
+    /// rather than failing the invocation.
+    /// </summary>
+    [Fact]
+    public async Task SubscribeToSaga_WithANullSagaType_AnswersFalseAndJoinsNoGroup()
+    {
+        var (hub, groups) = NewHub();
+
+        var joined = await hub.SubscribeToSaga(null, Guid.NewGuid().ToString());
+
+        Assert.False(joined);
         Assert.Empty(groups.Added);
     }
 

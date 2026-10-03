@@ -287,7 +287,11 @@ public sealed class AccessAdministrationService
         }, cancellationToken));
     }
 
-    /// <summary>Deletes a custom role that no user or team holds.</summary>
+    /// <summary>
+    /// Deletes a custom role that no user or team holds. Every live connection is notified all the same: the
+    /// API key may act as that role (<c>Dashboard:ApiKeyRole</c>), and without it the key's connections would
+    /// stay open on access it no longer has.
+    /// </summary>
     public Task DeleteRoleAsync(Guid id, AuditContext audit, CancellationToken cancellationToken) =>
         AuditedAsync(audit, AccessActions.DeleteRole, RoleKind, id, () => InScopeAsync(async snapshot =>
         {
@@ -298,7 +302,7 @@ public sealed class AccessAdministrationService
 
             EnsureAdministratorRemains(snapshot with { Roles = [.. snapshot.Roles.Where(r => r.Id != id)] });
             await _store.DeleteRoleAsync(id, cancellationToken);
-            return new Committed<bool>(true, id, current.Name, "deleted", Notification.None);
+            return new Committed<bool>(true, id, current.Name, "deleted", Notification.Everyone);
         }, cancellationToken));
 
     private async Task<PasswordChangeResult> ChangeOwnPasswordCoreAsync(

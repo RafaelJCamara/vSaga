@@ -16,13 +16,17 @@ namespace VSaga.Dashboard.Api.Auth;
 /// <c>Origin</c> equal to the request's own <c>{scheme}://{Host}</c>, the scheme being the one a trusted
 /// proxy forwarded; or equal to <c>Dashboard:WebOrigin</c> when that is set.</item>
 /// <item>Everything else is refused with 403, <c>Origin: null</c> (sandboxed frames, some redirects) and
-/// several <c>Origin</c> headers included, and logged at Warning with the received and expected values, so
-/// an operator whose proxy rewrites the scheme or host can see why.</item>
+/// several <c>Origin</c> headers included, and logged at Warning with the received (cut at
+/// <see cref="MaxLoggedOriginLength"/> characters) and expected values, so an operator whose proxy rewrites the
+/// scheme or host can see why.</item>
 /// </list>
 /// Scheme and host compare ignoring case, as they are defined; the configured origin is already normalised.
 /// </summary>
 internal static partial class HubOriginGuard
 {
+    /// <summary>How much of a refused request's <c>Origin</c> is logged; a longer value is cut and ends in an ellipsis.</summary>
+    internal const int MaxLoggedOriginLength = 256;
+
     /// <summary>The guard middleware; call it after <c>UseDashboardEdge</c> (so the forwarded scheme applies) and before authentication.</summary>
     internal static WebApplication UseHubOriginGuard(this WebApplication app)
     {
@@ -59,9 +63,14 @@ internal static partial class HubOriginGuard
             return;
         }
 
-        LogRejected(logger, context.Request.Path, origins.ToString(), webOrigin is null ? ownOrigin : $"{ownOrigin} or {webOrigin}");
+        LogRejected(logger, context.Request.Path, Shortened(origins.ToString()), webOrigin is null ? ownOrigin : $"{ownOrigin} or {webOrigin}");
         await AuthProblems.ForeignHubOrigin().ExecuteAsync(context);
     }
+
+    // The received value is the caller's, up to the header size limit and with no authentication behind it:
+    // a Warning per request must not be able to carry kilobytes of it.
+    private static string Shortened(string received) =>
+        received.Length <= MaxLoggedOriginLength ? received : string.Concat(received.AsSpan(0, MaxLoggedOriginLength), "…");
 
     [LoggerMessage(EventId = 7311, EventName = "HubOriginRejected", Level = LogLevel.Warning,
         Message = "Refused a hub request to {Path} from origin '{Origin}'; expected no Origin or {Expected}. Behind a proxy, check that it passes the browser's Host and, from a trusted proxy (Dashboard:TrustedProxies), X-Forwarded-Proto")]

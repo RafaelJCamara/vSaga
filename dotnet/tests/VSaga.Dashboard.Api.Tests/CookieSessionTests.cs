@@ -158,6 +158,55 @@ public sealed class CookieSessionTests : IAsyncLifetime, IAsyncDisposable
         Assert.False(deleted);
     }
 
+    /// <summary>
+    /// SignalR closes a hub socket when the ticket it opened under expires, reading the ticket's <c>ExpiresUtc</c>:
+    /// the sliding idle expiry, which can be past the session's absolute lifetime. The expiry the request sees is
+    /// capped at the sign-in time plus that lifetime, and nothing else about the ticket changes.
+    /// </summary>
+    [Fact]
+    public async Task TheTicketsExpiry_IsCappedAtTheAbsoluteLifetime()
+    {
+        var signedInAt = WholeSeconds(DateTimeOffset.UtcNow.AddHours(-23));
+        var idleExpiry = WholeSeconds(DateTimeOffset.UtcNow.AddHours(8));
+
+        var validation = await ValidateSessionAsync(signedInAt, idleExpiry);
+
+        Assert.NotNull(validation.Principal);
+        Assert.Equal(signedInAt + DashboardSecuritySettings.Default.SessionAbsoluteTimeout, validation.Properties.ExpiresUtc);
+        Assert.False(validation.ShouldRenew);
+    }
+
+    [Fact]
+    public async Task AnExpiryBeforeTheAbsoluteLifetime_IsLeftAlone()
+    {
+        var idleExpiry = WholeSeconds(DateTimeOffset.UtcNow.AddHours(1));
+
+        var validation = await ValidateSessionAsync(DateTimeOffset.UtcNow, idleExpiry);
+
+        Assert.NotNull(validation.Principal);
+        Assert.Equal(idleExpiry, validation.Properties.ExpiresUtc);
+    }
+
+    // AuthenticationProperties keeps its dates to the second, so a date compared after a round trip must have no fraction.
+    private static DateTimeOffset WholeSeconds(DateTimeOffset value) =>
+        new(value.UtcTicks - (value.UtcTicks % TimeSpan.TicksPerSecond), TimeSpan.Zero);
+
+    /// <summary>Runs the cookie events on a ticket of a session that stands; the context holds the ticket as the events left it.</summary>
+    private static async Task<CookieValidatePrincipalContext> ValidateSessionAsync(DateTimeOffset signedInAt, DateTimeOffset expiresUtc)
+    {
+        var properties = new AuthenticationProperties { IssuedUtc = signedInAt, ExpiresUtc = expiresUtc };
+        DashboardCookieEvents.SetSignedInAt(properties, signedInAt);
+        var ticket = new AuthenticationTicket(DashboardClaims.ForApiKey(), properties, DashboardAuthExtensions.CookieScheme);
+        var scheme = new AuthenticationScheme(DashboardAuthExtensions.CookieScheme, null, typeof(CookieAuthenticationHandler));
+        var validation = new CookieValidatePrincipalContext(new DefaultHttpContext(), scheme, new CookieAuthenticationOptions(), ticket);
+        var events = new DashboardCookieEvents(
+            StubCallerAccessResolver.FullAccess(), new Readiness(true), DashboardSecuritySettings.Default, TimeProvider.System,
+            NullLogger<DashboardCookieEvents>.Instance);
+
+        await events.ValidatePrincipal(validation);
+        return validation;
+    }
+
     /// <summary>Runs the cookie events on a rejected ticket; true when the session cookie was deleted.</summary>
     private async Task<bool> ValidateRejectedSessionAsync(ICallerAccessResolver resolver, IIdentityReadiness readiness)
     {

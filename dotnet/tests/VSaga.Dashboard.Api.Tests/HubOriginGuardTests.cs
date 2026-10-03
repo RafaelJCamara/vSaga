@@ -68,11 +68,44 @@ public sealed class HubOriginGuardTests : IAsyncLifetime, IAsyncDisposable
         using var response = await NegotiateAsync(host, AnotherLocalPort);
 
         var problem = await AdminApi.AssertProblemAsync(response, HttpStatusCode.Forbidden, AuthProblems.ForbiddenCode);
-        Assert.Contains("Dashboard:WebOrigin", problem.GetProperty("detail").GetString(), StringComparison.Ordinal);
+        var detail = problem.GetProperty("detail").GetString();
+        Assert.Contains("Dashboard:WebOrigin", detail, StringComparison.Ordinal);
+        Assert.EndsWith(AuthProblems.DocumentationPointer, detail, StringComparison.Ordinal);
         var (level, message) = Assert.Single(_logs.Logged(GuardCategory, RejectedEventId));
         Assert.Equal(LogLevel.Warning, level);
         Assert.Contains($"'{AnotherLocalPort}'", message, StringComparison.Ordinal);
         Assert.Contains($"expected no Origin or {OwnOrigin}.", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The received Origin is the caller's, with no authentication behind it: a refusal logs at most its first
+    /// 256 characters, ending in an ellipsis, while the expected value is logged whole.
+    /// </summary>
+    [Fact]
+    public async Task ALongOrigin_IsRefused_AndLoggedCutAt256Characters()
+    {
+        await using var host = Host();
+        var origin = "http://" + new string('a', 1024) + ".example";
+
+        using var response = await NegotiateAsync(host, origin);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var (_, message) = Assert.Single(_logs.Logged(GuardCategory, RejectedEventId));
+        Assert.Contains($"'{origin[..HubOriginGuard.MaxLoggedOriginLength]}\u2026'", message, StringComparison.Ordinal);
+        Assert.DoesNotContain(origin[..(HubOriginGuard.MaxLoggedOriginLength + 1)], message, StringComparison.Ordinal);
+        Assert.Contains($"expected no Origin or {OwnOrigin}.", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnOriginAtTheLimit_IsLoggedWhole()
+    {
+        await using var host = Host();
+        var origin = "http://" + new string('a', HubOriginGuard.MaxLoggedOriginLength - "http://".Length);
+
+        using var response = await NegotiateAsync(host, origin);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains($"'{origin}'", Assert.Single(_logs.Logged(GuardCategory, RejectedEventId)).Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -142,6 +175,31 @@ public sealed class HubOriginGuardTests : IAsyncLifetime, IAsyncDisposable
         using var response = await NegotiateAsync(host, origin, path: path);
 
         Assert.Equal(expected, response.StatusCode);
+    }
+
+    /// <summary>
+    /// A browser opens the WebSocket itself, skipping negotiate (the SPA's client may be configured so), and
+    /// always sends its page's Origin on the upgrade: the guard refuses that request too, before the socket
+    /// exists. Under TestServer a refused upgrade surfaces as an incomplete handshake naming the status.
+    /// </summary>
+    [Fact]
+    public async Task ADirectWebSocketUpgrade_FromAnotherOrigin_Is403_AndLogsOneWarning()
+    {
+        await using var host = Host();
+        var client = host.Server.CreateWebSocketClient();
+        client.ConfigureRequest = request =>
+        {
+            request.Headers["Origin"] = AnotherLocalPort;
+            request.Headers[ApiKeyAuthenticationDefaults.HeaderName] = DashboardApiFactory.TestApiKey;
+        };
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.ConnectAsync(new Uri("ws://localhost/hubs/saga"), CancellationToken.None));
+
+        Assert.Contains("403", refused.Message, StringComparison.Ordinal);
+        var (level, message) = Assert.Single(_logs.Logged(GuardCategory, RejectedEventId));
+        Assert.Equal(LogLevel.Warning, level);
+        Assert.Contains($"'{AnotherLocalPort}'", message, StringComparison.Ordinal);
     }
 
     /// <summary>The guard runs before authentication: a page on another origin learns nothing about the session.</summary>
