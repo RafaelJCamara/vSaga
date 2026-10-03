@@ -4,6 +4,8 @@ import { AdminStore } from './admin.store';
 
 const placeholder = () =>
   import('./admin-placeholder/admin-placeholder').then((m) => m.AdminPlaceholder);
+const usersList = () => import('./users/users-list/users-list').then((m) => m.UsersList);
+const userEdit = () => import('./users/user-edit/user-edit').then((m) => m.UserEdit);
 const rolesList = () => import('./roles/roles-list/roles-list').then((m) => m.RolesList);
 const roleEdit = () => import('./roles/role-edit/role-edit').then((m) => m.RoleEdit);
 
@@ -24,9 +26,9 @@ export const ADMIN_ROUTES: Routes = [
       {
         path: 'users',
         children: [
-          { path: '', loadComponent: placeholder, data: { page: 'The user list' } },
-          { path: 'new', loadComponent: placeholder, data: { page: 'The new-user form' } },
-          { path: ':id', loadComponent: placeholder, data: { page: 'The user page' } },
+          { path: '', loadComponent: usersList },
+          { path: 'new', loadComponent: userEdit },
+          { path: ':id', loadComponent: userEdit },
         ],
       },
       {

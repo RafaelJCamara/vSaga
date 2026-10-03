@@ -1,0 +1,41 @@
+:host {
+  display: block;
+  max-width: 44rem;
+}
+
+.sub-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.teams {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.preview {
+  margin-bottom: 1.25rem;
+}
+
+.wrap {
+  flex-wrap: wrap;
+}
+
+.reset {
+  max-width: 24rem;
+  margin-top: 1rem;
+}
+
+/* The delete sits apart from the other actions, under a rule. */
+.danger {
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}

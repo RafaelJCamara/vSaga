@@ -1,0 +1,155 @@
+@if (general().length > 0) {
+  <div class="field-error" [id]="uid + '-error'">{{ general().join(' ') }}</div>
+}
+
+@if (rows().length === 0) {
+  <p class="muted none">No grants yet.</p>
+}
+
+@for (row of rows(); track row.key; let i = $index) {
+  <div class="grant" role="group" [attr.aria-label]="'Grant ' + (i + 1) + ': ' + row.roleName">
+    @if (row.whole.length > 0) {
+      <div [id]="id('whole', i)" class="field-error">{{ row.whole.join(' ') }}</div>
+    }
+
+    <div class="grant-head">
+      <div class="field role">
+        <label class="label" [for]="id('role', i)">Role</label>
+        <select
+          class="input"
+          [id]="id('role', i)"
+          [attr.aria-invalid]="row.roleErrors.length > 0 ? 'true' : null"
+          [attr.aria-describedby]="row.roleErrors.length > 0 ? id('role-error', i) : null"
+          (change)="setRole(i, $event)"
+        >
+          @for (role of row.roles; track role.id) {
+            <option [value]="role.id" [selected]="role.id === row.grant.roleId">
+              {{ role.name }}
+            </option>
+          }
+          @if (!row.roleKnown) {
+            <option [value]="row.grant.roleId" selected>Unknown role</option>
+          }
+        </select>
+        @if (row.roleErrors.length > 0) {
+          <span [id]="id('role-error', i)" class="field-error">{{ row.roleErrors.join(' ') }}</span>
+        }
+      </div>
+      <button
+        type="button"
+        class="btn btn--quiet"
+        [attr.aria-label]="'Remove the ' + row.roleName + ' grant'"
+        (click)="remove(i)"
+      >
+        Remove
+      </button>
+    </div>
+
+    <fieldset class="scope">
+      <legend class="label">Saga types</legend>
+      <label class="choice">
+        <input
+          type="radio"
+          [name]="uid + '-scope-' + row.key"
+          [checked]="row.grant.allSagaTypes"
+          (change)="setAll(i, true)"
+        />
+        All saga types
+      </label>
+      <label class="choice">
+        <input
+          type="radio"
+          [name]="uid + '-scope-' + row.key"
+          [checked]="!row.grant.allSagaTypes"
+          (change)="setAll(i, false)"
+        />
+        Selected saga types
+      </label>
+    </fieldset>
+
+    @if (!row.grant.allSagaTypes) {
+      <fieldset
+        class="types"
+        [attr.aria-describedby]="
+          row.noTypes ? id('pick', i) : row.typeErrors.length > 0 ? id('types-error', i) : null
+        "
+      >
+        <legend class="sr-only">Selected saga types</legend>
+        @for (type of row.types; track type; let n = $index) {
+          <label class="choice">
+            <input
+              type="checkbox"
+              [id]="typeId(i, n)"
+              [checked]="row.grant.sagaTypes.includes(type)"
+              (change)="toggle(i, type, $event)"
+            />
+            <code>{{ type }}</code>
+          </label>
+        }
+        @if (row.types.length === 0) {
+          <span class="field-hint">No saga types are known yet: type a name below.</span>
+        }
+      </fieldset>
+
+      <div class="field custom">
+        <label class="label" [for]="id('custom', i)">Exact saga type name</label>
+        <div class="custom-row">
+          <input
+            #custom
+            class="input"
+            type="text"
+            [id]="id('custom', i)"
+            autocomplete="off"
+            autocapitalize="none"
+            spellcheck="false"
+            [attr.maxlength]="200"
+            [attr.aria-invalid]="typedMessage(row.key) ? 'true' : null"
+            [attr.aria-describedby]="
+              typedMessage(row.key)
+                ? id('custom-hint', i) + ' ' + id('custom-error', i)
+                : id('custom-hint', i)
+            "
+            (input)="typing(row.key)"
+            (keydown.enter)="$event.preventDefault(); addTyped(i, custom)"
+          />
+          <button type="button" class="btn" (click)="addTyped(i, custom)">Add type</button>
+        </div>
+        <span [id]="id('custom-hint', i)" class="field-hint">
+          For a saga type that has not run yet. Type its name exactly: case matters.
+        </span>
+        @if (typedMessage(row.key); as message) {
+          <span [id]="id('custom-error', i)" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      @if (row.noTypes) {
+        <span [id]="id('pick', i)" class="field-error">Pick at least one saga type.</span>
+      }
+      @if (row.typeErrors.length > 0) {
+        <span [id]="id('types-error', i)" class="field-error">{{ row.typeErrors.join(' ') }}</span>
+      }
+    } @else if (row.typeErrors.length > 0) {
+      <span class="field-error">{{ row.typeErrors.join(' ') }}</span>
+    }
+    @if (row.manageIgnored) {
+      <span class="field-hint">
+        access.manage is ignored in a scoped grant: it counts only for all saga types.
+      </span>
+    }
+  </div>
+}
+
+<div class="add">
+  <button
+    type="button"
+    class="btn"
+    [id]="uid + '-add'"
+    [disabled]="available().length === 0"
+    (click)="add()"
+  >
+    Add grant
+  </button>
+  @if (available().length === 0 && roles().length > 0) {
+    <span class="field-hint">Every role is already granted.</span>
+  }
+</div>

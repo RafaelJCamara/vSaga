@@ -1,0 +1,389 @@
+@if (notFound()) {
+  <div class="banner banner--warning" role="alert">
+    This no longer exists. It may have been deleted by someone else.
+    <a #goneLink routerLink="/admin/users">Back to the users</a>
+  </div>
+} @else {
+  <div class="page-header">
+    <h2 class="section-title">{{ heading() }}</h2>
+    @if (status(); as state) {
+      @if (state.disabled) {
+        <span class="chip chip--muted">Disabled</span>
+      }
+      @if (state.locked) {
+        <span class="chip chip--danger">Locked</span>
+      }
+      @if (state.mustChangePassword) {
+        <span class="chip">Must change password</span>
+      }
+    }
+  </div>
+
+  @if (failure(); as problem) {
+    <div id="user-failure" class="banner banner--error" role="alert">{{ problem.message }}</div>
+  }
+  <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
+  <div role="status">
+    @if (saved()) {
+      <div class="banner banner--success">Saved.</div>
+    }
+  </div>
+
+  <form class="card" method="post" ngNoForm novalidate (submit)="$event.preventDefault(); save()">
+    @if (creating()) {
+      <div class="field">
+        <label class="label" for="user-username">Username</label>
+        <input
+          #usernameField
+          id="user-username"
+          name="username"
+          class="input"
+          type="text"
+          autocomplete="off"
+          autocapitalize="none"
+          spellcheck="false"
+          [attr.maxlength]="usernameLimit"
+          aria-required="true"
+          [(ngModel)]="username"
+          (ngModelChange)="edited('username')"
+          [attr.aria-invalid]="errors().username || usernameTaken() ? 'true' : null"
+          [attr.aria-describedby]="
+            errors().username
+              ? 'user-username-hint user-username-error'
+              : usernameTaken()
+                ? 'user-username-hint user-failure'
+                : 'user-username-hint'
+          "
+        />
+        <span id="user-username-hint" class="field-hint">
+          3 to 64 letters, digits or . _ &#64; + -, starting with a letter or a digit. It cannot be
+          changed later.
+        </span>
+        @if (errors().username; as message) {
+          <span id="user-username-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+    }
+
+    <div class="field">
+      <label class="label" for="user-display-name">Display name</label>
+      <input
+        #displayNameField
+        id="user-display-name"
+        name="displayName"
+        class="input"
+        type="text"
+        autocomplete="off"
+        [attr.maxlength]="displayNameLimit"
+        aria-required="true"
+        [(ngModel)]="displayName"
+        (ngModelChange)="edited('displayName')"
+        [attr.aria-invalid]="errors().displayName ? 'true' : null"
+        [attr.aria-describedby]="errors().displayName ? 'user-display-name-error' : null"
+      />
+      @if (errors().displayName; as message) {
+        <span id="user-display-name-error" class="field-error">{{ message }}</span>
+      }
+    </div>
+
+    @if (creating()) {
+      <div class="field">
+        <label class="label" for="user-password">Password</label>
+        <input
+          #passwordField
+          id="user-password"
+          name="password"
+          class="input"
+          type="password"
+          autocomplete="new-password"
+          [attr.maxlength]="passwordLimit"
+          aria-required="true"
+          [attr.minlength]="minLength()"
+          [(ngModel)]="password"
+          (ngModelChange)="edited('password')"
+          [attr.aria-invalid]="errors().password ? 'true' : null"
+          [attr.aria-describedby]="
+            errors().password ? 'user-password-hint user-password-error' : 'user-password-hint'
+          "
+        />
+        <span id="user-password-hint" class="field-hint">
+          @if (minLength(); as min) {
+            At least {{ min }} characters. Share it with the user: it cannot be shown again.
+          } @else {
+            Choose a long password. Share it with the user: it cannot be shown again.
+          }
+        </span>
+        @if (errors().password; as message) {
+          <span id="user-password-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="label" for="user-confirmation">Repeat the password</label>
+        <input
+          #confirmationField
+          id="user-confirmation"
+          name="confirmation"
+          class="input"
+          type="password"
+          autocomplete="new-password"
+          [attr.maxlength]="passwordLimit"
+          aria-required="true"
+          [(ngModel)]="confirmation"
+          [attr.aria-invalid]="errors().confirmation ? 'true' : null"
+          [attr.aria-describedby]="errors().confirmation ? 'user-confirmation-error' : null"
+        />
+        @if (errors().confirmation; as message) {
+          <span id="user-confirmation-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            name="mustChangePassword"
+            [checked]="requireChange()"
+            (change)="setRequireChange($event)"
+          />
+          Require a change at next sign-in
+        </label>
+        <span class="field-hint">
+          The user chooses their own password first, and holds no access until then.
+        </span>
+      </div>
+    } @else {
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            name="isEnabled"
+            aria-describedby="user-enabled-hint"
+            [checked]="isEnabled()"
+            [disabled]="own() || working()"
+            (change)="setEnabled($event)"
+          />
+          Enabled
+        </label>
+        <span id="user-enabled-hint" class="field-hint">
+          @if (own()) {
+            You cannot disable your own account.
+          } @else {
+            A disabled user cannot sign in and holds no access.
+          }
+        </span>
+      </div>
+    }
+
+    <div class="field">
+      <span id="user-teams-label" class="label">Teams</span>
+      @if (teams().length > 0) {
+        <ul class="teams" aria-labelledby="user-teams-label">
+          @for (team of teams(); track team.id) {
+            <li>
+              <a [routerLink]="['/admin/teams', team.id]">{{ team.name }}</a>
+            </li>
+          }
+        </ul>
+      } @else if (!creating()) {
+        <span class="muted">Not in any team.</span>
+      }
+      <span class="field-hint">
+        @if (creating()) {
+          Membership is changed on the team's page: add the user to a team once the user exists.
+        } @else {
+          Membership is changed on the team's page, not here.
+        }
+      </span>
+    </div>
+
+    <div class="field" role="group" aria-labelledby="user-grants-label">
+      <span id="user-grants-label" class="label">Access</span>
+      <app-grants-editor
+        [grants]="grants()"
+        (grantsChange)="setGrants($event)"
+        [roles]="roles()"
+        [sagaTypes]="sagaTypes()"
+        [errors]="grantErrors()"
+      />
+    </div>
+
+    <section class="preview" aria-labelledby="user-access-title">
+      <h3 id="user-access-title" class="sub-title">Effective access</h3>
+      <p class="field-hint">
+        What this user would hold with the grants above, saved or not, and those of their teams.
+      </p>
+      @if (mustChange()) {
+        <p class="field-hint">
+          Until the user has chosen a new password they hold no access; this is what they hold
+          afterwards.
+        </p>
+      }
+      @if (isEnabled()) {
+        <app-access-summary [access]="access()" perspective="user" [origins]="origins()" />
+      } @else {
+        <p class="muted">A disabled user holds no access.</p>
+      }
+    </section>
+
+    <div class="actions">
+      <button type="submit" class="btn" [disabled]="working()">
+        {{ busy() ? 'Saving…' : creating() ? 'Create user' : 'Save' }}
+      </button>
+      <!-- Not "Cancel" on a user that exists: the delete's own question has a Cancel, and two would be ambiguous. -->
+      <a class="btn btn--quiet" routerLink="/admin/users">{{
+        creating() ? 'Cancel' : 'Back to the users'
+      }}</a>
+    </div>
+  </form>
+
+  @if (user(); as existing) {
+    <section class="card" aria-labelledby="user-account-title">
+      <h3 id="user-account-title" class="sub-title">Account</h3>
+
+      @if (actionFailure(); as problem) {
+        <div id="user-action-failure" class="banner banner--error" role="alert">
+          {{ problem.message }}
+        </div>
+      }
+      <div role="status">
+        @if (notice(); as text) {
+          <div class="banner banner--success">{{ text }}</div>
+        }
+      </div>
+
+      <div class="actions wrap">
+        <button
+          #resetButton
+          type="button"
+          class="btn"
+          aria-controls="user-reset"
+          [attr.aria-expanded]="resetOpen()"
+          (click)="toggleReset()"
+        >
+          Reset password
+        </button>
+        @if (status()?.locked) {
+          <span class="locked">
+            Locked until
+            @if (existing.lockedUntilUtc; as until) {
+              <app-local-time [value]="until" format="datetime" />
+            }
+          </span>
+          <button type="button" class="btn" [disabled]="working()" (click)="unlock()">
+            Unlock
+          </button>
+        }
+      </div>
+
+      @if (resetOpen()) {
+        <form
+          id="user-reset"
+          class="reset"
+          method="post"
+          ngNoForm
+          novalidate
+          (submit)="$event.preventDefault(); reset()"
+        >
+          @if (own()) {
+            <p class="field-hint">
+              This is your own account: its sessions end when the password is set, yours included.
+              To change your own password, use <a routerLink="/account">your account</a>.
+            </p>
+          }
+          <div class="field">
+            <label class="label" for="user-new-password">New password</label>
+            <input
+              #newPasswordField
+              id="user-new-password"
+              name="newPassword"
+              class="input"
+              type="password"
+              autocomplete="new-password"
+              [attr.maxlength]="passwordLimit"
+              aria-required="true"
+              [attr.minlength]="minLength()"
+              [(ngModel)]="newPassword"
+              (ngModelChange)="resetEdited()"
+              [attr.aria-invalid]="resetErrors().newPassword ? 'true' : null"
+              [attr.aria-describedby]="
+                resetErrors().newPassword
+                  ? 'user-new-password-hint user-new-password-error'
+                  : 'user-new-password-hint'
+              "
+            />
+            <span id="user-new-password-hint" class="field-hint">
+              @if (minLength(); as min) {
+                At least {{ min }} characters. Share it with the user: it cannot be shown again.
+              } @else {
+                Choose a long password. Share it with the user: it cannot be shown again.
+              }
+            </span>
+            @if (resetErrors().newPassword; as message) {
+              <span id="user-new-password-error" class="field-error">{{ message }}</span>
+            }
+          </div>
+          <div class="field">
+            <label class="label" for="user-new-confirmation">Repeat the new password</label>
+            <input
+              #resetConfirmationField
+              id="user-new-confirmation"
+              name="confirmation"
+              class="input"
+              type="password"
+              autocomplete="new-password"
+              [attr.maxlength]="passwordLimit"
+              aria-required="true"
+              [(ngModel)]="newConfirmation"
+              [attr.aria-invalid]="resetErrors().confirmation ? 'true' : null"
+              [attr.aria-describedby]="
+                resetErrors().confirmation ? 'user-new-confirmation-error' : null
+              "
+            />
+            @if (resetErrors().confirmation; as message) {
+              <span id="user-new-confirmation-error" class="field-error">{{ message }}</span>
+            }
+          </div>
+          <div class="field">
+            <label class="check">
+              <input
+                type="checkbox"
+                name="mustChangePassword"
+                [checked]="resetRequireChange()"
+                (change)="setResetRequireChange($event)"
+              />
+              Require a change at next sign-in
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn" [disabled]="working()">
+              {{ resetting() ? 'Setting…' : 'Set password' }}
+            </button>
+            <button type="button" class="btn btn--quiet" (click)="toggleReset()">
+              Cancel reset
+            </button>
+          </div>
+        </form>
+      }
+
+      <div class="actions danger">
+        <app-confirm-button
+          label="Delete user"
+          [prompt]="
+            'Delete the user ' +
+            existing.username +
+            '? Their grants go with them. This cannot be undone.'
+          "
+          confirmLabel="Yes, delete"
+          [busy]="working()"
+          [disabled]="own()"
+          [describedBy]="own() ? 'user-delete-hint' : null"
+          (confirmed)="remove()"
+        />
+        @if (own()) {
+          <span id="user-delete-hint" class="field-hint">You cannot delete your own account.</span>
+        }
+      </div>
+    </section>
+  }
+}

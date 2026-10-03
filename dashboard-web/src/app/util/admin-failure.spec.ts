@@ -6,6 +6,7 @@ import {
   MUST_CHANGE_PASSWORD,
   SESSION_ENDED,
   adminFailure,
+  belongsToField,
   placeFieldErrors,
 } from './admin-failure';
 
@@ -203,5 +204,21 @@ describe('placeFieldErrors', () => {
 
     expect(placed).toEqual({});
     expect(unplaced).toEqual(['Hold at most 20 grants.', 'Not the name.', 'No role has this id.']);
+  });
+});
+
+describe('belongsToField', () => {
+  it('is true for the field itself, an element of it and a member below it', () => {
+    expect(belongsToField('grants', 'grants')).toBe(true);
+    expect(belongsToField('grants[0]', 'grants')).toBe(true);
+    expect(belongsToField('grants[12].sagaTypes', 'grants')).toBe(true);
+    expect(belongsToField('grants.extra', 'grants')).toBe(true);
+  });
+
+  it('is false for another field, or one whose name merely starts with it', () => {
+    expect(belongsToField('grantsX', 'grants')).toBe(false);
+    expect(belongsToField('namespace', 'name')).toBe(false);
+    expect(belongsToField('displayName', 'grants')).toBe(false);
+    expect(belongsToField('', 'grants')).toBe(false);
   });
 });

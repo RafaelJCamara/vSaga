@@ -1,0 +1,99 @@
+<div class="page-header">
+  <h2 class="section-title">Users</h2>
+  <!-- A live region that is always there, with the text put into it: it tells a filtering user how many are left. -->
+  <span class="muted" role="status">{{ count() }}</span>
+  <a class="btn new-user" routerLink="/admin/users/new">New user</a>
+</div>
+
+<div class="toolbar">
+  <label class="sr-only" for="users-filter">Filter users</label>
+  <input
+    id="users-filter"
+    class="input filter"
+    type="search"
+    placeholder="Filter by username, name or team"
+    autocomplete="off"
+    [value]="filter()"
+    (input)="setFilter($event)"
+  />
+</div>
+
+@if (rows().length === 0) {
+  <p class="empty">
+    @if (filter().trim() === '') {
+      There are no users yet.
+    } @else {
+      No user matches “{{ filter().trim() }}”.
+    }
+  </p>
+} @else {
+  <table class="data-table">
+    <caption class="sr-only">
+      Users, what is the matter with each account, their teams, the access they hold directly and
+      their last sign-in
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Username</th>
+        <th scope="col">Display name</th>
+        <th scope="col">Status</th>
+        <th scope="col">Teams</th>
+        <th scope="col">Access</th>
+        <th scope="col">Last sign-in</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (row of rows(); track row.user.id) {
+        <tr>
+          <td>
+            <a [routerLink]="['/admin/users', row.user.id]">{{ row.user.username }}</a>
+            @if (row.you) {
+              <span class="muted"> (you)</span>
+            }
+          </td>
+          <td>{{ row.user.displayName }}</td>
+          <td>
+            <div class="chips">
+              @if (row.status.disabled) {
+                <span class="chip chip--muted">Disabled</span>
+              }
+              @if (row.status.locked) {
+                <span class="chip chip--danger">Locked</span>
+              }
+              @if (row.status.mustChangePassword) {
+                <span class="chip">Must change password</span>
+              }
+            </div>
+          </td>
+          <td>
+            @if (row.teams.length > 0) {
+              <ul class="plain">
+                @for (team of row.teams; track team.id) {
+                  <li>
+                    <a [routerLink]="['/admin/teams', team.id]">{{ team.name }}</a>
+                  </li>
+                }
+              </ul>
+            } @else {
+              <span class="muted">None</span>
+            }
+          </td>
+          <td>
+            @for (phrase of row.access; track phrase) {
+              <div>{{ phrase }}</div>
+            } @empty {
+              <span class="muted">None directly</span>
+            }
+          </td>
+          <td>
+            @if (row.user.lastSignInAtUtc; as at) {
+              <app-local-time [value]="at" format="datetime" />
+            } @else {
+              <span class="muted">Never</span>
+            }
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+}

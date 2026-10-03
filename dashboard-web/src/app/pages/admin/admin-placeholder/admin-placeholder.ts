@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 
 /**
- * The page of an administration route whose screen is not built yet (users and teams, until their commits).
+ * The page of an administration route whose screen is not built yet (teams, until their commit).
  * The route is real: it is matched, guarded and lazy like the roles pages, and names itself in `data.page`.
  */
 @Component({

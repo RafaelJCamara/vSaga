@@ -1,14 +1,16 @@
 @if (rows().length === 0) {
-  <p class="muted">You hold no permissions yet. An administrator can grant you access.</p>
+  <p class="muted">{{ words().none }}</p>
 } @else {
   <table class="data-table">
     <caption class="sr-only">
-      Your permissions: for every saga type, and for each saga type you were granted on its own
+      {{
+        words().caption
+      }}
     </caption>
     <thead>
       <tr>
         <th scope="col">Saga types</th>
-        <th scope="col">What you may do</th>
+        <th scope="col">{{ words().column }}</th>
       </tr>
     </thead>
     <tbody>
@@ -22,17 +24,31 @@
             }
           </td>
           <td>
-            <div class="chips">
-              @for (permission of row.permissions; track permission.key) {
-                <span class="chip" [attr.title]="permission.key">{{ permission.label }}</span>
-              }
-            </div>
+            @if (origins(); as originsOf) {
+              <!-- With origins each permission is a line of its own: the chip, and what grants it. -->
+              <ul class="held">
+                @for (permission of row.permissions; track permission.key) {
+                  <li>
+                    <span class="chip" [attr.title]="permission.key">{{ permission.label }}</span>
+                    <span class="muted origins">{{
+                      originsOf(row.sagaType, permission.key).join('; ')
+                    }}</span>
+                  </li>
+                }
+              </ul>
+            } @else {
+              <div class="chips">
+                @for (permission of row.permissions; track permission.key) {
+                  <span class="chip" [attr.title]="permission.key">{{ permission.label }}</span>
+                }
+              </div>
+            }
           </td>
         </tr>
       }
     </tbody>
   </table>
   @if (onlyListedTypes()) {
-    <p class="field-hint">Saga types that are not listed are not available to you.</p>
+    <p class="field-hint">{{ words().unlisted }}</p>
   }
 }

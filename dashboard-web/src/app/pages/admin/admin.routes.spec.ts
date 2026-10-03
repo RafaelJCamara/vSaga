@@ -3,6 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
+import { provideAuthMock } from '../../testing/auth-mock';
 import { answerLoad } from '../../testing/admin';
 import { AdminShell } from './admin-shell/admin-shell';
 import { ADMIN_ROUTES } from './admin.routes';
@@ -46,6 +47,7 @@ describe('ADMIN_ROUTES', () => {
       TestBed.configureTestingModule({
         providers: [
           provideRouter([{ path: 'admin', children: ADMIN_ROUTES }]),
+          provideAuthMock(),
           provideHttpClient(),
           provideHttpClientTesting(),
         ],
@@ -72,9 +74,6 @@ describe('ADMIN_ROUTES', () => {
     });
 
     it.each([
-      ['/admin/users', 'The user list'],
-      ['/admin/users/new', 'The new-user form'],
-      ['/admin/users/abc', 'The user page'],
       ['/admin/teams', 'The team list'],
       ['/admin/teams/new', 'The new-team form'],
       ['/admin/teams/abc', 'The team page'],
@@ -87,10 +86,13 @@ describe('ADMIN_ROUTES', () => {
     });
 
     it.each([
+      ['/admin/users', 'app-users-list'],
+      ['/admin/users/new', 'app-user-edit'],
+      ['/admin/users/abc', 'app-user-edit'],
       ['/admin/roles', 'app-roles-list'],
       ['/admin/roles/new', 'app-role-edit'],
       ['/admin/roles/abc', 'app-role-edit'],
-    ])('shows the roles page at %s', async (url, selector) => {
+    ])('shows the page of the area at %s', async (url, selector) => {
       const el = await visit(url);
 
       expect(el.querySelector(selector)).not.toBeNull();

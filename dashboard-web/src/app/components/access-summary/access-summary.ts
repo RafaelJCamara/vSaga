@@ -40,6 +40,11 @@ function chipsOf(keys: Iterable<string>): PermissionChip[] {
  * the session holds there in all (the permissions of every saga type included, but `access.manage`: it
  * is not a permission on a saga type). Nothing is inferred here: the server has already applied
  * `implies`, and `access.manage` never appears in `scoped`.
+ *
+ * It also shows what an administrator would see of another user (`perspective="user"`: the wording is
+ * about them, not "you"), and where each permission comes from (`origins`: "direct: Operator", "team
+ * Payments: Viewer"), as the access preview of the user page does from `pages/admin/access-explain.ts`,
+ * which shapes its rows into a `SessionAccess` for this component.
  */
 @Component({
   selector: 'app-access-summary',
@@ -50,6 +55,31 @@ function chipsOf(keys: Iterable<string>): PermissionChip[] {
 export class AccessSummary {
   /** The session's access; null while anonymous. */
   readonly access = input.required<SessionAccess | null>();
+  /** Whose access it is: the signed-in user's own (the account page), or another user's (the access preview). */
+  readonly perspective = input<'self' | 'user'>('self');
+  /** What grants a permission in a row (`null` for the row of every saga type), shown beside it; none: no origins. */
+  readonly origins = input<
+    ((sagaType: string | null, permission: string) => readonly string[]) | null
+  >(null);
+
+  /** The sentences that say whose access it is. */
+  readonly words = computed(() =>
+    this.perspective() === 'self'
+      ? {
+          none: 'You hold no permissions yet. An administrator can grant you access.',
+          caption:
+            'Your permissions: for every saga type, and for each saga type you were granted on its own',
+          column: 'What you may do',
+          unlisted: 'Saga types that are not listed are not available to you.',
+        }
+      : {
+          none: 'This user would hold no permissions.',
+          caption:
+            "The user's permissions: for every saga type, and for each saga type granted on its own",
+          column: 'What they may do',
+          unlisted: 'Saga types that are not listed are not available to this user.',
+        },
+  );
 
   readonly rows = computed<AccessRow[]>(() => {
     const access = this.access();

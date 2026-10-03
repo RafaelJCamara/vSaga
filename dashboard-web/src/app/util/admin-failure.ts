@@ -91,6 +91,11 @@ export interface PlacedErrors {
   unplaced: string[];
 }
 
+/** Whether the request path `path` is the field `field` or a member or element below it (`grants[0].sagaTypes` is below `grants`). */
+export function belongsToField(path: string, field: string): boolean {
+  return path === field || path.startsWith(`${field}[`) || path.startsWith(`${field}.`);
+}
+
 /**
  * Sorts the API's `errors` (keyed by request path) into the fields of a form. A path belongs to a field when it
  * is the field or a member or element below it: `permissions[2]` and `grants[0].sagaTypes` belong to
@@ -103,9 +108,7 @@ export function placeFieldErrors(
   const placed: Record<string, string[]> = {};
   const unplaced: string[] = [];
   for (const [path, messages] of Object.entries(fieldErrors)) {
-    const field = fields.find(
-      (name) => path === name || path.startsWith(`${name}[`) || path.startsWith(`${name}.`),
-    );
+    const field = fields.find((name) => belongsToField(path, name));
     if (field === undefined) unplaced.push(...messages);
     else placed[field] = [...(placed[field] ?? []), ...messages];
   }

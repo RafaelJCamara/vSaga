@@ -7,3 +7,17 @@
 .field-hint {
   margin: 0.5rem 0 0;
 }
+
+.held {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.origins {
+  margin-left: 0.4rem;
+  font-size: 0.78rem;
+}

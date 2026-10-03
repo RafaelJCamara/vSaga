@@ -152,4 +152,102 @@ describe('AccessSummary', () => {
 
     expect(fixture.nativeElement.querySelectorAll('.chip')).toHaveLength(2);
   });
+
+  describe("as an administrator sees another user's access (the access preview)", () => {
+    const ORIGINS: Record<string, string[]> = {
+      'null|sagas.view': ['direct: Viewer', 'team Payments: Viewer'],
+      'null|sagas.data': ['direct: Viewer'],
+      'OrderSaga|sagas.view': ['direct: Viewer', 'direct: Operator'],
+      'OrderSaga|sagas.data': ['direct: Viewer'],
+      'OrderSaga|sagas.retry': ['direct: Operator'],
+    };
+    const ACCESS: SessionAccess = {
+      permissions: ['sagas.view', 'sagas.data'],
+      scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.retry'] }],
+    };
+
+    function preview(access: SessionAccess | null, withOrigins = true): HTMLElement {
+      const fixture = TestBed.createComponent(AccessSummary);
+      fixture.componentRef.setInput('access', access);
+      fixture.componentRef.setInput('perspective', 'user');
+      if (withOrigins) {
+        fixture.componentRef.setInput(
+          'origins',
+          (sagaType: string | null, key: string) => ORIGINS[`${sagaType}|${key}`] ?? [],
+        );
+      }
+      fixture.detectChanges();
+      return fixture.nativeElement;
+    }
+
+    const lines = (el: HTMLElement) =>
+      Array.from(el.querySelectorAll('tbody tr')).map((row) => ({
+        scope: row.querySelector('td')?.textContent?.trim(),
+        permissions: Array.from(row.querySelectorAll('li')).map((li) => [
+          li.querySelector('.chip')?.textContent?.trim(),
+          li.querySelector('.origins')?.textContent?.trim(),
+        ]),
+      }));
+
+    it('shows each permission with what grants it, the origins of a row apart from those of another', () => {
+      expect(lines(preview(ACCESS))).toEqual([
+        {
+          scope: 'All saga types',
+          permissions: [
+            ['View sagas', 'direct: Viewer; team Payments: Viewer'],
+            ['View saga data', 'direct: Viewer'],
+          ],
+        },
+        {
+          scope: 'OrderSaga',
+          permissions: [
+            ['View sagas', 'direct: Viewer; direct: Operator'],
+            ['View saga data', 'direct: Viewer'],
+            ['Retry sagas', 'direct: Operator'],
+          ],
+        },
+      ]);
+    });
+
+    it('keeps the permission key on the chip, and shows no origins without any given', () => {
+      const el = preview(ACCESS, false);
+
+      expect(el.querySelector('.origins')).toBeNull();
+      expect(el.querySelector('.chips .chip')?.getAttribute('title')).toBe('sagas.view');
+      expect(preview(ACCESS).querySelector('.chip')?.getAttribute('title')).toBe('sagas.view');
+    });
+
+    it('speaks of the user, not of "you"', () => {
+      const el = preview(ACCESS);
+
+      expect(el.querySelector('caption')?.textContent).toContain("The user's permissions");
+      expect(el.textContent).toContain('What they may do');
+      expect(el.textContent).not.toContain('you');
+      expect(el.textContent).not.toContain('Your');
+    });
+
+    it('says the user would hold nothing, not that "you" hold nothing', () => {
+      const el = preview({ permissions: [], scoped: [] });
+
+      expect(el.textContent).toContain('This user would hold no permissions.');
+      expect(el.textContent).not.toContain('You hold');
+    });
+
+    it('says the saga types that are not listed are not available to the user', () => {
+      const el = preview({
+        permissions: [],
+        scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }],
+      });
+
+      expect(el.querySelector('.field-hint')?.textContent).toBe(
+        'Saga types that are not listed are not available to this user.',
+      );
+    });
+
+    it('still speaks of "you" by default', () => {
+      expect(render({ permissions: [], scoped: [] }).textContent).toContain(
+        'You hold no permissions',
+      );
+    });
+  });
 });

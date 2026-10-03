@@ -1,0 +1,29 @@
+:host {
+  display: block;
+}
+
+.new-user {
+  margin-left: auto;
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+}
+
+.new-user:hover {
+  text-decoration: none;
+}
+
+.filter {
+  width: min(22rem, 100%);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.plain {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
