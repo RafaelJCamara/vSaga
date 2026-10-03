@@ -6,7 +6,7 @@
   aria-haspopup="menu"
   aria-controls="user-menu-panel"
   [attr.aria-expanded]="open()"
-  [disabled]="signingOut()"
+  [attr.aria-disabled]="signingOut() ? 'true' : null"
   (click)="toggle()"
   (keydown.arrowdown)="showFromKey($event)"
 >
@@ -25,9 +25,13 @@
       aria-labelledby="user-menu-trigger"
       (keydown.arrowdown)="moveFocus($event, 1)"
       (keydown.arrowup)="moveFocus($event, -1)"
+      (keydown.home)="moveFocusTo($event, 'first')"
+      (keydown.end)="moveFocusTo($event, 'last')"
+      (keydown.space)="activateWithSpace($event)"
+      (keydown.shift.tab)="leaveBackwards($event)"
     >
-      <a role="menuitem" routerLink="/account" (click)="select()">Account</a>
-      <button role="menuitem" type="button" (click)="signOut()">Sign out</button>
+      <a role="menuitem" tabindex="-1" routerLink="/account" (click)="select()">Account</a>
+      <button role="menuitem" tabindex="-1" type="button" (click)="signOut()">Sign out</button>
     </div>
   </div>
 }

@@ -3,6 +3,13 @@
   display: block;
 }
 
+/* aria-disabled, not disabled: a disabled button drops the focus it holds, and the sign-out that is under
+   way has just put the focus here. */
+.user-menu-trigger[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .user-menu-name {
   display: inline-block;
   max-width: 12rem;

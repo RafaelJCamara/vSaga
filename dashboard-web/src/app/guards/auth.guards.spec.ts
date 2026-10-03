@@ -90,22 +90,32 @@ describe('auth guards', () => {
       expect(url(await runAuth('/sagas'))).toBe('/setup');
     });
 
-    it.each<SessionStatus>(['unknown', 'unreachable'])(
-      'asks the server first when the session is %s, and judges the answer',
-      async (status) => {
-        configure({ ...ANONYMOUS, status });
-        refreshFinds('authenticated');
+    it('asks the server first when the session was never read, and judges the answer', async () => {
+      configure({ ...ANONYMOUS, status: 'unknown' });
+      refreshFinds('authenticated');
 
-        expect(await runAuth('/sagas')).toBe(true);
-        expect(auth.refresh).toHaveBeenCalledTimes(1);
-      },
-    );
+      expect(await runAuth('/sagas')).toBe(true);
+      expect(auth.refresh).toHaveBeenCalledTimes(1);
+    });
 
-    it('sends a visitor to the login page when the API still cannot be reached', async () => {
-      configure({ ...ANONYMOUS, status: 'unreachable' });
+    it('sends a visitor to the login page when the first read could not reach the API', async () => {
+      configure({ ...ANONYMOUS, status: 'unknown' });
       refreshFinds('unreachable');
 
       expect(url(await runAuth('/sagas'))).toBe('/login?returnUrl=%2Fsagas');
+      expect(auth.refresh).toHaveBeenCalledTimes(1);
+    });
+
+    // The first read already waited out the session timeout: waiting for the same hung API a second time
+    // would hold the login page (which says "cannot reach the API" and polls) back for as long again.
+    it('goes straight to the login page, without asking again, while the API is unreachable', async () => {
+      configure({ ...ANONYMOUS, status: 'unreachable' });
+      refreshFinds('authenticated');
+
+      expect(url(await runAuth('/sagas/OrderSaga/abc'))).toBe(
+        '/login?returnUrl=%2Fsagas%2FOrderSaga%2Fabc',
+      );
+      expect(auth.refresh).not.toHaveBeenCalled();
     });
 
     it('sends a user who must change the password to the account page, from anywhere else', async () => {
@@ -271,16 +281,21 @@ describe('auth guards', () => {
       expect(url(await runAdmin('admin'))).toBe('/account');
     });
 
-    it.each<SessionStatus>(['unknown', 'unreachable'])(
-      'asks the server first when the session is %s',
-      async (status) => {
-        configure({ status });
-        refreshFinds('authenticated');
+    it('asks the server first when the session was never read', async () => {
+      configure({ status: 'unknown' });
+      refreshFinds('authenticated');
 
-        expect(await runAdmin('admin')).toBe(true);
-        expect(auth.refresh).toHaveBeenCalledTimes(1);
-      },
-    );
+      expect(await runAdmin('admin')).toBe(true);
+      expect(auth.refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('goes to the login page, without asking again, while the API is unreachable', async () => {
+      configure({ ...ANONYMOUS, status: 'unreachable' });
+      refreshFinds('authenticated');
+
+      expect(url(await runAdmin('admin', 'users'))).toBe('/login?returnUrl=%2Fadmin%2Fusers');
+      expect(auth.refresh).not.toHaveBeenCalled();
+    });
   });
 });
 

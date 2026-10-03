@@ -84,7 +84,7 @@ class FakeHubConnection {
  *  be asserted. */
 const built: {
   url?: string;
-  options?: { accessTokenFactory?: () => string };
+  options?: { accessTokenFactory?: () => string; withCredentials?: boolean };
   retryPolicy?: { nextRetryDelayInMilliseconds: (ctx: { previousRetryCount: number }) => number | null };
 } = {};
 
@@ -100,7 +100,7 @@ const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve,
 vi.mock('@microsoft/signalr', () => ({
   HubConnectionState: { Disconnected: 'Disconnected', Connected: 'Connected' },
   HubConnectionBuilder: class {
-    withUrl(url: string, options?: { accessTokenFactory?: () => string }) {
+    withUrl(url: string, options?: { accessTokenFactory?: () => string; withCredentials?: boolean }) {
       built.url = url;
       built.options = options;
       return this;
@@ -133,12 +133,14 @@ describe('SagaHubService', () => {
   });
 
   // The session cookie authenticates the hub; a token factory would put a credential in the bundle (or
-  // the URL: signalR sends the token as `access_token` on the WebSocket).
+  // the URL: signalR sends the token as `access_token` on the WebSocket), and the cookie only travels
+  // while credentials are on (signalR's default).
   it('builds the connection against HUB_URL with no access token factory', async () => {
     await service.subscribeToList();
 
     expect(built.url).toBe(HUB_URL);
     expect(built.options?.accessTokenFactory).toBeUndefined();
+    expect(built.options?.withCredentials).not.toBe(false);
   });
 
   // A dashboard tab is meant to be left open for hours; giving up on reconnecting after ~30s of

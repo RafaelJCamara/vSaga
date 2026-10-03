@@ -55,12 +55,22 @@ describe('routes', () => {
       login: vi.fn<() => void>(),
       setup: vi.fn<() => void>(),
       account: vi.fn<() => void>(),
+      detail: vi.fn<() => void>(),
     };
     return routes.map((route) => {
       if (route.path?.startsWith('sagas')) {
-        // The detail page is lazy and the list is not: either way the stub stands in, with the route's guards.
-        const { loadComponent: _lazy, ...eager } = route;
-        return { ...eager, component: SagaStub };
+        // The stub stands in for both saga pages, with the route's own guards. The detail page is lazy and
+        // the list is not: its loader is kept and counted (it hands back the stub instead of the real page,
+        // which needs the API and the hub).
+        const { loadComponent: lazy, ...rest } = route;
+        if (!lazy) return { ...rest, component: SagaStub };
+        return {
+          ...rest,
+          loadComponent: () => {
+            loads['detail']();
+            return SagaStub;
+          },
+        };
       }
       const load = route.loadComponent;
       const count = route.path === undefined ? undefined : loads[route.path];
@@ -96,9 +106,9 @@ describe('routes', () => {
     }
   });
 
-  // The initial bundle is within a few kilobytes of its 500 kB budget (angular.json), and the detail page
-  // (timeline, map, state inspector) is the heaviest in the app: it stays in a chunk of its own. The saga
-  // list is the page everyone lands on, so it ships with the app.
+  // The detail page (timeline, map, state inspector) is the heaviest in the app: with it eager the initial
+  // bundle was 506 kB against the 500 kB budget in angular.json, and lazy it is 431 kB. It stays in a
+  // chunk of its own. The saga list is the page everyone lands on, so it ships with the app.
   it('loads the saga detail page lazily and the saga list with the app', () => {
     const detail = routes.find((r) => r.path === 'sagas/:sagaType/:id');
     const list = routes.find((r) => r.path === 'sagas');
@@ -287,6 +297,27 @@ describe('routes', () => {
 
       expect(loads['account']).toHaveBeenCalledTimes(1);
       expect(loads['login']).not.toHaveBeenCalled();
+    });
+
+    // The detail page is the biggest chunk, and the one whose address a visitor may know: the guard must
+    // run before the chunk is requested, whoever is turned away.
+    it.each([
+      'anonymous',
+      'no user yet, setup open',
+      'API unreachable',
+      'signed in, must change the password',
+    ])('never downloads the saga detail page for a visitor who is %s', async (session) => {
+      await visit('/sagas/OrderSaga/abc', SESSIONS[session]);
+
+      expect(url()).not.toBe('/sagas/OrderSaga/abc');
+      expect(loads['detail']).not.toHaveBeenCalled();
+    });
+
+    it('downloads the saga detail page once for a signed-in visitor', async () => {
+      await visit('/sagas/OrderSaga/abc');
+
+      expect(url()).toBe('/sagas/OrderSaga/abc');
+      expect(loads['detail']).toHaveBeenCalledTimes(1);
     });
   });
 

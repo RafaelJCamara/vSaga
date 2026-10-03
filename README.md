@@ -140,7 +140,9 @@ there is nothing to edit.
 > The seeded password applies **only to an empty identity volume**: the administrator is created on the first
 > start and never touched again, so editing `Dashboard__Admin__Password` afterwards changes nothing. Once the
 > volume exists, change the password by signing in and changing it on the Account page, or set
-> `Dashboard__Admin__ResetOnStart=true` for one start, or start over with `docker compose down -v`.
+> `Dashboard__Admin__ResetOnStart=true` for one start together with the new password in
+> `Dashboard__Admin__Password` (the reset applies that password, re-enables the account and restores its
+> administrator grant), or start over with `docker compose down -v`.
 >
 > If `up` reports port 4200 as already allocated, a dev server is most likely still running on it
 > (4200 is the Angular CLI's default port; this repository's own dev server uses 4201).

@@ -8,6 +8,8 @@
   <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 <body>
-  <app-root></app-root>
+  <!-- Shown until the app starts: it waits for the session (up to 8 s when the API does not answer), and
+       Angular replaces this content when it renders. Plain markup: the CSP allows no inline script. -->
+  <app-root><p class="empty" role="status">Loading the dashboard…</p></app-root>
 </body>
 </html>

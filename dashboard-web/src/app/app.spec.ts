@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { App } from './app';
+import { routes } from './app.routes';
 import { AuthMock, AuthMockOptions, createAuthMock, provideAuthMock } from './testing/auth-mock';
 
 /** A page for the router to show, so a link can be the current one. */
@@ -146,6 +147,34 @@ describe('App', () => {
 
       expect(root.querySelector('nav')).toBeNull();
       expect(root.querySelector('app-user-menu')).toBeNull();
+    });
+  });
+
+  describe('the links of the top bar', () => {
+    /** Whether the app's route table has a page for `href`, by its first path segment: what resolves the
+     *  link, short of the catch-all that sends a stale address to the saga list. */
+    const hasRoute = (href: string): boolean => {
+      const first = href.split(/[?#]/)[0].split('/').filter(Boolean)[0] ?? '';
+      return routes.some(
+        (route) =>
+          route.path !== '**' && (route.path === first || route.path?.startsWith(`${first}/`)),
+      );
+    };
+
+    // The navigation names a page that has no route yet: C48 adds /admin. When it does, this list must
+    // become empty (the assertion below fails until it is), so that no link of the bar ever lands on the
+    // catch-all by accident.
+    const NOT_ROUTED_YET = ['/admin'];
+
+    it('every link leads to a route of the app, but the ones named here', () => {
+      const root = create().nativeElement as HTMLElement; // an administrator: every link is shown
+      const hrefs = Array.from(root.querySelectorAll('header a[href]')).map(
+        (a) => a.getAttribute('href') ?? '',
+      );
+
+      expect(hrefs).toContain('/sagas');
+      expect(hrefs).toContain('/admin');
+      expect(hrefs.filter((href) => !hasRoute(href))).toEqual(NOT_ROUTED_YET);
     });
   });
 });

@@ -6,13 +6,14 @@ import { AuthService } from '../services/auth.service';
 const HOME_URL = '/sagas';
 
 /**
- * Whether the browser is as signed in as the SPA could find out: not yet asked (`unknown`), or the last
- * answer never came (`unreachable`, which only the first read can leave behind: a later failure keeps the
- * last known session). Both are worth asking again before a guard decides.
+ * Whether the session was never read (`unknown`), so a guard must ask the server before it decides. An
+ * `unreachable` session is not asked again: its first read already waited out the session timeout (8 s) for
+ * an answer that never came, and asking once more would hold the visitor up for as long again before the
+ * login page can say so. That page asks again by itself (it polls), and sends the visitor on when the API
+ * answers.
  */
 function mustAsk(auth: AuthService): boolean {
-  const status = auth.status();
-  return status === 'unknown' || status === 'unreachable';
+  return auth.status() === 'unknown';
 }
 
 /** The first path segment of an app URL, ignoring a query string, a fragment and matrix parameters. */

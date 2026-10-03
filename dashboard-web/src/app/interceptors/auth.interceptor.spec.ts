@@ -10,7 +10,9 @@ import {
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import { Observable } from 'rxjs';
+import { AuthService } from '../services/auth.service';
 import { AuthMock, createAuthMock, provideAuthMock } from '../testing/auth-mock';
 import { problem } from '../testing/http-error';
 import { authInterceptor } from './auth.interceptor';
@@ -30,6 +32,25 @@ interface Outcome {
   error?: HttpErrorResponse;
   done: boolean;
 }
+
+function run(call: Observable<unknown>): Outcome {
+  const outcome: Outcome = { done: false };
+  call.subscribe({
+    next: (value) => (outcome.value = value),
+    error: (error: HttpErrorResponse) => {
+      outcome.error = error;
+      outcome.done = true;
+    },
+    complete: () => (outcome.done = true),
+  });
+  return outcome;
+}
+
+const refuse = (request: TestRequest, status: number, body: object | string | null = null) =>
+  request.flush(body, { status, statusText: 'Refused' });
+const antiforgery = () => problem('antiforgery', 'The antiforgery token is missing or not valid.');
+/** Lets the promise chain behind `from(auth.refresh())` run. */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('authInterceptor', () => {
   let http: HttpClient;
@@ -60,26 +81,6 @@ describe('authInterceptor', () => {
     }
   });
 
-  function run(call: Observable<unknown>): Outcome {
-    const outcome: Outcome = { done: false };
-    call.subscribe({
-      next: (value) => (outcome.value = value),
-      error: (error: HttpErrorResponse) => {
-        outcome.error = error;
-        outcome.done = true;
-      },
-      complete: () => (outcome.done = true),
-    });
-    return outcome;
-  }
-
-  const refuse = (request: TestRequest, status: number, body: object | string | null = null) =>
-    request.flush(body, { status, statusText: 'Refused' });
-  const antiforgery = () =>
-    problem('antiforgery', 'The antiforgery token is missing or not valid.');
-  /** Lets the promise chain behind `from(auth.refresh())` run. */
-  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
-
   describe('credentials', () => {
     it('sends neither an API key nor an Authorization header, on a read or a write', () => {
       setXsrfCookie('token');
@@ -87,7 +88,9 @@ describe('authInterceptor', () => {
       run(http.get('/api/sagas'));
       run(http.post('/api/sagas/OrderSaga/1/retry', {}));
 
-      for (const request of backend.match(() => true)) {
+      const requests = backend.match(() => true);
+      expect(requests).toHaveLength(2);
+      for (const request of requests) {
         expect(request.request.headers.has('X-Api-Key'), request.request.url).toBe(false);
         expect(request.request.headers.has('Authorization'), request.request.url).toBe(false);
         request.flush(null);
@@ -259,6 +262,28 @@ describe('authInterceptor', () => {
       expect(auth.handleUnauthorized).toHaveBeenCalledTimes(1);
     });
 
+    // Only this API's answers say anything about this session (and the built-in XSRF interceptor is
+    // same-origin only too): a 401 from another host must not sign the user out, nor its 400 re-read
+    // the session.
+    it.each([
+      'https://elsewhere.example/api/sagas',
+      'http://localhost:9/api/sagas',
+      '//elsewhere.example/api/sagas',
+    ])('ignores %s: another origin', async (url) => {
+      setXsrfCookie('stale');
+      run(http.get(url));
+      refuse(backend.expectOne(url), 401);
+      run(http.get(url));
+      refuse(backend.expectOne(url), 403);
+      run(http.post(url, {}));
+      refuse(backend.expectOne(url), 400, antiforgery());
+      await settle();
+
+      expect(auth.handleUnauthorized).not.toHaveBeenCalled();
+      expect(auth.noteForbidden).not.toHaveBeenCalled();
+      expect(auth.refresh).not.toHaveBeenCalled();
+    });
+
     it('acts for an absolute URL on the API path', () => {
       run(http.get(`${document.location.origin}/api/sagas`));
 
@@ -381,7 +406,11 @@ describe('authInterceptor', () => {
 
     it('retries each call once, also when the same call is subscribed to again', async () => {
       setXsrfCookie('stale');
-      refreshRenews('fresh');
+      let reads = 0;
+      auth.refresh.mockImplementation(async () => {
+        setXsrfCookie(`fresh-${++reads}`); // a new token every time, as the API issues them
+        return auth.status();
+      });
       const call = http.post('/api/sagas/OrderSaga/1/retry', {});
 
       for (let attempt = 1; attempt <= 2; attempt++) {
@@ -392,6 +421,41 @@ describe('authInterceptor', () => {
         expect(auth.refresh).toHaveBeenCalledTimes(attempt);
       }
     });
+
+    // A read that failed or timed out re-issues nothing: the retry would carry the token that was refused.
+    it('does not retry when the session read left the token it was refused with', async () => {
+      setXsrfCookie('stale');
+      refreshRenews('stale');
+      const outcome = run(http.post('/api/sagas/OrderSaga/1/retry', {}));
+
+      refuse(backend.expectOne('/api/sagas/OrderSaga/1/retry'), 400, antiforgery());
+      await settle();
+
+      expect(auth.refresh).toHaveBeenCalledTimes(1);
+      expect(outcome.error?.status).toBe(400);
+      expect(outcome.error?.error).toEqual(antiforgery());
+      backend.expectNone('/api/sagas/OrderSaga/1/retry');
+    });
+
+    it.each(['PUT', 'PATCH', 'DELETE'] as const)(
+      'retries a %s as it does a POST',
+      async (method) => {
+        setXsrfCookie('stale');
+        refreshRenews('fresh');
+        const outcome = run(http.request(method, '/api/admin/users/1', { body: { a: 1 } }));
+        const first = backend.expectOne('/api/admin/users/1');
+        expect(first.request.headers.get(XSRF)).toBe('stale');
+
+        refuse(first, 400, antiforgery());
+        await settle();
+
+        const second = backend.expectOne('/api/admin/users/1');
+        expect(second.request.method).toBe(method);
+        expect(second.request.headers.get(XSRF)).toBe('fresh');
+        second.flush(null);
+        expect(outcome.error).toBeUndefined();
+      },
+    );
 
     it('does not retry when the session read left no token: it would be refused the same way', async () => {
       setXsrfCookie('stale');
@@ -407,7 +471,7 @@ describe('authInterceptor', () => {
       backend.expectNone('/api/sagas/OrderSaga/1/retry');
     });
 
-    it.each(['GET', 'HEAD'] as const)(
+    it.each(['GET', 'HEAD', 'OPTIONS', 'TRACE'] as const)(
       'does not retry a %s: a safe request carries no token for the API to refuse',
       async (method) => {
         setXsrfCookie('stale');
@@ -491,5 +555,62 @@ describe('authInterceptor', () => {
 
       expect(auth.handleUnauthorized).not.toHaveBeenCalled();
     });
+  });
+});
+
+// The mock stands in for the service's single flight; the real service is what makes it true.
+describe('authInterceptor with the real auth service', () => {
+  const session = {
+    authenticated: true,
+    setupRequired: false,
+    setupAvailable: false,
+    setupProblem: null,
+    passwordMinLength: 12,
+    user: { id: 'u1', username: 'alice', displayName: 'Alice', mustChangePassword: false },
+    access: { permissions: ['sagas.view'], scoped: [] },
+  };
+
+  beforeEach(() => {
+    setXsrfCookie(null);
+    TestBed.configureTestingModule({
+      providers: [
+        provideRouter([]),
+        provideHttpClient(withInterceptors([authInterceptor])),
+        provideHttpClientTesting(),
+      ],
+    });
+  });
+
+  afterEach(() => {
+    try {
+      TestBed.inject(HttpTestingController).verify();
+    } finally {
+      setXsrfCookie(null);
+      TestBed.resetTestingModule();
+    }
+  });
+
+  it('shares one session read between requests refused together, and sends each again with the new token', async () => {
+    setXsrfCookie('stale');
+    const http = TestBed.inject(HttpClient);
+    const backend = TestBed.inject(HttpTestingController);
+    TestBed.inject(AuthService);
+    const first = run(http.post('/api/a', {}));
+    const second = run(http.post('/api/b', {}));
+
+    refuse(backend.expectOne('/api/a'), 400, antiforgery());
+    refuse(backend.expectOne('/api/b'), 400, antiforgery());
+    await settle();
+
+    const read = backend.expectOne('/api/auth/session');
+    setXsrfCookie('fresh');
+    read.flush(session);
+    await settle();
+
+    const again = [backend.expectOne('/api/a'), backend.expectOne('/api/b')];
+    expect(again.map((r) => r.request.headers.get(XSRF))).toEqual(['fresh', 'fresh']);
+    again.forEach((r) => r.flush(null));
+    expect([first.done, second.done]).toEqual([true, true]);
+    expect([first.error, second.error]).toEqual([undefined, undefined]);
   });
 });

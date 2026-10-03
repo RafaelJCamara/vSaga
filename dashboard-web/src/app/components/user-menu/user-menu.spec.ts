@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed, ComponentFixture } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { Router, provideRouter } from '@angular/router';
 import { AuthMock, createAuthMock, provideAuthMock } from '../../testing/auth-mock';
 import { UserMenu } from './user-menu';
 
@@ -46,10 +46,17 @@ describe('UserMenu', () => {
     await fixture.whenStable();
   }
 
-  const key = (target: Element, name: string) =>
-    target.dispatchEvent(
-      new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true }),
-    );
+  /** Dispatches a keydown and returns it, so a spec can ask whether its default action was prevented. */
+  function key(target: Element, name: string, init: KeyboardEventInit = {}): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', {
+      key: name,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    target.dispatchEvent(event);
+    return event;
+  }
 
   afterEach(() => {
     // A menu left open would answer the next spec's document clicks.
@@ -109,6 +116,14 @@ describe('UserMenu', () => {
       expect(account().getAttribute('href')).toBe('/account');
     });
 
+    it('keeps the items out of the tab order, so Tab leaves the menu', async () => {
+      create();
+
+      await open();
+
+      expect(items().map((item) => item.getAttribute('tabindex'))).toEqual(['-1', '-1']);
+    });
+
     it('moves focus to the first item', async () => {
       create();
 
@@ -154,7 +169,7 @@ describe('UserMenu', () => {
   });
 
   describe('closing', () => {
-    it('closes on a click outside that takes no focus: the menu has no focus handler to close it', async () => {
+    it('closes on a click outside that takes no focus: no focusout is there to close it', async () => {
       create();
       await open();
       const page = document.createElement('div');
@@ -228,6 +243,38 @@ describe('UserMenu', () => {
       expect(focused()).toBe(trigger());
     });
 
+    it('closes when the page changes behind it, by whatever means', async () => {
+      create();
+      await open();
+
+      await TestBed.inject(Router).navigateByUrl('/account');
+      fixture.detectChanges();
+
+      expect(panel()).toBeNull();
+    });
+
+    it('closes on Shift+Tab from an item, with focus back on the button', async () => {
+      create();
+      await open();
+
+      const event = key(focused()!, 'Tab', { shiftKey: true });
+      fixture.detectChanges();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(panel()).toBeNull();
+      expect(focused()).toBe(trigger());
+    });
+
+    it('does not take Tab from the browser: it moves focus on, and the focusout closes the menu', async () => {
+      create();
+      await open();
+
+      const event = key(focused()!, 'Tab');
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(panel()).not.toBeNull();
+    });
+
     it('closes when focus leaves it, by Tab', async () => {
       create();
       await open();
@@ -285,6 +332,42 @@ describe('UserMenu', () => {
     });
   });
 
+  describe('the keyboard, continued', () => {
+    it('goes to the first and the last item with Home and End', async () => {
+      create();
+      await open();
+
+      expect(key(focused()!, 'End').defaultPrevented).toBe(true);
+      expect(focused()).toBe(signOutButton());
+
+      expect(key(focused()!, 'Home').defaultPrevented).toBe(true);
+      expect(focused()).toBe(account());
+    });
+
+    it('follows the account link with Space, as with Enter, instead of scrolling the page', async () => {
+      create();
+      await open();
+
+      const event = key(account(), ' ');
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(TestBed.inject(Router).url).toBe('/account');
+      expect(panel()).toBeNull();
+    });
+
+    it('leaves Space on the sign-out button to the button, which clicks itself', async () => {
+      create();
+      await open();
+
+      const event = key(signOutButton(), ' ');
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(auth.logout).not.toHaveBeenCalled();
+    });
+  });
+
   describe('signing out', () => {
     it('signs out through the auth service and closes the menu', async () => {
       create();
@@ -308,13 +391,33 @@ describe('UserMenu', () => {
       fixture.detectChanges();
 
       expect(trigger().textContent).toContain('Signing out…');
-      expect(trigger().disabled).toBe(true);
+      expect(trigger().getAttribute('aria-disabled')).toBe('true');
 
       finish();
       await fixture.whenStable();
       fixture.detectChanges();
       expect(trigger().textContent).toContain('Alice Doe');
+      expect(trigger().hasAttribute('aria-disabled')).toBe(false);
+    });
+
+    // A disabled button drops the focus it holds, and the sign-out has just put the focus on it: a
+    // keyboard user would be left on the page's body when the sign-out ends on this page.
+    it('keeps the focus on the button, and out of reach of the menu, while it is under way', async () => {
+      create();
+      auth.logout.mockReturnValue(new Promise<void>(() => undefined));
+      await open();
+
+      signOutButton().click();
+      fixture.detectChanges();
+
       expect(trigger().disabled).toBe(false);
+      expect(focused()).toBe(trigger());
+
+      trigger().click();
+      key(trigger(), 'ArrowDown');
+      fixture.detectChanges();
+      expect(panel()).toBeNull();
+      expect(auth.logout).toHaveBeenCalledTimes(1);
     });
 
     it('starts the sign-out once for two activations before the page has repainted', async () => {

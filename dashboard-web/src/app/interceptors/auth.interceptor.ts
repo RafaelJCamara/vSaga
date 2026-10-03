@@ -34,7 +34,8 @@ const SESSION_ENDPOINTS = new Set([
  * Keeps the SPA in step with the sign-in session. The session cookie and the `XSRF-TOKEN` cookie ride on
  * the browser's own requests and the built-in XSRF interceptor, which runs before this one, copies the
  * cookie into `X-XSRF-TOKEN` on same-origin unsafe requests; this interceptor adds no credential of its
- * own (no `Authorization`, no API key). It reacts to what the API answers, for URLs under `/api/` only:
+ * own (no `Authorization`, no API key). It reacts to what the API answers, for URLs under `/api/` on the
+ * page's own origin only:
  *
  * - 401 (outside the sign-in endpoints): the session ended behind the SPA's back, so the user is sent to
  *   the login page. The identity epoch is read when the request is sent, so a 401 to a request sent before
@@ -49,7 +50,7 @@ const SESSION_ENDPOINTS = new Set([
  * Every failure reaches the caller unchanged.
  */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
-  const path = pathOf(req.url, inject(DOCUMENT).baseURI);
+  const path = pathOf(req.url, inject(DOCUMENT));
   if (!path.startsWith('/api/')) return next(req);
   const endsSession = !SESSION_ENDPOINTS.has(path);
   return send(req, next, endsSession, inject(AuthService), inject(HttpXsrfTokenExtractor));
@@ -85,8 +86,12 @@ function send(
         return from(auth.refresh()).pipe(
           switchMap(() => {
             const token = xsrf.getToken();
-            // No token even after the session was read: a retry would be refused the same way.
-            if (token === null) return throwError(() => err);
+            // No token, or the one the request carried, even after the session was read (the read failed or
+            // timed out, so the cookie was not re-issued): a retry would be refused the same way, and the
+            // caller is told what the API said.
+            if (token === null || token === req.headers.get(XSRF_HEADER)) {
+              return throwError(() => err);
+            }
             return send(retryWith(req, token), next, endsSession, auth, xsrf);
           }),
         );
@@ -106,11 +111,13 @@ function retryWith(req: HttpRequest<unknown>, token: string): HttpRequest<unknow
   return req.clone({ headers: req.headers.set(XSRF_HEADER, token), context });
 }
 
-/** Whether the API checks `req` for an antiforgery token: every method but the safe ones, which the
- *  built-in interceptor leaves unstamped too. Besides being true to the API, this keeps the session read
- *  that the retry waits for (a GET) from ever waiting for itself. */
+/** The methods the API does not check for an antiforgery token (`AntiforgeryEnforcement.RequiresValidation`). */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'TRACE']);
+
+/** Whether the API checks `req` for an antiforgery token. Besides being true to the API, this keeps the
+ *  session read that the retry waits on (a GET) from ever waiting for itself. */
 function isUnsafe(req: HttpRequest<unknown>): boolean {
-  return req.method !== 'GET' && req.method !== 'HEAD';
+  return !SAFE_METHODS.has(req.method);
 }
 
 function isAntiforgeryRefusal(err: HttpErrorResponse): boolean {
@@ -122,10 +129,14 @@ function isAntiforgeryRefusal(err: HttpErrorResponse): boolean {
   );
 }
 
-/** The path of `url` as the browser resolves it against the page's base; '' for a URL that cannot be read. */
-function pathOf(url: string, base: string): string {
+/** The path of `url` as the browser resolves it against the page's base, when that is on the page's own
+ *  origin; '' for another origin and for a URL that cannot be read. Only this API is the SPA's to react to
+ *  (Angular's own XSRF interceptor is same-origin only for the same reason): another host's 401 says nothing
+ *  about this session. */
+function pathOf(url: string, document: Document): string {
   try {
-    return new URL(url, base).pathname;
+    const resolved = new URL(url, document.baseURI);
+    return resolved.origin === document.location.origin ? resolved.pathname : '';
   } catch {
     return '';
   }

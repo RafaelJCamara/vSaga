@@ -10,14 +10,18 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { NavigationEnd, Router, RouterLink } from '@angular/router';
+import { filter } from 'rxjs';
 import { AuthService } from '../../services/auth.service';
 
 /**
  * The signed-in user in the top bar: a button with their name that opens a small menu (who they are, the
  * account page, sign out). A menu button as the WAI-ARIA authoring practices describe it: opening moves
- * focus into the menu, the arrow keys move between its items, and Escape closes it and returns focus to the
- * button. Choosing an item, a click outside and tabbing out of the component close it too.
+ * focus into the menu, the arrow keys (and Home and End) move between its items, Space activates the
+ * account link as Enter does, and Escape closes the menu and returns focus to the button. Choosing an
+ * item, a click outside, tabbing out of the component and any navigation close it too. The items are not in
+ * the tab order (they take focus from the keyboard handlers), so Tab leaves the menu.
  */
 @Component({
   selector: 'app-user-menu',
@@ -33,6 +37,7 @@ import { AuthService } from '../../services/auth.service';
 })
 export class UserMenu {
   private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
@@ -46,7 +51,18 @@ export class UserMenu {
     () => this.user()?.displayName || this.user()?.username || 'Account',
   );
 
+  constructor() {
+    // The page behind the menu changed (a link, the back button): the menu has done its job.
+    this.router.events
+      .pipe(
+        filter((event) => event instanceof NavigationEnd),
+        takeUntilDestroyed(),
+      )
+      .subscribe(() => this.open.set(false));
+  }
+
   protected toggle(): void {
+    if (this.signingOut()) return;
     if (this.open()) this.close(true);
     else this.show();
   }
@@ -54,6 +70,7 @@ export class UserMenu {
   /** The arrow down on the menu button opens the menu, as on a native one, or goes into it when it is open. */
   protected showFromKey(event: Event): void {
     event.preventDefault();
+    if (this.signingOut()) return;
     if (this.open()) this.items()[0]?.focus();
     else this.show();
   }
@@ -65,6 +82,26 @@ export class UserMenu {
     if (items.length === 0) return;
     const at = items.indexOf(this.document.activeElement as HTMLElement);
     items[(at + step + items.length) % items.length].focus();
+  }
+
+  /** Home and End go to the first and the last item. */
+  protected moveFocusTo(event: Event, end: 'first' | 'last'): void {
+    event.preventDefault();
+    const items = this.items();
+    (end === 'first' ? items[0] : items[items.length - 1])?.focus();
+  }
+
+  /** Space activates a link as Enter does (a button needs no help): left alone it would scroll the page. */
+  protected activateWithSpace(event: Event): void {
+    if (!(event.target instanceof HTMLAnchorElement)) return;
+    event.preventDefault();
+    event.target.click();
+  }
+
+  /** Shift+Tab from an item goes back to the button, which is where the menu was opened: close it there. */
+  protected leaveBackwards(event: Event): void {
+    event.preventDefault();
+    this.close(true);
   }
 
   /** Closes the menu for a chosen item; focus returns to the button when it was on the item. */
