@@ -31,7 +31,7 @@ import { SagaMap } from '../../components/saga-map/saga-map';
 import { LocalTime } from '../../components/local-time/local-time';
 import { SagaTimeline } from '../../components/saga-timeline/saga-timeline';
 import { DATA_VIEWS, DataView, SagaDataOverview } from '../../components/saga-data-overview/saga-data-overview';
-import { problemOf } from '../../util/http-error';
+import { FORBIDDEN_CODE, problemOf } from '../../util/http-error';
 import { PENDING_SNAPSHOT_MS, SagaHistory, foldTimeline, stepContaining } from '../../util/saga-transitions';
 import { timezoneLabel, toMillis } from '../../util/time-format';
 
@@ -48,10 +48,6 @@ export const REFRESH_AUDIT_MS = 250;
  * and its StatePersisted append, and for a saga that has just finished no later push would come.
  */
 export const SNAPSHOT_FOLLOW_UP_MS = 1500;
-
-/** The `code` of a 403 that is the API saying the session lacks a permission (see `AuthProblems`); another
- *  code (`password_change_required`) is a different refusal, and a 403 with none is not the API's. */
-const FORBIDDEN_CODE = 'forbidden';
 
 type Tab = 'map' | 'timeline';
 
@@ -134,8 +130,9 @@ export class SagaDetail implements OnInit, OnDestroy {
   readonly children = signal<SagaSummary[]>([]);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
-  /** The API answered 403 for this saga: the viewer holds no `sagas.view` for its type. Not an error
-   *  (no banner, and a reconnect or a push asks for nothing); it ends when the session gains the permission. */
+  /** The API answered 403 for this saga: the viewer holds no `sagas.view` for its type. Not an error (no
+   *  banner), and a reconnect or a push asks the API for nothing, only the session (see `refresh`); it ends
+   *  when the session gains the permission. */
   readonly forbidden = signal(false);
   /** What the session lets the viewer do with this saga's type. Computed from the auth service, so a
    *  refreshed session (after a 403, or when the tab is shown again) changes the page without a reload. */
@@ -251,8 +248,14 @@ export class SagaDetail implements OnInit, OnDestroy {
   private retryPlanRequest = 0;
   /** The status and version the current retry plan was asked for; null when none was. */
   private retryPlanFor: string | null = null;
-  /** How many detail answers have been applied: a 403 that was sent before the latest is stale. */
-  private detailsApplied = 0;
+  /** The detail requests sent so far, numbered in the order they were sent, and the highest-numbered one
+   *  answered with a detail: a 403 to a request older than that says nothing about the session now (an
+   *  older success that arrives late does not make a newer, genuine 403 stale: it only raises this to its
+   *  own number). */
+  private detailRequest = 0;
+  private detailApplied = 0;
+  /** Set first in `ngOnDestroy`: an answer that arrives after it must not join the hub group again. */
+  private destroyed = false;
 
   constructor(
     private readonly route: ActivatedRoute,
@@ -331,7 +334,8 @@ export class SagaDetail implements OnInit, OnDestroy {
 
         // A viewer the session says cannot see this type would only have the hub negotiate, open its
         // socket and refuse the subscription: it waits for the API to let the page in (see `subscribe`).
-        if (this.canView() && !this.forbidden()) this.subscribe();
+        // The load above is answered asynchronously, so the page cannot be forbidden yet.
+        if (this.canView()) this.subscribe();
       }),
       this.hub.connectionState$.subscribe((s) => {
         // Captured before anything below touches them -- the first-ever connect (nothing failed,
@@ -382,6 +386,7 @@ export class SagaDetail implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     this.unsubscribe();
     this.subs.forEach((s) => s.unsubscribe());
     this.cancelSnapshotFollowUp();
@@ -396,7 +401,7 @@ export class SagaDetail implements OnInit, OnDestroy {
    * refuse it again on every reconnect.
    */
   private subscribe(): void {
-    if (this.subscribed) return;
+    if (this.destroyed || this.subscribed) return;
     this.subscribed = true;
     void this.hub.subscribeToSaga(this.sagaType, this.correlationId);
   }
@@ -407,7 +412,16 @@ export class SagaDetail implements OnInit, OnDestroy {
     void this.hub.unsubscribeFromSaga(this.sagaType, this.correlationId);
   }
 
-  /** The API refused the page: nothing to show, and no live updates to ask the hub for. */
+  /**
+   * The API refused the page: nothing to show, and no live updates to ask the hub for. Two limits stay,
+   * both in the hub service, which this page does not change: `subscribeToSaga` writes its record only
+   * after it has awaited the connection, so an unsubscribe that comes before the very first start
+   * finishes is overtaken by it and leaves a record that every reconnect re-sends (a fix belongs in the
+   * service, which could drop a record whose unsubscribe came first; chaining here would make every
+   * unsubscribe asynchronous). And a page opened by URL straight into a 403 never starts the hub
+   * (`subscribe` is not called), so nothing closes a connection to tell it about a grant: it recovers when
+   * the session is read again (the tab shown, a 403), not at once.
+   */
   private forbid(): void {
     this.forbidden.set(true);
     this.unsubscribe();
@@ -430,11 +444,11 @@ export class SagaDetail implements OnInit, OnDestroy {
     // answers 403 (or, for a session that is out of date, 200, and then the rest is loaded).
     const sessionMayView = this.canView();
 
-    const applied = this.detailsApplied;
+    const request = ++this.detailRequest;
     this.api.get(sagaType, correlationId).subscribe({
       next: (detail) => {
         if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
-        this.detailsApplied++;
+        this.detailApplied = Math.max(this.detailApplied, request);
         this.detail.set(detail);
         this.loading.set(false);
         this.forbidden.set(false);
@@ -444,8 +458,9 @@ export class SagaDetail implements OnInit, OnDestroy {
       },
       error: (err) => {
         if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
-        // An answer that came after a newer one was applied says nothing about the session now.
-        if (applied !== this.detailsApplied) return;
+        // An answer to a request older than one that has been answered with a detail says nothing about
+        // the session now.
+        if (request < this.detailApplied) return;
         this.loading.set(false);
         const problem = problemOf(err, 'Could not load this saga. It may not exist.');
         if (problem.status === 403 && problem.code === FORBIDDEN_CODE) this.forbid();
@@ -507,16 +522,16 @@ export class SagaDetail implements OnInit, OnDestroy {
    * newer summary, so the detail with the higher version wins; on a tie the response does, since it
    * also carries the stored data. A 403 from the API is the one failure that is shown: the viewer lost
    * `sagas.view` (the hub closes their connection when access changes, so the reconnect's refresh finds
-   * out), unless a newer answer was applied since this request was sent. `onLoaded` runs after a success.
+   * out), unless a request sent after this one has been answered with a detail. `onLoaded` runs after a success.
    */
   private refreshDetail(onLoaded?: () => void): void {
     const sagaType = this.sagaType;
     const correlationId = this.correlationId;
-    const applied = this.detailsApplied;
+    const request = ++this.detailRequest;
     this.api.get(sagaType, correlationId).subscribe({
       next: (fresh) => {
         if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
-        this.detailsApplied++;
+        this.detailApplied = Math.max(this.detailApplied, request);
         this.detail.update((current) =>
           current && fresh.summary.version >= current.summary.version ? fresh : current,
         );
@@ -525,7 +540,7 @@ export class SagaDetail implements OnInit, OnDestroy {
       },
       error: (err) => {
         if (sagaType !== this.sagaType || correlationId !== this.correlationId) return;
-        if (applied !== this.detailsApplied) return;
+        if (request < this.detailApplied) return;
         const problem = problemOf(err, '');
         if (problem.status === 403 && problem.code === FORBIDDEN_CODE) this.forbid();
       },

@@ -1,9 +1,12 @@
 <a class="back" routerLink="/sagas">&larr; All sagas</a>
 
-@if (connectionState() === 'reconnecting') {
-  <div class="banner banner--warning">Reconnecting to live updates…</div>
-} @else if (hasEverConnected() && connectionState() === 'disconnected') {
-  <div class="banner banner--warning">Live updates disconnected.</div>
+<!-- Said to a signed-in viewer only: while the session ends the page shows nothing but the way back. -->
+@if (signedIn()) {
+  @if (connectionState() === 'reconnecting') {
+    <div class="banner banner--warning">Reconnecting to live updates…</div>
+  } @else if (hasEverConnected() && connectionState() === 'disconnected') {
+    <div class="banner banner--warning">Live updates disconnected.</div>
+  }
 }
 
 @if (!signedIn()) {

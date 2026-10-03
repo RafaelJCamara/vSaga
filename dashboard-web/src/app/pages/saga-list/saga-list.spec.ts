@@ -555,6 +555,7 @@ describe('SagaList', () => {
         { provide: SagaHubService, useValue: hubMock },
       ],
     });
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     const fixture = TestBed.createComponent(SagaList);
     fixture.componentInstance.page.set(40);
     fixture.detectChanges();
@@ -562,6 +563,8 @@ describe('SagaList', () => {
     // totalCount=60 at pageSize=25 -> 3 pages; page 40 is out of range and should self-correct.
     expect(fixture.componentInstance.page()).toBe(3);
     expect(apiMock.list).toHaveBeenCalledWith(expect.objectContaining({ page: 3 }));
+    // The correction replaces the URL's page 40, so Back does not land on a page that does not exist.
+    expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: 3 }), replaceUrl: true }));
   });
 
   it('reads initial filters, page, and sort from the URL query params on load', () => {
@@ -818,15 +821,20 @@ describe('SagaList', () => {
         expect(apiMock.list).toHaveBeenCalledTimes(3);
       });
 
-      it('goes back to the last good page after a 400 with no maxPage, and writes it to the URL', () => {
-        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 75)), throwError(() => httpError(400, { error: 'Too broad.' }))]);
+      it('goes back to the last good page after a 400 with no maxPage, and replaces the URL with it', () => {
+        const refused = new Subject<PagedResult<SagaSummary>>();
+        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 75)), refused]);
         fixture.componentInstance.nextPage();
+        expect(fixture.componentInstance.page()).toBe(2);
+
+        refused.error(httpError(400, { error: 'Too broad.' }));
 
         expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }));
         expect(fixture.componentInstance.error()).toBe('Too broad.');
         expect(fixture.componentInstance.page()).toBe(1);
         expect(apiMock.list).toHaveBeenCalledTimes(2);
-        expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }), replaceUrl: true }));
+        // The refusal's correction is the last word on the URL, and it replaces the entry of the refused page.
+        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }), replaceUrl: true }));
       });
 
       it('still says an unreachable API is one', () => {
@@ -874,6 +882,62 @@ describe('SagaList', () => {
       });
     });
 
+    describe('a list that lost its access', () => {
+      it('asks the API for no list on a reconnect, reads the session, and reloads once the session holds the permission again', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 1))]);
+        auth.access.set(none);
+        fixture.detectChanges();
+        expect(fixture.nativeElement.querySelector('.saga-row')).toBeNull();
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+
+        // The next reconnect finds a grant: the session read brings it, and the effect reads the list once.
+        auth.refresh.mockImplementation(() => {
+          auth.access.set(scopedView);
+          return Promise.resolve('authenticated' as const);
+        });
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        fixture.detectChanges();
+
+        expect(auth.refresh).toHaveBeenCalledTimes(2);
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(fixture.nativeElement.querySelectorAll('.saga-row')).toHaveLength(1);
+      });
+
+      it('does not read the session on a reconnect while it holds the permission', () => {
+        const { fixture } = open({}, [of(page([makeSummary()], 1, 1))]);
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+
+        expect(auth.refresh).not.toHaveBeenCalled();
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(fixture.componentInstance.error()).toBeNull();
+      });
+    });
+
+    describe('a list that was left', () => {
+      it.each([
+        ['a 400 past what the shape can reach', (answer: Subject<PagedResult<SagaSummary>>) => answer.error(httpError(400, { error: 'Page 30 is past the last page (20).', maxPage: 20 }))],
+        ['a page past the real end', (answer: Subject<PagedResult<SagaSummary>>) => answer.next(page([], 30, 60))],
+      ])('does not correct the URL when %s answers after leaving', (_, answerLate) => {
+        const answer = new Subject<PagedResult<SagaSummary>>();
+        const { fixture, navigate } = open({}, [answer], 30);
+        navigate.mockClear();
+
+        fixture.destroy();
+        answerLate(answer);
+
+        expect(navigate).not.toHaveBeenCalled();
+        expect(apiMock.list).toHaveBeenCalledTimes(1);
+        expect(fixture.componentInstance.page()).toBe(30);
+      });
+    });
+
     describe('answers that arrive late', () => {
       /** The page with each request answered by hand: every `list` call returns the next subject. */
       function openByHand() {
@@ -886,13 +950,14 @@ describe('SagaList', () => {
         const { fixture, navigate, answers } = openByHand();
         const c = fixture.componentInstance;
         answers[0].next(page([makeSummary()], 1, 1000));
-        c.nextPage(); // request 2, left in flight
+        c.pageJump = 30;
+        c.goToPage(); // request 2, for a page past what the shape can reach, left in flight
         c.status = 'Failed';
         c.onFilterChange(); // request 3
         answers[2].next(page([makeSummary({ correlationId: 'failed-1', status: 'Failed' })], 1, 1000));
         navigate.mockClear();
 
-        answers[1].error(httpError(400, { error: 'Page 2 is past the last page (20).', maxPage: 20 }));
+        answers[1].error(httpError(400, { error: 'Page 30 is past the last page (20).', maxPage: 20 }));
 
         expect(apiMock.list).toHaveBeenCalledTimes(3);
         expect(c.page()).toBe(1);
@@ -999,12 +1064,15 @@ describe('SagaList', () => {
 
       it('goes to maxPage, keeps the message, and stops offering pages beyond it', () => {
         const rows = [makeSummary({ correlationId: 'deep' })];
-        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 1000)), pastTheEnd(20), of(page(rows, 20, 1000))]);
+        const refused = new Subject<PagedResult<SagaSummary>>();
+        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 1000)), refused, of(page(rows, 20, 1000))]);
         const c = fixture.componentInstance;
         expect(c.totalPages()).toBe(40);
 
         c.pageJump = 30;
         c.goToPage();
+        expect(c.page()).toBe(30);
+        refused.error(httpError(400, { error: 'Page 30 is past the last page (20) a list across several saga types can reach. Choose a saga type with the sagaType filter to page further.', maxPage: 20 }));
         fixture.detectChanges();
 
         expect(apiMock.list).toHaveBeenCalledTimes(3);
@@ -1015,7 +1083,7 @@ describe('SagaList', () => {
         expect(text(fixture.nativeElement.querySelector('.banner--error'))).toContain('Choose a saga type with the sagaType filter');
         expect(c.totalPages()).toBe(20);
         expect(c.hasNextPage()).toBe(false);
-        expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: 20 }), replaceUrl: true }));
+        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: 20 }), replaceUrl: true }));
 
         // The cap belongs to the request that met it: changing a filter lifts it.
         c.onFilterChange();
@@ -1090,9 +1158,11 @@ describe('SagaList', () => {
 
       it('says that no page can be served for a maxPage of 0: the API text, no rows, page 1, no retry', () => {
         const message = 'You can see 60 saga types, more than the 10 a list sorted by status, filtered by status or kind, or searched can combine. Choose a saga type with the sagaType filter.';
-        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 90)), pastTheEnd(0, message)]);
+        const refused = new Subject<PagedResult<SagaSummary>>();
+        const { fixture, navigate } = open({}, [of(page([makeSummary()], 1, 90)), refused]);
         const c = fixture.componentInstance;
         c.nextPage();
+        refused.error(httpError(400, { error: message, maxPage: 0 }));
         fixture.detectChanges();
 
         expect(c.error()).toBe(message);
@@ -1101,7 +1171,7 @@ describe('SagaList', () => {
         expect(c.sagas()).toEqual([]);
         expect(c.totalCount()).toBe(0);
         expect(apiMock.list).toHaveBeenCalledTimes(2);
-        expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }), replaceUrl: true }));
+        expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ page: null }), replaceUrl: true }));
         // The filter that always works is still offered, and a pager with nothing to page through is not.
         expect(fixture.nativeElement.querySelector('.toolbar select[class~="input"]')).not.toBeNull();
         expect(fixture.nativeElement.querySelector('.pagination')).toBeNull();

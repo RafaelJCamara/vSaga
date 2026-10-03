@@ -9,6 +9,13 @@
 
 import { HttpErrorResponse } from '@angular/common/http';
 
+/**
+ * The `code` of a 403 that is the API saying the session lacks a permission (`AuthProblems.ForbiddenCode`).
+ * Another code (`password_change_required`) is a different refusal, and a 403 with none is not the API's
+ * (a proxy's, say), so a page tells "no access" by this code and not by the status alone.
+ */
+export const FORBIDDEN_CODE = 'forbidden';
+
 export interface Problem {
   /** The HTTP status; 0 when no response arrived (network failure, timeout) or `err` is not an HTTP error. */
   status: number;

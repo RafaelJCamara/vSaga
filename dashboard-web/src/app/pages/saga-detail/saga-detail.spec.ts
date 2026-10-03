@@ -1947,7 +1947,7 @@ describe('SagaDetail', () => {
         expect(fixture.nativeElement.querySelector('.summary-card')).not.toBeNull();
       });
 
-      it('refreshes nothing on a push either', () => {
+      it('asks the API for nothing on a push either', () => {
         vi.useFakeTimers();
         const fixture = setupForbidden();
 
@@ -2129,6 +2129,43 @@ describe('SagaDetail', () => {
         expect(fixture.nativeElement.querySelector('.summary-card')).not.toBeNull();
       });
 
+      // Sent order, not answer order: an older request that succeeds late says nothing against a newer request
+      // whose 403 is genuine.
+      it('forbids the page when a newer load is refused after an older one was answered', () => {
+        const fixture = setup(makeDetail());
+        const older = new Subject<SagaDetailModel>();
+        const newer = new Subject<SagaDetailModel>();
+        apiMock.get.mockReturnValueOnce(older).mockReturnValueOnce(newer);
+        fixture.componentInstance.load();
+        fixture.componentInstance.load();
+
+        older.next(makeDetail());
+        newer.error(forbiddenBody);
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+        expect(fixture.nativeElement.querySelector('.summary-card')).toBeNull();
+      });
+
+      it('forbids the page when a live refresh is refused after an older refresh was answered', () => {
+        vi.useFakeTimers();
+        const fixture = setup(makeDetail({ status: 'Running' }));
+        const older = new Subject<SagaDetailModel>();
+        const newer = new Subject<SagaDetailModel>();
+        apiMock.get.mockReturnValueOnce(older).mockReturnValueOnce(newer);
+        const push = () => hubMock.sagaUpdated$.next({ ...fixture.componentInstance.detail()!.summary });
+
+        push();
+        vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+        push();
+        vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+        older.next(makeDetail({ status: 'Running', version: 3 }));
+        newer.error(forbiddenBody);
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+      });
+
       it.each([
         ['an older load is refused after a newer one was answered', 'newer-first'],
         ['an older load is answered after a newer one was refused', 'older-first'],
@@ -2210,6 +2247,21 @@ describe('SagaDetail', () => {
         auth.status.set('authenticated');
         fixture.detectChanges();
         expect(el.querySelector('.summary-card')).not.toBeNull();
+      });
+
+      it('says nothing about live updates either', () => {
+        const fixture = setup(makeDetail({ status: 'Running' }));
+        hubMock.connectionState$.next('reconnecting');
+        fixture.detectChanges();
+        expect(fixture.nativeElement.querySelector('.banner--warning')).not.toBeNull();
+
+        auth.status.set('anonymous');
+        fixture.detectChanges();
+        expect(fixture.nativeElement.querySelector('.banner--warning')).toBeNull();
+
+        hubMock.connectionState$.next('disconnected');
+        fixture.detectChanges();
+        expect(fixture.nativeElement.textContent).not.toContain('Live updates disconnected');
       });
 
       it('does not say "no access" on a forbidden page either', () => {
@@ -2317,14 +2369,25 @@ describe('SagaDetail', () => {
         expect(hubMock.unsubscribeFromSaga).toHaveBeenCalledTimes(1);
       });
 
-      it('is not joined at all when the 403 is already there by the time the route is read', () => {
+      // The answer to a load that was in flight when the page was left must not join the group again: the hub
+      // would keep a record of it and send it again on every reconnect, for a page that no longer exists.
+      it.each([
+        ['a session that may view the type', {}, 1],
+        ['a session that may not (the API lets it in after leaving)', { access: access([]) }, 0],
+      ])('is not joined by a detail that answers after the page was left, for %s', (_, held, joinedBeforeLeaving) => {
+        authOptions = held;
         const paramMap$ = new Subject<ParamMap>();
-        setup(makeDetail(), [], makeMap(), undefined, [], paramMap$);
-        apiMock.get.mockReturnValue(throwError(() => forbiddenBody));
-
+        const detail$ = new Subject<SagaDetailModel>();
+        const fixture = setup(makeDetail(), [], makeMap(), undefined, [], paramMap$);
+        apiMock.get.mockReturnValue(detail$);
         paramMap$.next(route());
+        expect(hubMock.subscribeToSaga).toHaveBeenCalledTimes(joinedBeforeLeaving);
 
-        expect(hubMock.subscribeToSaga).not.toHaveBeenCalled();
+        fixture.destroy();
+        detail$.next(makeDetail({ status: 'Completed' }));
+
+        expect(hubMock.subscribeToSaga).toHaveBeenCalledTimes(joinedBeforeLeaving);
+        expect(hubMock.unsubscribeFromSaga).toHaveBeenCalledTimes(joinedBeforeLeaving);
       });
 
       it('is joined when a forbidden page gains sagas.view and loads', () => {

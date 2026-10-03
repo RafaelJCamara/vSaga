@@ -9,7 +9,7 @@ import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.
 import { SagaKind, SagaSortColumn, SagaStatus, SagaSummary, SagaTypeInfo } from '../../models/saga.model';
 import { KindBadge } from '../../components/kind-badge/kind-badge';
 import { StatusBadge } from '../../components/status-badge/status-badge';
-import { problemOf } from '../../util/http-error';
+import { FORBIDDEN_CODE, problemOf } from '../../util/http-error';
 
 const STATUSES: SagaStatus[] = ['Running', 'Completed', 'Failed', 'Compensating', 'Compensated', 'TimedOut', 'Cancelled'];
 const KINDS: SagaKind[] = ['Orchestrated', 'Choreographed'];
@@ -23,10 +23,6 @@ const FORBIDDEN = 'You do not have access to these sagas.';
 /** What a 400 says when its body carries no text of its own: for a `maxPage` of 0, and for any other. */
 const TOO_MANY_TYPES = 'Too many saga types are visible to list them together. Choose a saga type with the filter.';
 const REFUSED = 'The API could not list sagas for these filters.';
-/** The `code` of a 403 that is the API saying the session lacks a permission (see `AuthProblems`); another
- *  code (`password_change_required`) is a different refusal, and a 403 with none is not the API's. */
-const FORBIDDEN_CODE = 'forbidden';
-
 /**
  * The `maxPage` of the scoped list's 400 body, `{ error, maxPage }`: the last page the request's shape can
  * reach (0 when none can). Null when the body carries none (the Redis scan limit's 400 has no such member).
@@ -76,8 +72,9 @@ export class SagaList implements OnInit, OnDestroy {
   /** Set while the API refuses the list as asked (a 403, or no page to serve): a live push must not paint
    *  rows under the refusal. Cleared when the next request starts. */
   private listRefused = false;
-  /** Whether the banner's failure may pass when the hub reconnects (an API that could not be reached);
-   *  a 403 or a 400 would answer the same again. */
+  /** Whether the banner's failure is an API that could not be reached: it is then retried when the hub
+   *  connects for the first time (a 403 or a 400 is not: it would answer the same again). Every later
+   *  reconnect re-reads the list whatever is on screen. */
   private errorIsTransient = false;
 
   pageJump: number | null = null;
@@ -161,6 +158,13 @@ export class SagaList implements OnInit, OnDestroy {
         if (s === 'connected') {
           const wasConnected = this.hasEverConnected();
           this.hasEverConnected.set(true);
+          // A list that lost its access asks the list nothing (it would only answer 403): the reconnect
+          // may be the server's word of a grant, so the session is read, and the effect reloads the list
+          // if it now holds the permission.
+          if (!this.hasAccess()) {
+            void this.auth.refresh();
+            return;
+          }
           // The first connect adds nothing to the load ngOnInit fired. A later one re-reads the list: the
           // pushes sent while the hub was down are lost, and the server closes a user's connection when
           // their access changes, so this is how a narrowed or widened list is noticed (a 403 then goes
@@ -173,6 +177,8 @@ export class SagaList implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    // An answer to a request still in flight must not correct the page or the URL of a list that was left.
+    this.listRequest++;
     this.subs.forEach((s) => s.unsubscribe());
   }
 

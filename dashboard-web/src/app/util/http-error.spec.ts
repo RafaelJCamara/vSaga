@@ -1,7 +1,7 @@
 import { HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import conflictProblem from '../testing/contracts/admin/conflict-problem.response.json';
 import validationProblem from '../testing/contracts/admin/validation-problem.response.json';
-import { problemOf } from './http-error';
+import { FORBIDDEN_CODE, problemOf } from './http-error';
 
 const FALLBACK = 'Something went wrong.';
 
@@ -267,5 +267,13 @@ describe('problemOf', () => {
         });
       }
     });
+  });
+
+  // The pages tell "no access" from another 403 by this code, so it is the API's word (AuthProblems.ForbiddenCode).
+  it('names the code of the 403 that says a permission is missing, as the API writes it', () => {
+    expect(FORBIDDEN_CODE).toBe('forbidden');
+    const problem = problemOf(failure(403, { title: 'Forbidden', detail: 'This needs the sagas.view permission.', code: 'forbidden' }), FALLBACK);
+    expect(problem.status).toBe(403);
+    expect(problem.code).toBe(FORBIDDEN_CODE);
   });
 });
