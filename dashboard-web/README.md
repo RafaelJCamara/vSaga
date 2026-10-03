@@ -13,9 +13,10 @@ To use the dashboard you need only Docker: `docker compose up -d --build` from t
 builds this app into the `dashboard-web` image and serves it on http://localhost:4200, next to the API
 it reads (see ["Run the demo"](../README.md#run-the-demo)).
 
-Node.js `>= 22` (this package's `engines` field; CI builds with 22) is needed only to develop it: the
-dev server, the unit tests, and builds outside Docker. The dev server has no data of its own, so an
-API has to be running first, by default the compose stack's:
+Node.js 22.22.3+ or 24.15.0+ (this package's `engines` field, Angular 22's own range; CI builds with
+the latest 22) is needed only to develop it: the dev server, the unit tests, and builds outside
+Docker. The dev server has no data of its own, so an API has to be running first, by default the
+compose stack's:
 
 ```bash
 docker compose up -d --build      # from the repository root: Postgres, RabbitMQ, dashboard API and UI, sample
@@ -177,5 +178,5 @@ src/app/
   testing/                  Spec-only fixtures (timeline entries and steps), excluded from the app build
 ```
 
-Generated with Angular CLI 21.2.10; `npx ng generate component <name>` still works as usual for
-adding to it.
+Generated with Angular CLI 21.2.10 and since moved to Angular 22; `npx ng generate component <name>`
+still works as usual for adding to it.

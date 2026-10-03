@@ -1,4 +1,4 @@
-import { Component, computed, effect, input, linkedSignal, output, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, input, linkedSignal, output, signal, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SagaMap as SagaMapModel, SagaMapEvent } from '../../models/saga.model';
 import { entryTypeLabel } from '../../util/entry-type-label';
@@ -37,6 +37,7 @@ export interface NodeView extends LayoutNode {
   selector: 'app-saga-map',
   imports: [CommonModule],
   templateUrl: './saga-map.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './saga-map.scss',
 })
 export class SagaMap {

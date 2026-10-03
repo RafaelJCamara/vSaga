@@ -1,4 +1,5 @@
 import {
+  ChangeDetectionStrategy,
   Component,
   ElementRef,
   afterRenderEffect,
@@ -54,6 +55,7 @@ const OUTCOME_LABELS: Record<Exclude<SagaTransition['outcome'], 'in-flight' | 'r
   imports: [SagaDataInspector],
   templateUrl: './saga-timeline.html',
   styleUrl: './saga-timeline.scss',
+  changeDetection: ChangeDetectionStrategy.Eager,
   // The spaces between a row's parts are part of its text: without them it reads (and copies, and
   // is announced) as "#4MessageReceivedRecorded at14:03:07.140".
   preserveWhitespaces: true,

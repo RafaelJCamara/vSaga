@@ -1,6 +1,6 @@
 # Dashboard
 
-`VSaga.Dashboard.Api` (ASP.NET Core Minimal API + SignalR) and `dashboard-web` (Angular 21 SPA) together
+`VSaga.Dashboard.Api` (ASP.NET Core Minimal API + SignalR) and `dashboard-web` (Angular 22 SPA) together
 form a saga-type-agnostic ops dashboard: list/filter/search every saga instance across every registered
 saga type, drill into one instance's timeline, a visual service map and its data after each step, and
 manually retry a failed or timed-out saga — all against provider-neutral contracts every persistence
@@ -273,7 +273,7 @@ because pushes sent while the hub was down are lost.
 
 ## The SPA
 
-`dashboard-web` (Angular 21) is a saga-type-agnostic client: a list view (paginated,
+`dashboard-web` (Angular 22) is a saga-type-agnostic client: a list view (paginated,
 filterable by status/type/kind/search, sortable by Status/Updated — sorting and paging are both
 pushed to the backend query, not applied client-side to whatever page happens to be loaded) and a
 detail view with a summary card, a Saga data bar and two tabs, Map (the one it opens on) and Timeline

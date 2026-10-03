@@ -173,7 +173,7 @@ dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoD
 ```
 dotnet/                  .NET 10 solution — engine, persistence, six transport adapters, dashboard API,
                            samples (the OrderProcessing reference stack, and one per persistence provider)
-dashboard-web/            Angular 21 SPA for the dashboard (built with npm and the Angular CLI, not the
+dashboard-web/            Angular 22 SPA for the dashboard (built with npm and the Angular CLI, not the
                            .NET solution), and the nginx container image compose serves it from — see
                            dashboard-web/README.md
 docs/                     Reference documentation, design records, and project history — see below

@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -20,6 +20,7 @@ type SortDirection = 'asc' | 'desc';
   selector: 'app-saga-list',
   imports: [CommonModule, FormsModule, RouterLink, KindBadge, StatusBadge],
   templateUrl: './saga-list.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './saga-list.scss',
 })
 export class SagaList implements OnInit, OnDestroy {

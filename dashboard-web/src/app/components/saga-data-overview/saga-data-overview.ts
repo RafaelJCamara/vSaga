@@ -1,4 +1,4 @@
-import { Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { SagaStatus, SagaSummary } from '../../models/saga.model';
 import { SagaHistory } from '../../util/saga-transitions';
 import { prettyJson } from '../../util/state-json';
@@ -33,6 +33,7 @@ const LIVE_STATUSES: ReadonlySet<SagaStatus> = new Set<SagaStatus>(['Running', '
   imports: [SagaDataInspector],
   templateUrl: './saga-data-overview.html',
   styleUrl: './saga-data-overview.scss',
+  changeDetection: ChangeDetectionStrategy.Eager,
   // The spaces between a caption's label and its value are part of its text.
   preserveWhitespaces: true,
 })

@@ -1277,6 +1277,14 @@ assume the key.
 brace-expansion for npm audit"), which made `npm audit --audit-level=low` pass on `main` again, a gate
 every commit above must clear.
 
+*Note, 2026-10-03:* a second prerequisite landed before C36, "Move the dashboard SPA to Angular 22 for
+the http-cache-semantics advisory". A high advisory in every version of `http-cache-semantics`
+(GHSA-ch52-4w7c-c8xp), reached only through the Angular 21 CLI's `pacote` chain, failed the same audit
+gate, and the only fix is Angular CLI 22. The SPA is now on Angular 22.2.1 with TypeScript 6.0, and the
+piscina override from `22f04bf` is gone (`@angular/build` 22 depends on 5.3.2 itself). Where §1 and §2
+say Angular 21 or 21.2.24, read 22.2.1; the components keep the pre-22 change detection
+(`ChangeDetectionStrategy.Eager`) and the XHR backend (`withXhr()`).
+
 ---
 
 ## 13. Open questions

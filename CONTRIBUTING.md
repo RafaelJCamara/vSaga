@@ -5,8 +5,9 @@
 - **.NET SDK** matching `dotnet/global.json` (currently `10.0.301`, `rollForward: latestFeature` — an
   older SDK scaffolds/targets the wrong framework and every `dotnet` command below fails from the
   start).
-- **Node.js ≥ 22**, only for developing the Angular dashboard SPA (`dashboard-web/package.json`'s
-  `engines` field; also what CI's `setup-node` installs). The compose stack builds the SPA inside its
+- **Node.js 22.22.3+ or 24.15.0+**, only for developing the Angular dashboard SPA
+  (`dashboard-web/package.json`'s `engines` field, which follows Angular 22's own range; CI's
+  `setup-node` installs the latest 22). The compose stack builds the SPA inside its
   `dashboard-web` image, so running the demo needs only Docker.
 - **Docker**: seven `dotnet/tests/*` suites use Testcontainers (RabbitMQ, MassTransit, Wolverine,
   Brighter, Postgres, Redis, MongoDB — see the Test section below). Without Docker, those suites fail

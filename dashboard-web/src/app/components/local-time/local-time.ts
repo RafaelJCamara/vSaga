@@ -1,4 +1,4 @@
-import { Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { formatLocal, formatRecordedAt } from '../../util/time-format';
 
 /**
@@ -7,6 +7,7 @@ import { formatLocal, formatRecordedAt } from '../../util/time-format';
  */
 @Component({
   selector: 'app-local-time',
+  changeDetection: ChangeDetectionStrategy.Eager,
   template: `<time [attr.datetime]="value()" [attr.title]="utc()">{{ local() }}</time>`,
 })
 export class LocalTime {

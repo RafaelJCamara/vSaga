@@ -1,4 +1,4 @@
-import { Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { SagaStatus } from '../../models/saga.model';
 
 const STATUS_CLASS: Record<SagaStatus, string> = {
@@ -15,6 +15,7 @@ const STATUS_CLASS: Record<SagaStatus, string> = {
   selector: 'app-status-badge',
   imports: [],
   templateUrl: './status-badge.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './status-badge.scss',
 })
 export class StatusBadge {

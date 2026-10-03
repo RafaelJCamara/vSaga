@@ -1,4 +1,4 @@
-import { Component, computed, input, linkedSignal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, linkedSignal } from '@angular/core';
 import { JsonChange, diffJson, previewValue } from '../../util/json-diff';
 import { SnapshotState } from '../../util/saga-transitions';
 import { formatStateJson, parseStateJson, prettyJson } from '../../util/state-json';
@@ -42,6 +42,7 @@ function plain(value: unknown): string {
   selector: 'app-saga-data-inspector',
   templateUrl: './saga-data-inspector.html',
   styleUrl: './saga-data-inspector.scss',
+  changeDetection: ChangeDetectionStrategy.Eager,
   // The spaces between a change's marker and its path, and around "→", are part of the text.
   preserveWhitespaces: true,
 })

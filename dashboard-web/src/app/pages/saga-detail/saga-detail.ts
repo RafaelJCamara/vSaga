@@ -1,4 +1,5 @@
 import {
+  ChangeDetectionStrategy,
   Component,
   ElementRef,
   Injector,
@@ -96,6 +97,7 @@ function awaitsSnapshot(history: SagaHistory, nowMs: number): boolean {
   selector: 'app-saga-detail',
   imports: [RouterLink, KindBadge, StatusBadge, SagaMap, LocalTime, SagaTimeline, SagaDataOverview],
   templateUrl: './saga-detail.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './saga-detail.scss',
 })
 export class SagaDetail implements OnInit, OnDestroy {
