@@ -17,6 +17,7 @@ describe('auth mock', () => {
     }
     expect(auth.canManageAccess()).toBe(true);
     expect(auth.passwordMinLength()).toBe(12);
+    expect(auth.sessionReadFailed()).toBe(false);
   });
 
   it('answers can() by the rule of the real service, so a narrowed access behaves like production', () => {
@@ -82,6 +83,7 @@ describe('auth mock', () => {
       setupProblem: { code: 'setup_unavailable', detail: 'Seed keys are set.' },
       passwordMinLength: null,
       signInUnavailable: true,
+      sessionReadFailed: true,
     });
 
     expect(auth.status()).toBe('unreachable');
@@ -90,6 +92,7 @@ describe('auth mock', () => {
     expect(auth.setupProblem()?.code).toBe('setup_unavailable');
     expect(auth.passwordMinLength()).toBeNull();
     expect(auth.signInUnavailable()).toBe(true);
+    expect(auth.sessionReadFailed()).toBe(true);
   });
 
   it('has methods that resolve, record their calls and can be reprogrammed', async () => {

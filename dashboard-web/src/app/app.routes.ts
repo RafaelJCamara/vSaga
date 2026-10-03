@@ -26,4 +26,6 @@ export const routes: Routes = [
   // Both halves of the saga instance identity are in the URL: a correlation id alone can be
   // tracked by more than one saga type.
   { path: 'sagas/:sagaType/:id', component: SagaDetail },
+  // A URL that matches nothing (a stale bookmark, a return URL to a page that is gone) goes to the saga list.
+  { path: '**', redirectTo: 'sagas' },
 ];

@@ -9,6 +9,8 @@ const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'access.manage': 'Manage access',
 };
 const CATALOGUE_ORDER = Object.keys(PERMISSION_LABELS);
+/** Held for every saga type only: the API never scopes it, and a saga type has no use for it. */
+const ACCESS_MANAGE: PermissionKey = 'access.manage';
 
 interface PermissionChip {
   key: string;
@@ -35,8 +37,9 @@ function chipsOf(keys: Iterable<string>): PermissionChip[] {
 /**
  * What a session may do, as the server computed it (`SessionAccess`): one row for the permissions held
  * for every saga type, then one row per saga type that was granted something on its own, listing what
- * the session holds there in all (the permissions of every saga type included). Nothing is inferred
- * here: the server has already applied `implies`, and `access.manage` never appears in a scoped row.
+ * the session holds there in all (the permissions of every saga type included, but `access.manage`: it
+ * is not a permission on a saga type). Nothing is inferred here: the server has already applied
+ * `implies`, and `access.manage` never appears in `scoped`.
  */
 @Component({
   selector: 'app-access-summary',
@@ -58,15 +61,22 @@ export class AccessSummary {
     for (const scoped of access.scoped) {
       rows.push({
         sagaType: scoped.sagaType,
-        permissions: chipsOf([...access.permissions, ...scoped.permissions]),
+        permissions: chipsOf(
+          [...access.permissions, ...scoped.permissions].filter((key) => key !== ACCESS_MANAGE),
+        ),
       });
     }
     return rows;
   });
 
-  /** True when some saga types are granted but not all: the ones not listed are hidden. */
+  /** True when some saga types are granted but not all: the ones not listed are hidden. Holding
+   *  `access.manage` for every saga type is no access to a saga, so it does not make them all available. */
   readonly onlyListedTypes = computed(() => {
-    const rows = this.rows();
-    return rows.length > 0 && rows[0].sagaType !== null;
+    const access = this.access();
+    return (
+      access !== null &&
+      access.scoped.length > 0 &&
+      access.permissions.every((key) => key === ACCESS_MANAGE)
+    );
   });
 }

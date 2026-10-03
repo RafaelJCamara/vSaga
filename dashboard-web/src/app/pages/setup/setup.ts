@@ -14,6 +14,7 @@ import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
 import { failureText } from '../../util/failure-text';
 import { problemOf } from '../../util/http-error';
+import { leaveTo, trackDestroyed } from '../../util/page-lifecycle';
 
 /** The fields of the form, top to bottom: the order focus goes to the first one with an error. */
 const FIELDS = ['username', 'displayName', 'password', 'confirmation', 'code'] as const;
@@ -42,6 +43,7 @@ export class Setup {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly injector = inject(Injector);
+  private readonly destroyed = trackDestroyed();
   /** The five inputs in template order, which is the order of `FIELDS`. */
   private readonly inputs = viewChildren<NgModel, ElementRef<HTMLInputElement>>(NgModel, {
     read: ElementRef,
@@ -63,14 +65,18 @@ export class Setup {
   readonly failure = signal<string | null>(null);
   /** Why a setup that was open when the page loaded is closed now: the API's answer to the attempt. */
   private readonly closedByAttempt = signal<string | null>(null);
-  /** Set when "Check again" found setup still closed. */
-  readonly stillClosed = signal(false);
+  /** What "Check again" found when it found no change: setup still closed, or the check itself failed. */
+  readonly checkMessage = signal<string | null>(null);
 
   /** The shortest password the policy accepts, from the session. */
   readonly minLength = this.auth.passwordMinLength;
-  /** Setup cannot be completed. Not while a request is in flight: the session reads closed the moment the
-   *  administrator exists, and the form must not give way to the notice on the way to the saga list. */
-  readonly closed = computed(() => !this.auth.setupAvailable() && !this.busy());
+  /** Setup cannot be completed: the session says so, or the API refused the attempt as 409 (its answer
+   *  reaches the page before the session read that follows, which may be slow or fail). Not while a request
+   *  is in flight: the session reads closed the moment the administrator exists, and the form must not give
+   *  way to the notice on the way to the saga list. */
+  readonly closed = computed(
+    () => (!this.auth.setupAvailable() || this.closedByAttempt() !== null) && !this.busy(),
+  );
   /** Why setup is closed, in the API's words: the session names it while setup is required, and an
    *  attempt that lost the race says it. */
   readonly closedDetail = computed(
@@ -140,19 +146,28 @@ export class Setup {
   /** Looks at the session again, for a setup that has been opened (or closed for good) meanwhile. */
   async checkAgain(): Promise<void> {
     this.checking.set(true);
-    this.stillClosed.set(false);
+    this.checkMessage.set(null);
     await this.auth.refresh();
     this.checking.set(false);
-    if (this.auth.setupAvailable()) return;
-    if (this.auth.setupRequired()) this.stillClosed.set(true);
-    else await this.goTo('/login');
+    if (this.destroyed()) return;
+    if (this.auth.sessionReadFailed()) {
+      // What the session says now is what it said before: that is no answer.
+      this.checkMessage.set('Could not check. Try again.');
+    } else if (this.auth.setupAvailable()) {
+      this.closedByAttempt.set(null);
+    } else if (this.auth.setupRequired()) {
+      this.checkMessage.set('Setup is still closed.');
+    } else {
+      await this.goTo('/login');
+    }
   }
 
   private refused(err: unknown): void {
     const problem = problemOf(err, '');
     if (problem.code === 'setup_unavailable') {
-      // The session has been read again, so `closed` follows; this keeps the API's reason on the page.
-      this.closedByAttempt.set(problem.message || null);
+      // Closes the form at once, with the API's reason, whether or not the session read that follows
+      // (and shows the same) has landed.
+      this.closedByAttempt.set(problem.message || 'First-run setup is not available.');
       return;
     }
 
@@ -172,11 +187,19 @@ export class Setup {
     const errors = this.errors();
     const first = FIELDS.findIndex((field) => errors[field]);
     if (first < 0) return false;
-    afterNextRender(() => this.inputs()[first]?.nativeElement.focus(), { injector: this.injector });
+    if (!this.destroyed()) {
+      afterNextRender(() => this.inputs()[first]?.nativeElement.focus(), {
+        injector: this.injector,
+      });
+    }
     return true;
   }
 
+  /** Away from the form: the passwords are not kept in the page (and the empty fields are not errors). */
   private async goTo(url: string): Promise<void> {
-    await this.router.navigateByUrl(url).catch(() => false);
+    this.submitted.set(false);
+    this.password.set('');
+    this.confirmation.set('');
+    await leaveTo(this.router, url, () => !this.destroyed());
   }
 }

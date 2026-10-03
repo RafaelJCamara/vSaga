@@ -310,6 +310,8 @@ describe('safeReturnUrl', () => {
     ['evil', 'relative'],
     ['sagas', 'relative to the app'],
     ['', 'empty'],
+    ['%2F%2Fevil.example', 'still percent-encoded: a return URL that was encoded twice'],
+    ['%2Fsagas', 'percent-encoded'],
     ['/\t/evil', 'a tab, which browsers drop from URLs'],
     ['/sagas\nSet-Cookie: x', 'a line break'],
   ])('replaces %s (%s) with the saga list', (raw) => {

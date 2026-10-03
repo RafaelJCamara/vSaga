@@ -60,6 +60,8 @@ export interface AuthMockOptions {
   /** Default 12, the API's default. */
   passwordMinLength?: number | null;
   signInUnavailable?: boolean;
+  /** Default false: the latest session read counted. */
+  sessionReadFailed?: boolean;
 }
 
 export function createAuthMock(options: AuthMockOptions = {}) {
@@ -97,6 +99,7 @@ export function createAuthMock(options: AuthMockOptions = {}) {
     ),
     canManageAccess: computed(() => holdsAccessManage(effectiveAccess())),
     signInUnavailable: signal(options.signInUnavailable ?? false),
+    sessionReadFailed: signal(options.sessionReadFailed ?? false),
 
     bootstrap: vi.fn<AuthService['bootstrap']>(() => Promise.resolve()),
     refresh: vi.fn<AuthService['refresh']>(() => Promise.resolve(status())),

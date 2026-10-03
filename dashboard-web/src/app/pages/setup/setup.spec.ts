@@ -110,7 +110,8 @@ describe('Setup', () => {
       expect(input('display-name').autocomplete).toBe('name');
       expect(input('password').autocomplete).toBe('new-password');
       expect(input('confirmation').autocomplete).toBe('new-password');
-      expect(input('code').autocomplete).toBe('one-time-code');
+      // Not one-time-code: that makes browsers offer an SMS code, and the code here is read from a log.
+      expect(input('code').autocomplete).toBe('off');
       expect(input('password').type).toBe('password');
       expect(input('confirmation').type).toBe('password');
       expect(el().querySelectorAll('[aria-required="true"]')).toHaveLength(5);
@@ -141,6 +142,23 @@ describe('Setup', () => {
       expect(hint).toContain('docker compose logs dashboard-api');
       expect(hint).toContain('Dashboard:Setup:Code');
       expect(input('code').getAttribute('aria-describedby')).toBe('setup-code-hint');
+    });
+
+    it('is sent as a POST, and the browser does not validate it on its own (the page does)', async () => {
+      await create();
+
+      const form = el().querySelector('form')!;
+      expect(form.getAttribute('method')).toBe('post');
+      expect(form.hasAttribute('novalidate')).toBe(true);
+    });
+
+    it('lets a setup code of up to 128 characters be typed: a code preset in Dashboard:Setup:Code may be that long', async () => {
+      await create();
+
+      expect(Number(input('code').getAttribute('maxlength'))).toBeGreaterThanOrEqual(128);
+      expect(Number(input('username').getAttribute('maxlength'))).toBe(64);
+      expect(Number(input('display-name').getAttribute('maxlength'))).toBe(128);
+      expect(Number(input('password').getAttribute('maxlength'))).toBe(128);
     });
 
     it('shows no error until the form has been submitted', async () => {
@@ -311,6 +329,72 @@ describe('Setup', () => {
       expect(navigate).toHaveBeenCalledExactlyOnceWith('/sagas');
     });
 
+    it('sends a long preset code unchanged', async () => {
+      await create();
+      setupSucceeds();
+      const code = 'Preset-Code-'.repeat(8) + 'END'; // 99 characters
+      fill({ code });
+
+      await submit();
+
+      expect(auth.setup).toHaveBeenCalledWith(expect.objectContaining({ code }));
+    });
+
+    it('does not trim the password', async () => {
+      await create();
+      setupSucceeds();
+      fill({ password: ' padded password ', confirmation: ' padded password ' });
+
+      await submit();
+
+      expect(auth.setup).toHaveBeenCalledWith(
+        expect.objectContaining({ password: ' padded password ' }),
+      );
+    });
+
+    it('does not keep the passwords in the page once the administrator is created', async () => {
+      await create();
+      // The session still reads open here (the page stays), so the form is what shows.
+      auth.setup.mockImplementation(async () => auth.status.set('authenticated'));
+      fill();
+
+      await submit();
+
+      expect(fixture.componentInstance.password()).toBe('');
+      expect(fixture.componentInstance.confirmation()).toBe('');
+      // The emptied fields are not errors: the page may stay for a moment, or for good.
+      expect(el().querySelector('.field-error')).toBeNull();
+    });
+
+    it('leaves for the saga list when the login page is the destination and cannot be reached', async () => {
+      await create();
+      navigate.mockImplementation((url) =>
+        url === '/login?reason=setup'
+          ? Promise.reject(new Error('NG04002'))
+          : Promise.resolve(true),
+      );
+      fill();
+
+      await submit();
+
+      expect(navigate.mock.calls.map(([url]) => url)).toEqual(['/login?reason=setup', '/sagas']);
+    });
+
+    it('does not touch the view when it is left while the request runs, and refused afterwards', async () => {
+      await create();
+      let fail!: (err: unknown) => void;
+      auth.setup.mockReturnValue(new Promise<void>((_, reject) => (fail = reject)));
+      fill({ code: '' });
+      type('code', 'A-CODE-OF-SORTS');
+
+      const done = fixture.componentInstance.submit();
+      await settle();
+      fixture.destroy();
+      fail(httpError(400, problem('validation', 'x', { username: ['Not a valid username.'] })));
+
+      await expect(done).resolves.toBeUndefined();
+    });
+
     it('does not reload the page for a submit: the form is handled here', async () => {
       await create();
       const event = new Event('submit', { cancelable: true });
@@ -427,6 +511,49 @@ describe('Setup', () => {
       expect(failureBanner()?.textContent?.trim()).toBe(CANNOT_REACH);
     });
 
+    it('closes the form for a 409 at once, before the session read that follows has landed or when it never does', async () => {
+      await create();
+      const reason =
+        'First-run setup is over: a dashboard user already exists. Sign in, or ask an administrator for an account.';
+      // The auth service rejects without waiting for the read: the session still says setup is open.
+      auth.setup.mockRejectedValue(httpError(409, problem('setup_unavailable', reason)));
+      fill();
+
+      await submit();
+
+      expect(auth.setupAvailable()).toBe(true);
+      expect(el().querySelector('form')).toBeNull();
+      expect(el().querySelector('h1')?.textContent).toBe('First-run setup is closed');
+      expect(el().querySelector('.banner--info')?.textContent?.trim()).toBe(reason);
+    });
+
+    it('closes the form for a 409 that carries no text, with a sentence of its own', async () => {
+      await create();
+      auth.setup.mockRejectedValue(httpError(409, { code: 'setup_unavailable' }));
+      fill();
+
+      await submit();
+
+      expect(el().querySelector('h1')?.textContent).toBe('First-run setup is closed');
+      expect(el().querySelector('.banner--info')?.textContent?.trim()).toBe(
+        'First-run setup is not available.',
+      );
+    });
+
+    it('shows the form again when "Check again" finds setup open after a 409 closed it', async () => {
+      await create();
+      auth.setup.mockRejectedValue(httpError(409, problem('setup_unavailable', 'Not now.')));
+      fill();
+      await submit();
+      expect(el().querySelector('form')).toBeNull();
+
+      el().querySelector<HTMLButtonElement>('button.btn')!.click();
+      await settle();
+
+      expect(el().querySelector('h1')?.textContent).toBe('Set up the dashboard');
+      expect(el().querySelector('#setup-code')).not.toBeNull();
+    });
+
     it('closes the form for a 409 setup_unavailable and says why, in the API words', async () => {
       await create();
       const reason =
@@ -467,8 +594,11 @@ describe('Setup', () => {
       expect(el().querySelector('h1')?.textContent).toBe('First-run setup is closed');
       const text = el().textContent;
       expect(text).toContain('an administrator already exists');
-      expect(text).toContain('Dashboard:Admin:Username');
-      expect(text).toContain('Dashboard:Admin:Password');
+      // Either key closes setup (design 8.8), not only both.
+      expect(text).toContain(
+        'neither Dashboard:Admin:Username nor Dashboard:Admin:Password is set',
+      );
+      expect(text).toContain('either of those two is set');
     });
 
     it("shows the API's reason, from the session", async () => {
@@ -484,7 +614,10 @@ describe('Setup', () => {
       expect(text).toContain('one-time setup code');
       expect(text).toContain('log');
       expect(text).toContain('docker compose logs dashboard-api');
-      expect(text).toContain('Restart the API to get a new one');
+      // Only a generated code is logged, and only restarting generates a new one.
+      expect(text).toContain('a generated code');
+      expect(text).toContain('Restarting the API generates a new one');
+      expect(text).toContain('preset in Dashboard:Setup:Code is never logged');
     });
 
     it('links to the login page', async () => {
@@ -517,6 +650,39 @@ describe('Setup', () => {
 
       expect(el().querySelector('p[role="status"]')?.textContent).toContain('still closed');
       expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it('does not call a check that failed "still closed": it says it could not check', async () => {
+      await create(CLOSED);
+      auth.refresh.mockImplementation(async () => {
+        // A failed read keeps the last known session, so the signals say what they said before.
+        auth.sessionReadFailed.set(true);
+        return 'anonymous';
+      });
+
+      el().querySelector<HTMLButtonElement>('button.btn')!.click();
+      await settle();
+
+      const message = el().querySelector('p[role="status"]');
+      expect(message?.textContent).toContain('Could not check');
+      expect(message?.textContent).not.toContain('still closed');
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it('takes the message away when it is asked again', async () => {
+      await create(CLOSED);
+      el().querySelector<HTMLButtonElement>('button.btn')!.click();
+      await settle();
+      expect(el().querySelector('p[role="status"]')).not.toBeNull();
+      let finish!: () => void;
+      auth.refresh.mockReturnValue(new Promise((resolve) => (finish = () => resolve('anonymous'))));
+
+      el().querySelector<HTMLButtonElement>('button.btn')!.click();
+      fixture.detectChanges();
+
+      expect(el().querySelector('p[role="status"]')).toBeNull();
+      finish();
+      await settle();
     });
 
     it('shows the form when "Check again" finds that setup is open', async () => {

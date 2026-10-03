@@ -34,6 +34,11 @@ const SESSION_URL = `${AUTH_URL}/session`;
  *  starts under this budget is never held on a hung API, and neither a refresh nor a sign-out can stay in
  *  flight for good. */
 const SESSION_TIMEOUT_MS = 8000;
+/** How long a sign-in, setup or password-change POST may take before it counts as failed (the server may
+ *  have acted: the session is read again either way). The password hashing it waits on is bounded by a
+ *  queue and a 429, so a request that takes this long is not working. Without a bound a page that waits
+ *  for it, with its button disabled, would have no way out of a hung API. */
+const IDENTITY_POST_TIMEOUT_MS = 30000;
 /** A 403 refreshes access at most this often: a page that fires many forbidden requests asks once. */
 const FORBIDDEN_REFRESH_INTERVAL_MS = 5000;
 /** Returning to the tab refreshes the session at most this often. */
@@ -57,8 +62,8 @@ const VISIBLE_REFRESH_INTERVAL_MS = 60000;
  * - The dependency on the hub is one way: this service stops, resumes and probes it; the hub knows nothing
  *   of this service.
  *
- * Not wired into the app by itself: the app initializer, the guards and the interceptor that call it come
- * with the pages that need a session.
+ * The guards (`guards/auth.guards.ts`) and the sign-in pages call it; the app initializer and the
+ * interceptor come with the commit that requires a session.
  */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
@@ -83,12 +88,20 @@ export class AuthService {
   private identityEpoch = 0;
   /** Whether the latest session read that was not dropped failed; `login` tells "could not confirm" from
    *  "confirmed, still anonymous" by it. */
-  private lastReadFailed = false;
+  private readonly readFailedState = signal(false);
   /** True while `changePassword` reads the session it changed: a sign-out found then is its result, which
    *  the caller reports, not a session that expired. */
   private sessionEndIsExpected = false;
+  /** The `reason` the login page is given for a session found ended behind the SPA's back: `expired`, but
+   *  `locked` while the read that follows a refused password change runs (that refusal is how the server
+   *  tells of a lockout, and it signs the user out as it does). */
+  private sessionEndReason = 'expired';
 
   readonly status = this.statusState.asReadonly();
+  /** True while the latest session read that counted failed (no answer, a timeout, a 5xx): what the session
+   *  signals say is then the last known, not current. A page that asks again ("Check again") tells a failed
+   *  check from an unchanged answer by it. */
+  readonly sessionReadFailed = this.readFailedState.asReadonly();
   readonly isAuthenticated = computed(() => this.statusState() === 'authenticated');
   /** The signed-in user; null when anonymous, before the first answer, and for the API key. */
   readonly user = computed(() => this.sessionState()?.user ?? null);
@@ -156,7 +169,7 @@ export class AuthService {
     await this.reload();
     if (this.statusState() === 'authenticated') return;
 
-    throw this.lastReadFailed
+    throw this.readFailedState()
       ? new HttpErrorResponse({
           status: 0,
           statusText: 'Unknown Error',
@@ -211,9 +224,14 @@ export class AuthService {
   /** Rejects with the `HttpErrorResponse` when refused (a wrong current password is a 400 with
    *  `errors.currentPassword`). The API signs the user in again under the new password, or signs them out
    *  (a lockout, say): resolves either way, and the caller checks `isAuthenticated()`. A sign-out that
-   *  follows a successful change is not announced as an expiry. */
+   *  follows a successful change is not announced as an expiry, and one that follows a refused change (a
+   *  lockout) is announced as `locked`: the login page tells the user why they were signed out. */
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
-    await this.postIdentityChange(`${AUTH_URL}/password`, { currentPassword, newPassword });
+    await this.postIdentityChange(
+      `${AUTH_URL}/password`,
+      { currentPassword, newPassword },
+      'locked',
+    );
     this.sessionEndIsExpected = true;
     try {
       await this.reload();
@@ -248,7 +266,7 @@ export class AuthService {
     if (this.statusState() !== 'authenticated') return;
     void this.hub.stopAndReset();
     this.signOutLocally();
-    this.goToLoginAsExpired();
+    this.goToLogin('expired');
     void this.reload();
   }
 
@@ -271,13 +289,17 @@ export class AuthService {
    *  counts as a change whether the server answered or refused it, so the epoch moves either way. A refusal
    *  may still have changed what the SPA believes (a password change that locked the account signs the
    *  cookie out; a setup that lost the race closes the form), so the session is read again before the
-   *  rejection goes on to the caller. */
-  private async postIdentityChange(url: string, body: unknown): Promise<void> {
+   *  rejection goes on to the caller. `endedBy` is the `reason` for a session that the read after a refusal
+   *  finds ended. */
+  private async postIdentityChange(url: string, body: unknown, endedBy = 'expired'): Promise<void> {
     try {
-      await firstValueFrom(this.http.post(url, body));
+      await firstValueFrom(this.http.post(url, body).pipe(timeout(IDENTITY_POST_TIMEOUT_MS)));
     } catch (err) {
       this.identityEpoch += 1;
-      void this.reload();
+      this.sessionEndReason = endedBy;
+      void this.reload().finally(() => {
+        this.sessionEndReason = 'expired';
+      });
       throw err;
     }
     this.identityEpoch += 1;
@@ -303,7 +325,7 @@ export class AuthService {
       if (epoch !== this.identityEpoch) return this.statusState();
       if (!isSessionInfo(session))
         throw new Error('The session endpoint did not answer a session.');
-      this.lastReadFailed = false;
+      this.readFailedState.set(false);
       this.accept(session);
     } catch (err) {
       if (epoch === this.identityEpoch) this.markFailed(err);
@@ -332,13 +354,13 @@ export class AuthService {
       // Signed out elsewhere, or the session expired, and nothing was requested in between to say so. The
       // session read already carried the anonymous XSRF token, so unlike `handleUnauthorized` it reads nothing more.
       void this.hub.stopAndReset();
-      if (!this.sessionEndIsExpected) this.goToLoginAsExpired();
+      if (!this.sessionEndIsExpected) this.goToLogin(this.sessionEndReason);
     }
   }
 
   /** The session could not be read. Keep what was known; mark `unreachable` only when nothing was. */
   private markFailed(err: unknown): void {
-    this.lastReadFailed = true;
+    this.readFailedState.set(true);
     const problem = problemOf(err, '');
     this.unavailableState.set(problem.status === 503 && problem.code === 'identity_unavailable');
     if (this.statusState() === 'unknown') this.statusState.set('unreachable');
@@ -352,13 +374,13 @@ export class AuthService {
     this.identityEpoch += 1;
   }
 
-  /** To `/login?returnUrl=<where the user was>&reason=expired`; nowhere when already on `/login` or `/setup`. */
-  private goToLoginAsExpired(): void {
+  /** To `/login?returnUrl=<where the user was>&reason=<reason>`; nowhere when already on `/login` or `/setup`. */
+  private goToLogin(reason: string): void {
     const url = this.router.url;
     const path = url.split(/[?#]/, 1)[0];
     if (path === '/login' || path === '/setup') return;
     void this.router
-      .navigate(['/login'], { queryParams: { returnUrl: url, reason: 'expired' } })
+      .navigate(['/login'], { queryParams: { returnUrl: url, reason } })
       .catch(() => false);
   }
 }

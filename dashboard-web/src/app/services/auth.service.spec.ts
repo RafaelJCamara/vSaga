@@ -13,6 +13,7 @@ import {
 import { inject } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
+import { TimeoutError } from 'rxjs';
 import { Mock, MockInstance, vi } from 'vitest';
 import { PermissionKey, SessionAccess, SessionInfo, SessionUser } from '../models/auth.model';
 import { problemOf } from '../util/http-error';
@@ -24,6 +25,12 @@ const LOGIN = '/api/auth/login';
 const LOGOUT = '/api/auth/logout';
 const SETUP = '/api/auth/setup';
 const PASSWORD = '/api/auth/password';
+const SETUP_BODY = {
+  username: 'root',
+  displayName: 'Root',
+  password: 'a long enough password',
+  code: 'ABCD-EFGH-JKLM-NPQR',
+};
 
 /** The slice of Node's `process` the unhandled-rejection spec uses (the spec tsconfig has no Node types). */
 const nodeProcess = (
@@ -423,6 +430,22 @@ describe('AuthService', () => {
       expect(hub.stopAndReset).not.toHaveBeenCalled();
     });
 
+    it('says whether the latest read failed: false before any, true after a failed one, false after the next good one', async () => {
+      expect(service.sessionReadFailed()).toBe(false);
+      await load(signedIn());
+      expect(service.sessionReadFailed()).toBe(false);
+
+      const failing = service.refresh();
+      (await request('GET', SESSION)).error(new ProgressEvent('error'));
+      await failing;
+      // The last known session is kept, so only this says it is not current.
+      expect(service.status()).toBe('authenticated');
+      expect(service.sessionReadFailed()).toBe(true);
+
+      await Promise.all([service.refresh(), answerSession(signedIn())]);
+      expect(service.sessionReadFailed()).toBe(false);
+    });
+
     it('keeps the last known session on a timeout', async () => {
       await load(signedIn());
 
@@ -696,12 +719,7 @@ describe('AuthService', () => {
   });
 
   describe('setup()', () => {
-    const body = {
-      username: 'root',
-      displayName: 'Root',
-      password: 'a long enough password',
-      code: 'ABCD-EFGH-JKLM-NPQR',
-    };
+    const body = SETUP_BODY;
 
     it('POSTs the first administrator with the one-time code, then reads the session afresh', async () => {
       await load(anonymous({ setupRequired: true, setupAvailable: true }));
@@ -880,10 +898,94 @@ describe('AuthService', () => {
 
       expect(service.isAuthenticated()).toBe(false);
       expect(hub.stopAndReset).toHaveBeenCalledTimes(1);
+      // The user is told why they were signed out, not that the session expired.
+      expect(router.navigate).toHaveBeenCalledTimes(1);
+      expect(router.navigate).toHaveBeenCalledWith(['/login'], {
+        queryParams: { returnUrl: '/account', reason: 'locked' },
+      });
+    });
+
+    it('announces a session that ends later as expired again: `locked` is only for the read after a refused change', async () => {
+      await load(signedIn());
+      router.url = '/account';
+
+      const rejection = service.changePassword('wrong', 'new password 2').catch((e: unknown) => e);
+      (await request('POST', PASSWORD)).flush(
+        { code: 'invalid_credentials', errors: { currentPassword: ['not correct'] } },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      await rejection;
+      await answerSession(signedIn());
+      expect(router.navigate).not.toHaveBeenCalled();
+
+      const later = service.refresh();
+      await answerSession(anonymous());
+      await later;
+
+      expect(router.navigate).toHaveBeenCalledTimes(1);
       expect(router.navigate).toHaveBeenCalledWith(['/login'], {
         queryParams: { returnUrl: '/account', reason: 'expired' },
       });
     });
+
+    it('does not say `locked` for a refused sign-in or setup: only a password change is how the server tells of a lockout', async () => {
+      await load(signedIn());
+      router.url = '/sagas';
+
+      const rejection = service.setup(SETUP_BODY).catch((e: unknown) => e);
+      (await request('POST', SETUP)).flush(
+        { code: 'setup_unavailable' },
+        { status: 409, statusText: 'Conflict' },
+      );
+      await rejection;
+      await answerSession(anonymous());
+
+      expect(router.navigate).toHaveBeenCalledWith(['/login'], {
+        queryParams: { returnUrl: '/sagas', reason: 'expired' },
+      });
+    });
+  });
+
+  describe('an identity POST that never answers', () => {
+    const operations: Array<[string, string, () => Promise<void>]> = [
+      ['login', LOGIN, () => service.login('alice', 'pw')],
+      ['setup', SETUP, () => service.setup(SETUP_BODY)],
+      [
+        'changePassword',
+        PASSWORD,
+        () => service.changePassword('old password 1', 'new password 2'),
+      ],
+    ];
+
+    it.each(operations)(
+      '%s() gives up after 30 s, rejects with the timeout and reads the session: the server may have acted',
+      async (_name, url, run) => {
+        await load(signedIn());
+        const epoch = service.currentIdentityEpoch();
+
+        let settled = false;
+        const rejection = run().then(
+          () => undefined,
+          (e: unknown) => {
+            settled = true;
+            return e;
+          },
+        );
+        const post = await request('POST', url);
+
+        await vi.advanceTimersByTimeAsync(29999);
+        expect(settled).toBe(false);
+        expect(post.cancelled).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(post.cancelled).toBe(true);
+        expect(await rejection).toBeInstanceOf(TimeoutError);
+        // Not an HttpErrorResponse: the pages read it as "cannot reach the API".
+        expect(problemOf(await rejection, '')).toMatchObject({ status: 0, message: '' });
+        expect(service.currentIdentityEpoch()).toBe(epoch + 1);
+        await answerSession(signedIn());
+      },
+    );
   });
 
   describe('logout()', () => {

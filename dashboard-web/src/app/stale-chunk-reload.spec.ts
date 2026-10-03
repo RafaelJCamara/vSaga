@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import { TestBed } from '@angular/core/testing';
 import { NavigationError } from '@angular/router';
 import { Mock, MockInstance, vi } from 'vitest';
@@ -106,6 +107,50 @@ describe('stale chunk reload', () => {
         throw new DOMException('full', 'QuotaExceededError');
       }),
     );
+
+    expect(() => handle(new TypeError(CHROMIUM))).not.toThrow();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('reloads nothing while the browser is offline: the import failed for want of a network, and nothing is recorded', () => {
+    spies.push(vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false));
+
+    handle(new TypeError(CHROMIUM));
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(STALE_CHUNK_RELOAD_KEY)).toBeNull();
+  });
+
+  it('reloads again as soon as the browser is back online: the offline failure used up nothing', () => {
+    const online = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false);
+    spies.push(online);
+    handle(new TypeError(CHROMIUM));
+
+    online.mockReturnValue(true);
+    handle(new TypeError(CHROMIUM));
+
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads nothing when reading sessionStorage itself throws (a browser that blocks site data)', () => {
+    spies.push(
+      vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => {
+        throw new DOMException('blocked', 'SecurityError');
+      }),
+    );
+
+    expect(() => handle(new TypeError(CHROMIUM))).not.toThrow();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('reloads nothing for a document with no window', () => {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: PAGE_RELOAD, useValue: reload },
+        { provide: DOCUMENT, useValue: { defaultView: null } },
+      ],
+    });
 
     expect(() => handle(new TypeError(CHROMIUM))).not.toThrow();
     expect(reload).not.toHaveBeenCalled();

@@ -15,6 +15,7 @@ import { AccessSummary } from '../../components/access-summary/access-summary';
 import { AuthService } from '../../services/auth.service';
 import { failureText } from '../../util/failure-text';
 import { problemOf } from '../../util/http-error';
+import { leaveTo, trackDestroyed } from '../../util/page-lifecycle';
 
 /** The fields of the password form, top to bottom: the order focus goes to the first one with an error. */
 const FIELDS = ['currentPassword', 'newPassword', 'confirmation'] as const;
@@ -40,6 +41,7 @@ export class Account {
   protected readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly injector = inject(Injector);
+  private readonly destroyed = trackDestroyed();
   /** The three inputs in template order, which is the order of `FIELDS`. */
   private readonly inputs = viewChildren<NgModel, ElementRef<HTMLInputElement>>(NgModel, {
     read: ElementRef,
@@ -137,11 +139,20 @@ export class Account {
     const errors = this.errors();
     const first = FIELDS.findIndex((field) => errors[field]);
     if (first < 0) return false;
-    afterNextRender(() => this.inputs()[first]?.nativeElement.focus(), { injector: this.injector });
+    if (!this.destroyed()) {
+      afterNextRender(() => this.inputs()[first]?.nativeElement.focus(), {
+        injector: this.injector,
+      });
+    }
     return true;
   }
 
+  /** Away from the form: the passwords are not kept in the page (and the empty fields are not errors). */
   private async goTo(url: string): Promise<void> {
-    await this.router.navigateByUrl(url).catch(() => false);
+    this.submitted.set(false);
+    this.currentPassword.set('');
+    this.newPassword.set('');
+    this.confirmation.set('');
+    await leaveTo(this.router, url, () => !this.destroyed());
   }
 }

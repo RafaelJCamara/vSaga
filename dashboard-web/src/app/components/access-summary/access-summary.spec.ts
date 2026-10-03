@@ -61,6 +61,42 @@ describe('AccessSummary', () => {
     expect(el.textContent).not.toContain('not listed');
   });
 
+  it('does not show access.manage in a saga type row: it is no permission on a saga type', () => {
+    const el = render({
+      permissions: ['sagas.view', 'access.manage'],
+      scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.retry', 'sagas.view'] }],
+    });
+
+    expect(rows(el)).toEqual([
+      { scope: 'All saga types', permissions: ['View sagas', 'Manage access'] },
+      { scope: 'OrderSaga', permissions: ['View sagas', 'Retry sagas'] },
+    ]);
+  });
+
+  it('says the saga types not listed are not available when every saga type holds only access.manage', () => {
+    const el = render({
+      permissions: ['access.manage'],
+      scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }],
+    });
+
+    expect(rows(el)).toEqual([
+      { scope: 'All saga types', permissions: ['Manage access'] },
+      { scope: 'OrderSaga', permissions: ['View sagas'] },
+    ]);
+    expect(el.querySelector('.field-hint')?.textContent).toContain(
+      'Saga types that are not listed are not available to you.',
+    );
+  });
+
+  it('does not say it when some saga permission is held for every saga type', () => {
+    const el = render({
+      permissions: ['sagas.view', 'access.manage'],
+      scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.retry', 'sagas.view'] }],
+    });
+
+    expect(el.querySelector('.field-hint')).toBeNull();
+  });
+
   it('shows a permission held for all saga types in every saga type row too', () => {
     const el = render({
       permissions: ['sagas.view', 'sagas.data'],

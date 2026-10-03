@@ -89,6 +89,18 @@ describe('Account', () => {
       expect(el().querySelector('.identity')).toBeNull();
       expect(el().textContent).toContain('no user account');
     });
+
+    it('says nothing of a missing user account while the session is ending: the page is about to leave', async () => {
+      await create({ user: ALICE });
+
+      // What the lockout after a wrong current password does: the session ends under the page.
+      auth.user.set(null);
+      auth.status.set('anonymous');
+      await settle();
+
+      expect(el().textContent).not.toContain('no user account');
+      expect(el().querySelector('form')).toBeNull();
+    });
   });
 
   describe('your access', () => {
@@ -174,6 +186,40 @@ describe('Account', () => {
       expect(input('confirmation').autocomplete).toBe('new-password');
       for (const id of ['current', 'new', 'confirmation']) expect(input(id).type).toBe('password');
       expect(el().querySelectorAll('[aria-required="true"]')).toHaveLength(3);
+    });
+
+    it('is sent as a POST, and the browser does not validate it on its own (the page does)', async () => {
+      await create();
+
+      const form = el().querySelector('form')!;
+      expect(form.getAttribute('method')).toBe('post');
+      expect(form.hasAttribute('novalidate')).toBe(true);
+    });
+
+    it('gives password managers the username the password belongs to, without showing or focusing it', async () => {
+      await create();
+
+      const hidden = el().querySelector<HTMLInputElement>('form input[autocomplete="username"]')!;
+      expect(hidden.value).toBe('alice');
+      expect(hidden.readOnly).toBe(true);
+      expect(hidden.tabIndex).toBe(-1);
+      expect(hidden.getAttribute('aria-hidden')).toBe('true');
+      expect(hidden.classList).toContain('sr-only');
+      // It is not one of the fields: nothing is sent from it and no label points at it.
+      expect(el().querySelectorAll('label.label')).toHaveLength(3);
+    });
+
+    it('asks for no minimum length before the session says what the policy is', async () => {
+      await create({ user: ALICE, passwordMinLength: null });
+
+      expect(input('new').hasAttribute('minlength')).toBe(false);
+      expect(el().querySelector('#account-new-hint')?.textContent).toContain('long password');
+      fill({ new: 'x', confirmation: 'x' });
+
+      await submit();
+
+      expect(message('new')).toBeUndefined();
+      expect(auth.changePassword).toHaveBeenCalledTimes(1);
     });
 
     it('takes the shortest password from the session, as a hint and as the minlength', async () => {
@@ -271,6 +317,51 @@ describe('Account', () => {
         'a brand new password',
       );
       expect(navigate).toHaveBeenCalledExactlyOnceWith('/sagas');
+    });
+
+    it('does not keep the passwords in the page once it has changed them', async () => {
+      await create();
+      fill();
+
+      await submit();
+
+      expect(fixture.componentInstance.currentPassword()).toBe('');
+      expect(fixture.componentInstance.newPassword()).toBe('');
+      expect(fixture.componentInstance.confirmation()).toBe('');
+      // The emptied fields are not errors: the page may stay for a moment, or for good.
+      expect(el().querySelector('.field-error')).toBeNull();
+    });
+
+    it('leaves for the saga list when the login page is the destination and cannot be reached', async () => {
+      await create();
+      auth.changePassword.mockImplementation(async () => auth.status.set('anonymous'));
+      navigate.mockImplementation((url) =>
+        url === '/login?reason=password' ? Promise.resolve(false) : Promise.resolve(true),
+      );
+      fill();
+
+      await submit();
+
+      expect(navigate.mock.calls.map(([url]) => url)).toEqual(['/login?reason=password', '/sagas']);
+    });
+
+    it('does not touch the view when it is left while the request runs, and refused afterwards', async () => {
+      await create();
+      let fail!: (err: unknown) => void;
+      auth.changePassword.mockReturnValue(new Promise<void>((_, reject) => (fail = reject)));
+      fill();
+
+      const done = fixture.componentInstance.submit();
+      await settle();
+      fixture.destroy();
+      fail(
+        httpError(
+          400,
+          problem('invalid_credentials', WRONG_PASSWORD, { currentPassword: [WRONG_PASSWORD] }),
+        ),
+      );
+
+      await expect(done).resolves.toBeUndefined();
     });
 
     it('does not trim the passwords', async () => {

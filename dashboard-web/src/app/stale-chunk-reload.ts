@@ -27,12 +27,15 @@ export function isStaleChunkError(error: unknown): boolean {
  * the new `index.html`. Reloads the page once for that, and never more than once a minute: the time of
  * the last reload is kept in `sessionStorage`, and when it cannot be read or written (a browser that
  * blocks storage) nothing is reloaded, because without the record a chunk that stays missing would
- * reload the page in a loop. Any other navigation error is left to the router.
+ * reload the page in a loop. Nor while the browser is offline: the import failed for want of a network,
+ * not because the chunk is gone, and a reload would only replace the page with the browser's error page.
+ * Any other navigation error is left to the router.
  */
 export function reloadOnceOnStaleChunk(navigationError: NavigationError): void {
   if (!isStaleChunkError(navigationError.error)) return;
   const reload = inject(PAGE_RELOAD);
   const document = inject(DOCUMENT);
+  if (document.defaultView?.navigator.onLine === false) return;
   if (!recordReload(document, Date.now())) return;
   reload();
 }

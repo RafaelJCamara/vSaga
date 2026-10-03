@@ -1,18 +1,13 @@
 <section class="card auth-card" aria-labelledby="login-title">
-  <h1 id="login-title" class="title">Sign in</h1>
+  <h1 id="login-title" class="page-title">Sign in</h1>
 
   @if (notice(); as message) {
-    <div class="banner banner--info" role="status">{{ message }}</div>
+    <div id="login-notice" class="banner banner--info" role="status">{{ message }}</div>
   }
 
   @if (unreachable()) {
     <div class="banner banner--warning" role="alert">
-      @if (signInUnavailable()) {
-        Sign-in is unavailable: the API is running, but its identity store is not ready. Ask an
-        administrator to check the identity entry of the API's /health.
-      } @else {
-        Cannot reach the dashboard API. Check that it is running.
-      }
+      {{ signInUnavailable() ? SIGN_IN_UNAVAILABLE : CANNOT_REACH }}
       This page tries again every few seconds.
     </div>
   } @else {
@@ -20,7 +15,7 @@
       <div class="banner banner--error" role="alert">{{ message }}</div>
     }
 
-    <form ngNoForm novalidate (submit)="$event.preventDefault(); submit()">
+    <form method="post" ngNoForm novalidate (submit)="$event.preventDefault(); submit()">
       <div class="field">
         <label class="label" for="login-username">Username</label>
         <input
@@ -37,7 +32,7 @@
           [(ngModel)]="username"
           (ngModelChange)="usernameError.set(null)"
           [attr.aria-invalid]="usernameError() ? 'true' : null"
-          [attr.aria-describedby]="usernameError() ? 'login-username-error' : null"
+          [attr.aria-describedby]="usernameDescribedBy()"
         />
         @if (usernameError(); as message) {
           <span id="login-username-error" class="field-error">{{ message }}</span>

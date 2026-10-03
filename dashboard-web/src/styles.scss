@@ -226,6 +226,28 @@ code, .mono {
   margin-bottom: 1rem;
 }
 
+/* The title of a page that is a card or a stack of cards: sign-in, setup, account. */
+.page-title {
+  margin: 0 0 1rem;
+  font-size: 1.3rem;
+}
+
+/* The buttons that end a form, side by side; a `.btn` in it is the size of a form's submit. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.actions .btn {
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+}
+
+.actions a.btn:hover {
+  text-decoration: none;
+}
+
 /* A row of filters and actions above a table. */
 .toolbar {
   display: flex;

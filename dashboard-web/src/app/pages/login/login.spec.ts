@@ -15,7 +15,7 @@ import {
   provideAuthMock,
 } from '../../testing/auth-mock';
 import { httpError, networkError, problem } from '../../testing/http-error';
-import { CANNOT_REACH } from '../../util/failure-text';
+import { CANNOT_REACH, SIGN_IN_UNAVAILABLE } from '../../util/failure-text';
 import { LOGIN_POLL_MS, Login, SIGN_IN_FAILED } from './login';
 
 const ANONYMOUS: AuthMockOptions = { status: 'anonymous', user: null, access: null };
@@ -95,6 +95,14 @@ describe('Login', () => {
     expect(focused()).toBe(username());
   });
 
+  it('is sent as a POST, and the browser does not validate it on its own (the page does)', async () => {
+    await create();
+
+    const form = el().querySelector('form')!;
+    expect(form.getAttribute('method')).toBe('post');
+    expect(form.hasAttribute('novalidate')).toBe(true);
+  });
+
   describe('signing in', () => {
     it('signs in with the username and password and goes to the saga list', async () => {
       await create();
@@ -104,6 +112,73 @@ describe('Login', () => {
       // The username is trimmed (a pasted trailing space is never part of one), the password is not.
       expect(auth.login).toHaveBeenCalledExactlyOnceWith('alice', 'correct horse');
       expect(navigate).toHaveBeenCalledExactlyOnceWith('/sagas');
+    });
+
+    it('does not keep the password in the page once it has signed in', async () => {
+      await create();
+
+      await signIn('alice', 'correct horse');
+
+      expect(fixture.componentInstance.password()).toBe('');
+    });
+
+    it('goes to the saga list when the return URL matches no page, and does not leave the form', async () => {
+      await create(ANONYMOUS, { returnUrl: '/gone/for/good' });
+      // What the router does for a URL it has no route for, when there is no wildcard route.
+      navigate.mockImplementation((url) =>
+        url === '/gone/for/good' ? Promise.reject(new Error('NG04002')) : Promise.resolve(true),
+      );
+
+      await signIn('alice', 'correct horse');
+
+      expect(navigate.mock.calls.map(([url]) => url)).toEqual(['/gone/for/good', '/sagas']);
+      expect(fixture.componentInstance.password()).toBe('');
+      expect(submitButton()?.disabled).toBe(false);
+    });
+
+    it('goes to the saga list when the navigation to the return URL was cancelled', async () => {
+      await create(ANONYMOUS, { returnUrl: '/account' });
+      navigate.mockImplementation((url) => Promise.resolve(url !== '/account'));
+
+      await signIn();
+
+      expect(navigate.mock.calls.map(([url]) => url)).toEqual(['/account', '/sagas']);
+    });
+
+    it('does not try the saga list twice when it is the destination that fails', async () => {
+      await create();
+      navigate.mockResolvedValue(false);
+
+      await signIn();
+
+      expect(navigate).toHaveBeenCalledExactlyOnceWith('/sagas');
+    });
+
+    it('does not override a navigation that someone else made while it was leaving', async () => {
+      await create(ANONYMOUS, { returnUrl: '/account' });
+      navigate.mockImplementation(async () => {
+        fixture.destroy();
+        return false;
+      });
+
+      await signIn();
+
+      expect(navigate).toHaveBeenCalledExactlyOnceWith('/account');
+    });
+
+    it('does not touch the view when it is left while the request runs, and refused afterwards', async () => {
+      await create();
+      let fail!: (err: unknown) => void;
+      auth.login.mockReturnValue(new Promise<void>((_, reject) => (fail = reject)));
+      type(username(), 'alice');
+      type(password(), 'pw');
+
+      const done = fixture.componentInstance.submit();
+      await settle();
+      fixture.destroy();
+      fail(httpError(401, problem('invalid_credentials', 'nope')));
+
+      await expect(done).resolves.toBeUndefined();
     });
 
     it('does not trim the password', async () => {
@@ -393,9 +468,32 @@ describe('Login', () => {
       expect(username()).not.toBeNull();
     });
 
+    it('describes the username field by the notice, so it is read though focus jumps to the field', async () => {
+      await create(ANONYMOUS, { reason: 'expired' });
+
+      expect(banner('.banner--info')?.id).toBe('login-notice');
+      expect(username()?.getAttribute('aria-describedby')).toBe('login-notice');
+
+      submitButton()!.click();
+      await settle();
+      expect(username()?.getAttribute('aria-describedby')).toBe(
+        'login-notice login-username-error',
+      );
+    });
+
+    it('describes the username field by nothing while there is neither a notice nor an error', async () => {
+      await create();
+
+      expect(username()?.hasAttribute('aria-describedby')).toBe(false);
+    });
+
     it.each([
       ['setup', 'The administrator account was created. Sign in to continue.'],
       ['password', 'Your password was changed. Sign in with the new password.'],
+      [
+        'locked',
+        'Too many wrong passwords locked your account for a while, and you have been signed out. Try again later.',
+      ],
     ])('says what happened for the reason %s', async (reason, text) => {
       await create(ANONYMOUS, { reason });
 
@@ -420,7 +518,7 @@ describe('Login', () => {
 
       const alert = banner('.banner--warning');
       expect(alert?.getAttribute('role')).toBe('alert');
-      expect(alert?.textContent).toContain('Cannot reach the dashboard API');
+      expect(alert?.textContent).toContain(CANNOT_REACH);
       expect(alert?.textContent).toContain('tries again every few seconds');
       expect(el().querySelector('form')).toBeNull();
       expect(username()).toBeNull();
@@ -429,8 +527,8 @@ describe('Login', () => {
     it('says sign-in is unavailable when the API answered 503 identity_unavailable', async () => {
       await create({ ...UNREACHABLE, signInUnavailable: true });
 
-      expect(banner('.banner--warning')?.textContent).toContain('Sign-in is unavailable');
-      expect(banner('.banner--warning')?.textContent).not.toContain('Cannot reach');
+      expect(banner('.banner--warning')?.textContent).toContain(SIGN_IN_UNAVAILABLE);
+      expect(banner('.banner--warning')?.textContent).not.toContain(CANNOT_REACH);
     });
 
     it('asks the session again every 3 seconds, and only while it cannot be reached', async () => {
@@ -460,6 +558,8 @@ describe('Login', () => {
 
       expect(banner('.banner--warning')).toBeNull();
       expect(username()).not.toBeNull();
+      // The field did not exist when the page opened: the cursor goes to it now.
+      expect(focused()).toBe(username());
       expect(navigate).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(LOGIN_POLL_MS * 3);
       expect(auth.refresh).toHaveBeenCalledTimes(1);
@@ -490,6 +590,60 @@ describe('Login', () => {
       await vi.advanceTimersByTimeAsync(LOGIN_POLL_MS);
 
       expect(navigate).toHaveBeenCalledExactlyOnceWith('/sagas/OrderSaga/abc');
+    });
+
+    it('follows one poll at a time: a slow read is not followed by a navigation per tick', async () => {
+      vi.useFakeTimers();
+      await create(UNREACHABLE, { returnUrl: '/sagas/OrderSaga/abc' });
+      let answer!: () => void;
+      auth.refresh.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            answer = () => {
+              auth.status.set('authenticated');
+              resolve('authenticated');
+            };
+          }),
+      );
+
+      await vi.advanceTimersByTimeAsync(LOGIN_POLL_MS * 3);
+      expect(auth.refresh).toHaveBeenCalledTimes(1);
+      answer();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(navigate).toHaveBeenCalledExactlyOnceWith('/sagas/OrderSaga/abc');
+    });
+
+    it('does not navigate when the page was left while a poll was reading the session', async () => {
+      vi.useFakeTimers();
+      await create(UNREACHABLE, { returnUrl: '/sagas/OrderSaga/abc' });
+      let answer!: () => void;
+      auth.refresh.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            answer = () => {
+              auth.status.set('authenticated');
+              resolve('authenticated');
+            };
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(LOGIN_POLL_MS);
+
+      fixture.destroy();
+      answer();
+      await vi.advanceTimersByTimeAsync(LOGIN_POLL_MS * 2);
+
+      expect(navigate).not.toHaveBeenCalled();
+      expect(auth.refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('polls again after a poll that found nothing new', async () => {
+      vi.useFakeTimers();
+      await create(UNREACHABLE);
+
+      await vi.advanceTimersByTimeAsync(LOGIN_POLL_MS * 3);
+
+      expect(auth.refresh).toHaveBeenCalledTimes(3);
     });
 
     it('does not ask at all while the API is reachable, and stops when the page is left', async () => {

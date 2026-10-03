@@ -1,22 +1,23 @@
 @if (closed()) {
   <section class="card auth-card" aria-labelledby="setup-title">
-    <h1 id="setup-title" class="title">First-run setup is closed</h1>
+    <h1 id="setup-title" class="page-title">First-run setup is closed</h1>
     <p>
-      Setup is offered only while no dashboard user exists and no seed keys are set. Here an
-      administrator already exists, or <code>Dashboard:Admin:Username</code> and
-      <code>Dashboard:Admin:Password</code> are set.
+      Setup is offered only while no dashboard user exists and neither
+      <code>Dashboard:Admin:Username</code> nor <code>Dashboard:Admin:Password</code> is set. Here
+      an administrator already exists, or either of those two is set.
     </p>
     @if (closedDetail(); as detail) {
       <div class="banner banner--info" role="status">{{ detail }}</div>
     }
     <p class="field-hint">
-      To create the first administrator you need the one-time setup code. The API writes it to its
-      log (a warning) each time it starts while no user exists and no seed keys are set; with the
-      demo stack, <code>docker compose logs dashboard-api</code> shows it. Restart the API to get a
-      new one.
+      To create the first administrator you need the one-time setup code. The API writes a generated
+      code to its log (a warning) each time it starts while no user exists and no seed keys are set;
+      with the demo stack, <code>docker compose logs dashboard-api</code> shows it. Restarting the
+      API generates a new one. A code you preset in <code>Dashboard:Setup:Code</code> is never
+      logged.
     </p>
-    @if (stillClosed()) {
-      <p class="field-error" role="status">Setup is still closed.</p>
+    @if (checkMessage(); as message) {
+      <p class="field-error" role="status">{{ message }}</p>
     }
     <div class="actions">
       <button type="button" class="btn" [disabled]="checking()" (click)="checkAgain()">
@@ -27,7 +28,7 @@
   </section>
 } @else {
   <section class="card auth-card" aria-labelledby="setup-title">
-    <h1 id="setup-title" class="title">Set up the dashboard</h1>
+    <h1 id="setup-title" class="page-title">Set up the dashboard</h1>
     <p class="muted intro">
       No one can sign in yet. Create the first administrator with the one-time setup code from the
       API log.
@@ -37,7 +38,7 @@
       <div class="banner banner--error" role="alert">{{ message }}</div>
     }
 
-    <form ngNoForm novalidate (submit)="$event.preventDefault(); submit()">
+    <form method="post" ngNoForm novalidate (submit)="$event.preventDefault(); submit()">
       <div class="field">
         <label class="label" for="setup-username">Username</label>
         <input
@@ -136,10 +137,10 @@
           name="code"
           class="input"
           type="text"
-          autocomplete="one-time-code"
+          autocomplete="off"
           autocapitalize="characters"
           spellcheck="false"
-          [attr.maxlength]="64"
+          [attr.maxlength]="512"
           aria-required="true"
           [(ngModel)]="code"
           (ngModelChange)="forget('code')"

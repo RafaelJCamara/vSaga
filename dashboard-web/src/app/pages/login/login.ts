@@ -16,8 +16,9 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { safeReturnUrl } from '../../guards/auth.guards';
 import { AuthService } from '../../services/auth.service';
-import { failureText } from '../../util/failure-text';
+import { CANNOT_REACH, SIGN_IN_UNAVAILABLE, failureText } from '../../util/failure-text';
 import { problemOf } from '../../util/http-error';
+import { leaveTo, trackDestroyed } from '../../util/page-lifecycle';
 
 /** How often the page asks the API again while it cannot be reached. */
 export const LOGIN_POLL_MS = 3000;
@@ -32,6 +33,10 @@ const NOTICES = new Map([
   ['expired', 'Your session expired. Sign in again to continue.'],
   ['setup', 'The administrator account was created. Sign in to continue.'],
   ['password', 'Your password was changed. Sign in with the new password.'],
+  [
+    'locked',
+    'Too many wrong passwords locked your account for a while, and you have been signed out. Try again later.',
+  ],
 ]);
 
 /** What a failed sign-in shows. A refusal that carries the API's `invalid_credentials` is the uniform
@@ -63,12 +68,12 @@ function signInFailure(err: unknown): string {
   imports: [FormsModule],
   templateUrl: './login.html',
   changeDetection: ChangeDetectionStrategy.Eager,
-  styleUrl: './login.scss',
 })
 export class Login {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly injector = inject(Injector);
+  private readonly destroyed = trackDestroyed();
   private readonly query = toSignal(inject(ActivatedRoute).queryParamMap, { requireSync: true });
 
   private readonly usernameField = viewChild<ElementRef<HTMLInputElement>>('usernameField');
@@ -87,12 +92,34 @@ export class Login {
   readonly unreachable = computed(() => this.auth.status() === 'unreachable');
   /** The API answered, but its identity store is down (see `AuthService.signInUnavailable`). */
   readonly signInUnavailable = this.auth.signInUnavailable;
+  protected readonly CANNOT_REACH = CANNOT_REACH;
+  protected readonly SIGN_IN_UNAVAILABLE = SIGN_IN_UNAVAILABLE;
+  /** What the username field is described by: the notice of why the visitor is here, which would be missed
+   *  once focus has jumped to the field, and its own error. */
+  readonly usernameDescribedBy = computed(
+    () =>
+      [this.notice() ? 'login-notice' : null, this.usernameError() ? 'login-username-error' : null]
+        .filter((id) => id !== null)
+        .join(' ') || null,
+  );
 
   /** Where a sign-in goes on to: the page the visitor wanted, if it is a page of this app. */
   private readonly returnUrl = computed(() => safeReturnUrl(this.query().get('returnUrl')));
 
+  /** True once the username field has been focused: the page does that once, whenever the field first appears. */
+  private usernameFocused = false;
+  /** True while a poll is in flight: reading the session, or on its way to where the answer sends the visitor. */
+  private leaving = false;
+
   constructor() {
-    afterNextRender(() => this.usernameField()?.nativeElement.focus());
+    // The cursor goes to the username when the field first exists: at once, or, when the page opens on the
+    // banner for an unreachable API, once the API answers and the form takes its place.
+    effect(() => {
+      const field = this.usernameField();
+      if (!field || this.usernameFocused) return;
+      this.usernameFocused = true;
+      field.nativeElement.focus();
+    });
 
     // While the API cannot be reached, ask again until it answers. The banner and the form follow the
     // status by themselves; a session that turns out to exist, or a setup that turns out to be due, is
@@ -130,18 +157,34 @@ export class Login {
     this.busy.set(false);
   }
 
+  /**
+   * One poll: reads the session and, when it says the visitor belongs elsewhere, goes there. The polls of
+   * a read that takes longer than the interval share it (the auth service has one in flight at a time), so
+   * only one is followed: not three navigations to the same place. And none after the page is left.
+   */
   private async askAgain(): Promise<void> {
-    await this.auth.refresh();
-    if (this.auth.setupRequired()) await this.goTo('/setup');
-    else if (this.auth.isAuthenticated()) await this.goTo(this.returnUrl());
+    if (this.leaving || this.destroyed()) return;
+    this.leaving = true;
+    try {
+      await this.auth.refresh();
+      if (this.destroyed()) return;
+      if (this.auth.setupRequired()) await this.goTo('/setup');
+      else if (this.auth.isAuthenticated()) await this.goTo(this.returnUrl());
+    } finally {
+      this.leaving = false;
+    }
   }
 
+  /** Away from the form: the password is not kept in the page, and a destination that cannot be reached
+   *  (a stale return URL) leaves the saga list, not the sign-in form of a signed-in user. */
   private async goTo(url: string): Promise<void> {
-    await this.router.navigateByUrl(url).catch(() => false);
+    this.password.set('');
+    await leaveTo(this.router, url, () => !this.destroyed());
   }
 
-  /** Focuses the field once the next render has put it on the page. */
+  /** Focuses the field once the next render has put it on the page, if the page is still there. */
   private focus(field: Signal<ElementRef<HTMLInputElement> | undefined>): void {
+    if (this.destroyed()) return;
     afterNextRender(() => field()?.nativeElement.focus(), { injector: this.injector });
   }
 }

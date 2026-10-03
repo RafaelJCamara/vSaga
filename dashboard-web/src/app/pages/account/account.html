@@ -1,4 +1,4 @@
-<h1 class="title">Account</h1>
+<h1 class="page-title">Account</h1>
 
 @if (mustChangePassword()) {
   <div class="banner banner--warning" role="status">
@@ -26,7 +26,24 @@
       <div class="banner banner--error" role="alert">{{ message }}</div>
     }
 
-    <form class="password-form" ngNoForm novalidate (submit)="$event.preventDefault(); submit()">
+    <form
+      class="password-form"
+      method="post"
+      ngNoForm
+      novalidate
+      (submit)="$event.preventDefault(); submit()"
+    >
+      <!-- For password managers: they save a changed password against a username, and the form has none. -->
+      <input
+        class="sr-only"
+        type="text"
+        name="username"
+        autocomplete="username"
+        tabindex="-1"
+        aria-hidden="true"
+        readonly
+        [value]="me.username"
+      />
       <div class="field">
         <label class="label" for="account-current">Current password</label>
         <input
@@ -103,7 +120,7 @@
       </div>
     </form>
   </section>
-} @else {
+} @else if (auth.isAuthenticated()) {
   <p class="muted">This session has no user account, so there is no password to change here.</p>
 }
 
