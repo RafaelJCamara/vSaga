@@ -956,11 +956,13 @@ ticket expired.
 1. Unscoped: `reader.ListAsync(filter)`.
 2. A blank `sagaType` is treated as not supplied. A supplied type in scope is one call; out of scope, an
    empty page.
-3. Otherwise the type list is the caller's scoped names when there are at most `MaxMergedTypes` (50) of
-   them, skipping `GetSagaTypesAsync`; otherwise `GetSagaTypesAsync` filtered to the scope, cached for a
-   few seconds. One type is a single call with no bound.
-4. Bounds: for the rank-served shape (the `UpdatedAt` sort with no status or kind filter), at most 50
-   types and `page × pageSize ≤ 10 000`; for every other shape, at most 10 types and
+3. Otherwise the type list is the caller's scoped names when there are at most the shape's type bound
+   of them (item 4: 50 for the rank-served shape, 10 for every other), skipping `GetSagaTypesAsync`;
+   otherwise `GetSagaTypesAsync` filtered to the scope, cached for a few seconds, so a caller granted
+   more named types than the shape can merge is refused only when more than that many have run. One type
+   is a single call with no bound.
+4. Bounds: for the rank-served shape (the `UpdatedAt` sort with no status or kind filter or a search),
+   at most 50 types and `page × pageSize ≤ 10 000`; for every other shape, at most 10 types and
    `page × pageSize ≤ 500` (one chunk, so no refill). Past a bound: 400 `{ error, maxPage }` naming the
    saga-type filter. ADR 0006 says that on Redis these other shapes read every member of every visible
    type.

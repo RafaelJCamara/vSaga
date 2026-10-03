@@ -233,8 +233,8 @@ persistence contracts. A caller scoped to several types is served by a `ScopedSa
   again before it is returned.
 - Bounds: at most 50 visible types, and `page × pageSize` at most 10,000. Beyond either, `400` with an
   error that names the `sagaType` filter and the last reachable page. On Redis, list shapes the provider
-  cannot serve from a rank (a `Status` sort, a status or kind filter) are limited to one chunk of depth
-  and a lower type bound.
+  cannot serve from a rank (a `Status` sort, a status or kind filter, or a search) are limited to one
+  chunk of depth and a lower type bound.
 - `TotalCount` is the sum of separate per-type counts, as loose under concurrent writes as offset paging
   already is.
 
@@ -363,8 +363,8 @@ cannot read is strictly better.
   who can read the file can forge a session for any user.
 - **Scoped lists cost more than unscoped ones.** At the bounds a page can take on the order of 70
   sequential `ListAsync` calls and tens of thousands of summaries on EF Core or MongoDB. On Redis, list
-  shapes that are not served from a rank (a `Status` sort, a status or kind filter) read every member of
-  every visible type on each call, and Redis is single-threaded while it does.
+  shapes that are not served from a rank (a `Status` sort, a status or kind filter, or a search) read
+  every member of every visible type on each call, and Redis is single-threaded while it does.
 - **A store read per request**, and per hub subscription. A local SQLite read is sub-millisecond; a
   short cache keyed by security stamp is the remedy if measurement ever says otherwise.
 - The API key defaults to Viewer, so scripts that retry with it receive `403` until

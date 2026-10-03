@@ -120,6 +120,11 @@ builder.Services.AddVSagaOpenTelemetry();
 builder.Services.AddSingleton(DashboardStateSnapshotOptions.Read(builder.Configuration));
 builder.Services.AddScoped<SagaResetSnapshotRecorder>();
 
+// The saga list for callers scoped to named saga types: one stream per type, merged within bounds. The type
+// names it may need are read at most every few seconds, shared across requests.
+builder.Services.AddSingleton<SagaTypeNameCache>();
+builder.Services.AddScoped<ScopedSagaLister>();
+
 builder.Services.AddSingleton<ISagaChangeNotifier, SignalRSagaChangeNotifier>();
 builder.Services.AddHostedService<SagaChangePollingService>();
 

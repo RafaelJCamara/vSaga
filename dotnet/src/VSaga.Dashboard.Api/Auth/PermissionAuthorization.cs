@@ -48,22 +48,30 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(requirement);
-        if (context.Resource is HttpContext http && http.GetCaller() is { } caller && Holds(caller.Access, requirement, SagaTypeOf(http)))
+        if (context.Resource is HttpContext http && http.GetCaller() is { } caller && Holds(caller.Access, requirement, http.Request.RouteValues))
             context.Succeed(requirement);
 
         return Task.CompletedTask;
     }
 
-    /// <summary>The route's saga type, or null when the endpoint has none (or it is blank).</summary>
+    /// <summary>The route's saga type for the 403 body, or null when the endpoint has none (or it is blank).</summary>
     public static string? SagaTypeOf(HttpContext context) =>
         context.GetRouteValue(SagaTypeRouteValue) is string sagaType && !string.IsNullOrWhiteSpace(sagaType) ? sagaType : null;
 
-    private static bool Holds(EffectiveAccess access, PermissionRequirement requirement, string? sagaType)
+    /// <summary>
+    /// An endpoint whose route has a saga type is decided for that value exactly as the request gave it, a
+    /// blank one included: only a grant naming that very value covers it, so a blank segment such as
+    /// <c>/api/sagas/%20/{id}</c> cannot fall back to "any type". Only endpoints without the route value ask
+    /// whether the permission is held for any type.
+    /// </summary>
+    private static bool Holds(EffectiveAccess access, PermissionRequirement requirement, RouteValueDictionary routeValues)
     {
         if (requirement.RequireUnscoped)
             return access.HasUnscoped(requirement.Permission);
 
-        return sagaType is null ? access.HasAny(requirement.Permission) : access.Has(requirement.Permission, sagaType);
+        return routeValues.TryGetValue(SagaTypeRouteValue, out var sagaType)
+            ? access.Has(requirement.Permission, sagaType as string ?? "")
+            : access.HasAny(requirement.Permission);
     }
 }
 

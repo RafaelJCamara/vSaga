@@ -2,6 +2,9 @@ using System.Text;
 using VSaga.Abstractions.Persistence;
 using VSaga.Abstractions.Sagas;
 using VSaga.Abstractions.Transport;
+using VSaga.Dashboard.Api.Auth;
+using VSaga.Dashboard.Identity.Model;
+using VSaga.Dashboard.Identity.Services;
 using VSaga.Persistence.Redis;
 
 namespace VSaga.Dashboard.Api.Endpoints;
@@ -20,46 +23,54 @@ public static class SagaEndpoints
     /// </summary>
     public const int MaxPageSize = 500;
 
+    /// <summary>
+    /// Maps the saga endpoints, each with the permission policy docs/design/dashboard-usability-and-access.md §8.5
+    /// gives it. A per-instance route names its saga type, so <see cref="DashboardPolicies.SagasView"/> and
+    /// <see cref="DashboardPolicies.SagasRetry"/> are checked for that type and answer 403 before the handler
+    /// reads anything; the list and the cross-instance lookups need <c>sagas.view</c> for any type and filter
+    /// what they return to the types the caller sees.
+    /// </summary>
     public static void MapSagaEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/sagas").WithTags("Sagas").RequireAuthorization();
+        var group = app.MapGroup("/api/sagas").WithTags("Sagas");
 
-        group.MapGet("", ListSagasAsync).WithName("ListSagas");
+        group.MapGet("", ListSagasAsync).WithName("ListSagas").RequireAuthorization(DashboardPolicies.SagasView);
 
         // Every per-instance route is {sagaType}/{correlationId}: a correlation id alone no longer
         // identifies a saga instance, since two saga types may track the same one. Callers holding
         // only a correlation id resolve it first via /api/correlations/{correlationId} below.
-        group.MapGet("/{sagaType}/{correlationId:guid}", async (string sagaType, Guid correlationId, ISagaSummaryReader reader, CancellationToken ct) =>
-        {
-            var summary = await reader.GetAsync(sagaType, correlationId, ct);
-            if (summary is null)
-                return Results.NotFound();
-
-            var dataJson = await reader.GetDataJsonAsync(sagaType, correlationId, ct);
-            return Results.Ok(new SagaDetail(summary, dataJson));
-        })
-        .WithName("GetSaga");
+        group.MapGet("/{sagaType}/{correlationId:guid}", GetSagaAsync)
+        .WithName("GetSaga")
+        .RequireAuthorization(DashboardPolicies.SagasView);
 
         group.MapGet("/{sagaType}/{correlationId:guid}/timeline", GetSagaTimelineAsync)
-        .WithName("GetSagaTimeline");
+        .WithName("GetSagaTimeline")
+        .RequireAuthorization(DashboardPolicies.SagasView);
 
         group.MapGet("/{sagaType}/{correlationId:guid}/map", GetSagaMapAsync)
-        .WithName("GetSagaMap");
+        .WithName("GetSagaMap")
+        .RequireAuthorization(DashboardPolicies.SagasView);
 
         // The sagas this one started via StartChildAsync. Deliberately not 404-ing on an unknown
         // parent: a saga with no children and a saga that does not exist both legitimately have an
         // empty child list, and the caller already has GET /{sagaType}/{correlationId} to tell them
         // apart. Children have their own correlation ids, so this is a different question from
-        // /api/correlations/{id}, which finds saga types sharing one id.
-        group.MapGet("/{sagaType}/{correlationId:guid}/children", async (string sagaType, Guid correlationId, ISagaSummaryReader reader, CancellationToken ct) =>
-            Results.Ok(await reader.FindChildrenAsync(sagaType, correlationId, ct)))
-        .WithName("GetSagaChildren");
+        // /api/correlations/{id}, which finds saga types sharing one id. A child of a type the caller
+        // cannot see is left out.
+        group.MapGet("/{sagaType}/{correlationId:guid}/children", async (string sagaType, Guid correlationId, HttpContext context, ISagaSummaryReader reader, CancellationToken ct) =>
+            Results.Ok(Visible(context, await reader.FindChildrenAsync(sagaType, correlationId, ct), s => s.SagaType)))
+        .WithName("GetSagaChildren")
+        .RequireAuthorization(DashboardPolicies.SagasView);
 
         group.MapGet("/{sagaType}/{correlationId:guid}/retry-plan", GetRetryPlanAsync)
-        .WithName("GetSagaRetryPlan");
+        .WithName("GetSagaRetryPlan")
+        .RequireAuthorization(DashboardPolicies.SagasView);
 
+        // sagas.retry for the route's type is a real boundary only because the redrive is targeted at that
+        // type (RedriveAsync): no other saga type acts on it.
         group.MapPost("/{sagaType}/{correlationId:guid}/retry", RetrySagaAsync)
-        .WithName("RetrySaga");
+        .WithName("RetrySaga")
+        .RequireAuthorization(DashboardPolicies.SagasRetry);
 
         MapCrossInstanceEndpoints(app);
     }
@@ -67,28 +78,53 @@ public static class SagaEndpoints
     /// <summary>
     /// The two lookups that are not scoped to one saga instance, so they sit outside the
     /// <c>/api/sagas</c> group rather than under it. Split out of <see cref="MapSagaEndpoints"/> only
-    /// for length.
+    /// for length. Both answer only with the saga types the caller sees.
     /// </summary>
     private static void MapCrossInstanceEndpoints(IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/saga-types", async (ISagaSummaryReader reader, CancellationToken ct) => Results.Ok(await reader.GetSagaTypesAsync(ct)))
+        app.MapGet("/api/saga-types", async (HttpContext context, ISagaSummaryReader reader, CancellationToken ct) =>
+                Results.Ok(Visible(context, await reader.GetSagaTypesAsync(ct), t => t.SagaType)))
             .WithTags("Sagas")
             .WithName("ListSagaTypes")
-            .RequireAuthorization();
+            .RequireAuthorization(DashboardPolicies.SagasView);
 
         // Deliberately a separate top-level path rather than /api/sagas/by-correlation/{id}, which
         // would sit in the same slot as {sagaType} and rely on literal-beats-parameter precedence to
         // disambiguate. Returns every saga instance tracking this correlation id — normally one, more
         // than one when several saga types observe the same business transaction. Note this is not the
         // sub-saga relation: a child has its own correlation id and is found via /children instead.
-        app.MapGet("/api/correlations/{correlationId:guid}", async (Guid correlationId, ISagaSummaryReader reader, CancellationToken ct) =>
-            Results.Ok(await reader.FindByCorrelationIdAsync(correlationId, ct)))
+        app.MapGet("/api/correlations/{correlationId:guid}", async (Guid correlationId, HttpContext context, ISagaSummaryReader reader, CancellationToken ct) =>
+                Results.Ok(Visible(context, await reader.FindByCorrelationIdAsync(correlationId, ct), s => s.SagaType)))
             .WithTags("Sagas")
             .WithName("FindSagasByCorrelationId")
-            .RequireAuthorization();
+            .RequireAuthorization(DashboardPolicies.SagasView);
     }
 
-    private static async Task<IResult> ListSagasAsync(ISagaSummaryReader reader, SagaStatus? status, string? sagaType, SagaKind? kind, string? search, int page = 1, int pageSize = 25, SagaSortColumn? sortBy = null, bool sortDescending = false, CancellationToken ct = default)
+    /// <summary>The caller's effective access; none when the request has no resolved caller, which the policies already refuse.</summary>
+    private static EffectiveAccess AccessOf(HttpContext context) => context.GetCaller()?.Access ?? EffectiveAccess.None;
+
+    /// <summary>Whether the caller may read <paramref name="sagaType"/>'s data: state blobs, message payloads and error messages.</summary>
+    private static bool IncludesData(HttpContext context, string sagaType) => AccessOf(context).Has(Permissions.SagasData, sagaType);
+
+    /// <summary>The items whose saga type the caller holds <c>sagas.view</c> for, in their order.</summary>
+    private static List<T> Visible<T>(HttpContext context, IEnumerable<T> items, Func<T, string> sagaTypeOf)
+    {
+        var access = AccessOf(context);
+        return [.. items.Where(item => access.Has(Permissions.SagasView, sagaTypeOf(item)))];
+    }
+
+    /// <summary>The instance's summary, and its stored state only for a caller holding <c>sagas.data</c> for its type: otherwise <c>dataJson</c> is null and never read.</summary>
+    private static async Task<IResult> GetSagaAsync(string sagaType, Guid correlationId, HttpContext context, ISagaSummaryReader reader, CancellationToken ct)
+    {
+        var summary = await reader.GetAsync(sagaType, correlationId, ct);
+        if (summary is null)
+            return Results.NotFound();
+
+        var dataJson = IncludesData(context, sagaType) ? await reader.GetDataJsonAsync(sagaType, correlationId, ct) : null;
+        return Results.Ok(new SagaDetail(summary, dataJson));
+    }
+
+    private static async Task<IResult> ListSagasAsync(HttpContext context, ScopedSagaLister lister, SagaStatus? status, string? sagaType, SagaKind? kind, string? search, int page = 1, int pageSize = 25, SagaSortColumn? sortBy = null, bool sortDescending = false, CancellationToken ct = default)
     {
         var filter = new SagaListFilter
         {
@@ -104,7 +140,13 @@ public static class SagaEndpoints
 
         try
         {
-            return Results.Ok(await reader.ListAsync(filter, ct));
+            return Results.Ok(await lister.ListAsync(filter, AccessOf(context).ScopeFor(Permissions.SagasView), ct));
+        }
+        catch (ScopedSagaListBoundExceededException ex)
+        {
+            // A list across several saga types past what one request may merge. maxPage lets the pager stop
+            // offering pages that would answer this.
+            return Results.BadRequest(new { error = ex.Message, maxPage = ex.MaxPage });
         }
         catch (RedisSearchScanLimitExceededException ex)
         {
@@ -115,7 +157,7 @@ public static class SagaEndpoints
         }
     }
 
-    private static async Task<IResult> GetSagaMapAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, IServiceTopologyStore topologyStore, CancellationToken ct)
+    private static async Task<IResult> GetSagaMapAsync(string sagaType, Guid correlationId, HttpContext context, ISagaSummaryReader reader, ISagaEventLogStore log, IServiceTopologyStore topologyStore, CancellationToken ct)
     {
         var summary = await reader.GetAsync(sagaType, correlationId, ct);
         if (summary is null)
@@ -124,17 +166,16 @@ public static class SagaEndpoints
         var timeline = await log.GetTimelineAsync(sagaType, correlationId, ct);
         var topology = await topologyStore.GetAllAsync(ct);
 
-        // Same seam as the timeline: the authentication work supplies the caller's sagas.data answer.
-        return Results.Ok(SagaTimelineRedaction.ApplyToMap(SagaMapBuilder.Build(summary, timeline, topology), includeData: true));
+        // Each map event copies its entry's error message, which is data: nulled without sagas.data.
+        return Results.Ok(SagaTimelineRedaction.ApplyToMap(SagaMapBuilder.Build(summary, timeline, topology), IncludesData(context, sagaType)));
     }
 
-    private static async Task<IResult> GetSagaTimelineAsync(string sagaType, Guid correlationId, ISagaEventLogStore log, CancellationToken ct)
+    private static async Task<IResult> GetSagaTimelineAsync(string sagaType, Guid correlationId, HttpContext context, ISagaEventLogStore log, CancellationToken ct)
     {
         var timeline = await log.GetTimelineAsync(sagaType, correlationId, ct);
 
-        // includeData is fixed until the authentication work supplies it from the caller's sagas.data
-        // permission; the seam is here now so payloads and error messages have one exit to guard.
-        return Results.Ok(SagaTimelineRedaction.Apply(timeline, includeData: true));
+        // Without sagas.data every entry keeps its type, states and ids but loses its payload and error message.
+        return Results.Ok(SagaTimelineRedaction.Apply(timeline, IncludesData(context, sagaType)));
     }
 
     /// <summary>
@@ -159,7 +200,7 @@ public static class SagaEndpoints
     /// other saga type subscribed to the message type acknowledges and ignores. Business fields inside the
     /// stored state are not rolled back.
     /// </summary>
-    private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin,
+    private static async Task<IResult> RetrySagaAsync(string sagaType, Guid correlationId, HttpContext context, ISagaSummaryReader reader, ISagaEventLogStore log, ISagaAdminStore admin,
         IMessageTransport transport, TimeProvider timeProvider, SagaResetSnapshotRecorder snapshots, ILoggerFactory loggerFactory, CancellationToken ct)
     {
         var summary = await reader.GetAsync(sagaType, correlationId, ct);
@@ -174,9 +215,11 @@ public static class SagaEndpoints
         if (plan is not { Retryable: true, Step: { } step, MessageBody: { } body })
             return Results.UnprocessableEntity(new { error = plan.Reason });
 
-        // Appended before the reset, so a 409 or 502 below leaves it in the timeline with no step after it.
+        // Appended before the reset, so a 409 or 502 below leaves it in the timeline with no step after it. The
+        // source service is who asked: dashboard:<username>, or dashboard:api-key, a name no user can take.
         await log.AppendAsync(SagaLogEntry.Create(correlationId, summary.SagaType, SagaEntryType.ManualRetryRequested,
-            fromState: summary.CurrentState, toState: step.FromState, messageType: step.MessageType, messageId: step.MessageId), ct);
+            fromState: summary.CurrentState, toState: step.FromState, messageType: step.MessageType, messageId: step.MessageId,
+            sourceService: context.GetCaller()?.AuditActor), ct);
 
         try
         {

@@ -9,8 +9,8 @@ namespace VSaga.Dashboard.Api.Endpoints;
 /// order, a customer or a declined card. Redaction nulls both together and never drops an entry, so
 /// sequence numbers, the SPA's step fold and the map's join are the same for every caller; entry types,
 /// states, message types and ids stay visible, so a redacted timeline still shows that a step failed.
-/// The caller decides <c>includeData</c>; until the authentication work supplies it from the
-/// <c>sagas.data</c> permission, every endpoint passes <see langword="true"/>.
+/// The caller decides <c>includeData</c>: the timeline and map endpoints pass whether the caller holds
+/// <c>sagas.data</c> for the saga's type.
 /// </summary>
 internal static class SagaTimelineRedaction
 {
