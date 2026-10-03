@@ -368,6 +368,24 @@ describe('SagaHubService', () => {
     expect(connection.stopCount).toBe(0);
   });
 
+  // Stopping the connection is not enough: a start loop sleeping between attempts would wake up, find
+  // nothing that tells it to give up, and keep retrying for as long as the page lives.
+  it('ngOnDestroy() ends a start loop that is sleeping between attempts', async () => {
+    vi.useFakeTimers();
+    connection.startResult = () => Promise.reject(new Error('API is down'));
+
+    const subscribing = service.subscribeToList();
+    await vi.advanceTimersByTimeAsync(2000);
+    const startsBeforeDestroy = connection.startCount;
+    expect(startsBeforeDestroy).toBeGreaterThan(1);
+
+    service.ngOnDestroy();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(connection.startCount).toBe(startsBeforeDestroy);
+    await subscribing;
+  });
+
   // The session can end while a tab is open: a sign-out elsewhere, a password change, a disabled
   // account. The server drops the hub connection, signalR reconnects on its own policy, and every
   // negotiate is refused with a 401 for good -- so the service must be able to stop, not just retry.
@@ -394,6 +412,26 @@ describe('SagaHubService', () => {
       connection.stop = () => Promise.reject(new Error('already closed'));
 
       await expect(service.stopAndReset()).resolves.toBeUndefined();
+    });
+
+    // `stop()` waits for a negotiate that is still in flight, which a hung one stretches to ~100 s, and
+    // `logout()` waits for this before it sends its POST: the connection is told to stop at once, and
+    // that is all this waits for.
+    it('resolves without waiting for a connection that is slow to stop', async () => {
+      await service.subscribeToList();
+      let stopCalls = 0;
+      connection.stop = () => {
+        stopCalls += 1;
+        return new Promise<void>(() => undefined); // never settles
+      };
+      const seen: string[] = [];
+      service.connectionState$.subscribe((s) => seen.push(s));
+
+      const stopping = service.stopAndReset();
+      expect(stopCalls).toBe(1); // told to stop synchronously
+      await expect(stopping).resolves.toBeUndefined();
+
+      expect(seen).toEqual(['connected', 'disconnected']);
     });
 
     it('blocks subscribing until resume(): no connection is started and nothing is invoked', async () => {
@@ -456,6 +494,72 @@ describe('SagaHubService', () => {
 
       expect(seen).not.toContain('connected');
       expect(connection.invocations).toEqual([]);
+    });
+
+    // A reset during the negotiation makes that start() fail ("stopped during negotiation"): the loop has
+    // to end on the spot, not report a reconnect over the reset's 'disconnected' or ask the probe about a
+    // session that is not the one it was started for.
+    it('a start that fails because the service was reset meanwhile neither reports reconnecting nor asks the probe', async () => {
+      let failStart!: (error: Error) => void;
+      connection.startResult = () => new Promise<void>((_, reject) => (failStart = reject));
+      const probe = vi.fn(() => Promise.resolve(true));
+      service.setSessionProbe(probe);
+      const seen: string[] = [];
+      service.connectionState$.subscribe((s) => seen.push(s));
+
+      const subscribing = service.subscribeToList();
+      await service.stopAndReset();
+      failStart(new Error('The connection was stopped during negotiation.'));
+      await subscribing;
+      await settle();
+
+      expect(seen).toEqual(['disconnected', 'disconnected']);
+      expect(probe).not.toHaveBeenCalled();
+      expect(connection.startCount).toBe(1);
+      expect(connection.invocations).toEqual([]);
+    });
+
+    // After resume() the service is `active` again, so a subscribe that was waiting for the start of the old
+    // connection can only tell by its generation that it belongs to a session that is gone. If it carried
+    // on, it would subscribe the new session's connection to what the old session was looking at.
+    it('a saga subscribe still waiting for the start of a replaced connection is dropped, even after resume()', async () => {
+      let finishStart!: () => void;
+      connection.startResult = () => new Promise<void>((resolve) => (finishStart = resolve));
+
+      const stale = service.subscribeToSaga('OrderSaga', 'abc-123');
+      await service.stopAndReset();
+      service.resume();
+      const fresh = (connection = new FakeHubConnection());
+      await service.subscribeToSaga('InvoiceSaga', 'def-456');
+      finishStart();
+      await stale;
+      fresh.triggerReconnected();
+      await settle();
+
+      expect(fresh.invocations).toEqual([
+        ['SubscribeToSaga', 'InvoiceSaga', 'def-456'],
+        ['SubscribeToSaga', 'InvoiceSaga', 'def-456'],
+      ]);
+    });
+
+    it('a list subscribe still waiting for the start of a replaced connection is dropped, even after resume()', async () => {
+      let finishStart!: () => void;
+      connection.startResult = () => new Promise<void>((resolve) => (finishStart = resolve));
+
+      const stale = service.subscribeToList();
+      await service.stopAndReset();
+      service.resume();
+      const fresh = (connection = new FakeHubConnection());
+      await service.subscribeToSaga('InvoiceSaga', 'def-456');
+      finishStart();
+      await stale;
+      fresh.triggerReconnected();
+      await settle();
+
+      expect(fresh.invocations).toEqual([
+        ['SubscribeToSaga', 'InvoiceSaga', 'def-456'],
+        ['SubscribeToSaga', 'InvoiceSaga', 'def-456'],
+      ]);
     });
 
     // The reset empties the subscription records, but a subscription made on the next connection can fill
@@ -619,6 +723,20 @@ describe('SagaHubService', () => {
       built.retryPolicy!.nextRetryDelayInMilliseconds({ previousRetryCount: 1 });
       await settle();
 
+      expect(connection.stopCount).toBe(0);
+    });
+
+    // Only an explicit `false` means the session is gone; an answer that says nothing (here: nothing at
+    // all) is no reason to give up on the connection for good.
+    it('does not stop the connection for a probe answer that is not an explicit false', async () => {
+      await service.subscribeToList();
+      const probe = vi.fn(() => Promise.resolve(undefined as unknown as boolean));
+      service.setSessionProbe(probe);
+
+      built.retryPolicy!.nextRetryDelayInMilliseconds({ previousRetryCount: 1 });
+      await settle();
+
+      expect(probe).toHaveBeenCalledTimes(1);
       expect(connection.stopCount).toBe(0);
     });
 

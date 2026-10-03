@@ -64,6 +64,11 @@ export class SagaHubService implements OnDestroy {
    * old connection's late events and lifecycle callbacks no-ops, forgets every subscription, and reports
    * `'disconnected'`. Never rejects, so a caller that is already handling a sign-out cannot be derailed
    * by a connection that will not stop cleanly.
+   *
+   * Returns once the connection has been told to stop, not once its socket has closed: `stop()` waits for
+   * a negotiate that is still in flight (a hung one can take ~100 s), and a caller such as `logout()` must
+   * not wait on that. Nothing is lost by not waiting, because all of the state above is already reset when
+   * this returns and the old connection can no longer touch it.
    */
   async stopAndReset(): Promise<void> {
     this.generation += 1;
@@ -74,11 +79,8 @@ export class SagaHubService implements OnDestroy {
     this.listSubscribed = false;
     this.sagaSubscriptions.clear();
     this.connectionState$.next('disconnected');
-    try {
-      await old?.stop();
-    } catch {
-      // Already stopped, or never fully started: either way there is nothing left to do.
-    }
+    // Called now, not awaited. A failure (already stopped, or never fully started) leaves nothing to do.
+    void old?.stop().catch(() => undefined);
   }
 
   /**
@@ -100,6 +102,8 @@ export class SagaHubService implements OnDestroy {
     return {
       nextRetryDelayInMilliseconds: (retryContext: signalR.RetryContext): number => {
         if (retryContext.previousRetryCount > 0) {
+          // The stop must stay behind an await (the probe's): signalR calls this policy before it arms its
+          // reconnect delay handle, so a stop() made synchronously in here would find no handle to clear.
           void this.stopWhenSessionIsGone(generation);
         }
         return nextDelayMs(retryContext.previousRetryCount);
@@ -108,7 +112,8 @@ export class SagaHubService implements OnDestroy {
   }
 
   /** Asks the probe, and stops for good when the session is gone. A probe that itself fails is no proof
-   *  of anything, so it counts as "still there". Never rejects. */
+   *  of anything, so it counts as "still there"; so does any answer but an explicit `false`. Never
+   *  rejects. */
   private async stopWhenSessionIsGone(generation: number): Promise<boolean> {
     let alive = true;
     try {
@@ -116,7 +121,7 @@ export class SagaHubService implements OnDestroy {
     } catch {
       // Cannot tell: keep trying.
     }
-    if (alive || generation !== this.generation) return false;
+    if (alive !== false || generation !== this.generation) return false;
     await this.stopAndReset();
     return true;
   }
@@ -286,6 +291,7 @@ export class SagaHubService implements OnDestroy {
   }
 
   ngOnDestroy(): void {
-    void this.connection?.stop();
+    // Not just `connection.stop()`: a start loop sleeping between attempts would otherwise keep retrying.
+    void this.stopAndReset();
   }
 }
