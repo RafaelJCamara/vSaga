@@ -1,0 +1,52 @@
+<div class="page-header">
+  <h2 class="section-title">Roles</h2>
+  <span class="muted">{{ rows().length }} total</span>
+  <a class="btn new-role" routerLink="/admin/roles/new">New role</a>
+</div>
+
+<table class="data-table">
+  <caption class="sr-only">
+    Roles, the permissions each one holds and how many grants use it
+  </caption>
+  <thead>
+    <tr>
+      <th scope="col">Name</th>
+      <th scope="col">Type</th>
+      <th scope="col">Permissions</th>
+      <th scope="col">In use</th>
+    </tr>
+  </thead>
+  <tbody>
+    @for (row of rows(); track row.role.id) {
+      <tr>
+        <td>
+          <a [routerLink]="['/admin/roles', row.role.id]">{{ row.role.name }}</a>
+          @if (row.role.description; as description) {
+            <div class="muted description">{{ description }}</div>
+          }
+        </td>
+        <td>
+          @if (row.role.isBuiltIn) {
+            <span class="chip chip--muted">Built-in</span>
+          } @else {
+            Custom
+          }
+        </td>
+        <td>
+          <div class="chips">
+            @for (permission of row.permissions; track permission.key) {
+              <span class="chip" [attr.title]="permission.key">{{ permission.label }}</span>
+            }
+          </div>
+        </td>
+        <td class="usage">
+          @if (row.usedBy > 0) {
+            Used by {{ row.usedBy }} {{ row.usedBy === 1 ? 'grant' : 'grants' }}
+          } @else {
+            <span class="muted">Not used</span>
+          }
+        </td>
+      </tr>
+    }
+  </tbody>
+</table>

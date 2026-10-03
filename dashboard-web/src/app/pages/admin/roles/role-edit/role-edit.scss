@@ -1,0 +1,57 @@
+:host {
+  display: block;
+  max-width: 40rem;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* A textarea does not inherit the page's font; the other controls already look like it. */
+textarea.input {
+  font-family: inherit;
+  resize: vertical;
+}
+
+.permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+  margin: 0 0 1rem;
+  padding: 0;
+  border: 0;
+}
+
+.permissions legend {
+  padding: 0;
+  margin-bottom: 0.4rem;
+}
+
+.permission {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.permission input {
+  margin-top: 0.25rem;
+}
+
+.permission-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.permission-name {
+  font-weight: 600;
+}
+
+/* The delete sits apart from Save, under a rule. */
+.danger {
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}

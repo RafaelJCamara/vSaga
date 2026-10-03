@@ -1,0 +1,32 @@
+:host {
+  display: block;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.new-role {
+  margin-left: auto;
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+}
+
+.new-role:hover {
+  text-decoration: none;
+}
+
+.usage {
+  white-space: nowrap;
+}
+
+.description {
+  font-size: 0.78rem;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}

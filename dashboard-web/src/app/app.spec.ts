@@ -161,12 +161,7 @@ describe('App', () => {
       );
     };
 
-    // The navigation names a page that has no route yet: C48 adds /admin. When it does, this list must
-    // become empty (the assertion below fails until it is), so that no link of the bar ever lands on the
-    // catch-all by accident.
-    const NOT_ROUTED_YET = ['/admin'];
-
-    it('every link leads to a route of the app, but the ones named here', () => {
+    it('every link leads to a route of the app', () => {
       const root = create().nativeElement as HTMLElement; // an administrator: every link is shown
       const hrefs = Array.from(root.querySelectorAll('header a[href]')).map(
         (a) => a.getAttribute('href') ?? '',
@@ -174,7 +169,7 @@ describe('App', () => {
 
       expect(hrefs).toContain('/sagas');
       expect(hrefs).toContain('/admin');
-      expect(hrefs.filter((href) => !hasRoute(href))).toEqual(NOT_ROUTED_YET);
+      expect(hrefs.filter((href) => !hasRoute(href))).toEqual([]);
     });
   });
 });

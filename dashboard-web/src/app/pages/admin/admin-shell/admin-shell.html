@@ -1,0 +1,25 @@
+<h1 class="page-title">Administration</h1>
+
+<nav class="subtabs" aria-label="Administration">
+  <a routerLink="/admin/users" routerLinkActive="active" ariaCurrentWhenActive="page">Users</a>
+  <a routerLink="/admin/teams" routerLinkActive="active" ariaCurrentWhenActive="page">Teams</a>
+  <a routerLink="/admin/roles" routerLinkActive="active" ariaCurrentWhenActive="page">Roles</a>
+</nav>
+
+@if (store.loaded()) {
+  @if (store.loadError(); as message) {
+    <!-- A change was made, but the lists could not be read back: what the pages show may be out of date. -->
+    <div class="banner banner--warning" role="alert">
+      {{ message }}
+      <button type="button" class="btn" (click)="retry()">Try again</button>
+    </div>
+  }
+  <router-outlet />
+} @else if (store.loadError(); as message) {
+  <div class="banner banner--error" role="alert">
+    {{ message }}
+    <button type="button" class="btn" (click)="retry()">Try again</button>
+  </div>
+} @else {
+  <p class="empty" role="status">Loading…</p>
+}

@@ -1,6 +1,6 @@
 import { Routes } from '@angular/router';
 import { SagaList } from './pages/saga-list/saga-list';
-import { anonymousGuard, authGuard, setupGuard } from './guards/auth.guards';
+import { adminGuard, anonymousGuard, authGuard, setupGuard } from './guards/auth.guards';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'sagas' },
@@ -32,6 +32,14 @@ export const routes: Routes = [
     path: 'sagas/:sagaType/:id',
     canActivate: [authGuard],
     loadComponent: () => import('./pages/saga-detail/saga-detail').then((m) => m.SagaDetail),
+  },
+  // The administration area. `canMatch`, not `canActivate`: the route does not match for anyone who may not
+  // manage access, so its chunk is never requested for them (the guard sends them to the saga list, or to
+  // sign in first). The area is the biggest lazy tree of the app and has no business in the initial bundle.
+  {
+    path: 'admin',
+    canMatch: [adminGuard],
+    loadChildren: () => import('./pages/admin/admin.routes').then((m) => m.ADMIN_ROUTES),
   },
   // A URL that matches nothing (a stale bookmark, a return URL to a page that is gone) goes to the saga list.
   { path: '**', redirectTo: 'sagas' },

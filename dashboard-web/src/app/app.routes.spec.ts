@@ -1,12 +1,16 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { Router, Routes, provideRouter } from '@angular/router';
+import { LoadChildrenCallback, Router, Routes, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { routes } from './app.routes';
-import { authGuard } from './guards/auth.guards';
+import { adminGuard, authGuard } from './guards/auth.guards';
 import { Account } from './pages/account/account';
 import { Login } from './pages/login/login';
+import { AdminShell } from './pages/admin/admin-shell/admin-shell';
 import { Setup } from './pages/setup/setup';
+import { answerLoad } from './testing/admin';
 import { AuthMock, AuthMockOptions, createAuthMock, provideAuthMock } from './testing/auth-mock';
 import { Mock, vi } from 'vitest';
 
@@ -56,8 +60,20 @@ describe('routes', () => {
       setup: vi.fn<() => void>(),
       account: vi.fn<() => void>(),
       detail: vi.fn<() => void>(),
+      admin: vi.fn<() => void>(),
     };
     return routes.map((route) => {
+      if (route.path === 'admin' && route.loadChildren) {
+        // The real administration routes (shell, store and pages), with the load counted.
+        const lazy = route.loadChildren as LoadChildrenCallback;
+        return {
+          ...route,
+          loadChildren: () => {
+            loads['admin']();
+            return lazy();
+          },
+        };
+      }
       if (route.path?.startsWith('sagas')) {
         // The stub stands in for both saga pages, with the route's own guards. The detail page is lazy and
         // the list is not: its loader is kept and counted (it hands back the stub instead of the real page,
@@ -88,7 +104,13 @@ describe('routes', () => {
   async function visit(url: string, options: AuthMockOptions = {}): Promise<void> {
     auth = createAuthMock(options);
     TestBed.configureTestingModule({
-      providers: [provideRouter(table()), provideAuthMock(auth)],
+      providers: [
+        provideRouter(table()),
+        provideAuthMock(auth),
+        // The administration shell reads its data as it opens; the specs here are about getting to it.
+        provideHttpClient(),
+        provideHttpClientTesting(),
+      ],
     });
     harness = await RouterTestingHarness.create();
     await harness.navigateByUrl(url);
@@ -318,6 +340,117 @@ describe('routes', () => {
 
       expect(url()).toBe('/sagas/OrderSaga/abc');
       expect(loads['detail']).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('/admin', () => {
+    const MANAGER: AuthMockOptions = {};
+    const VIEWER: AuthMockOptions = {
+      access: { permissions: ['sagas.view', 'sagas.data'], scoped: [] },
+    };
+    const scopedManage: AuthMockOptions = {
+      access: {
+        permissions: ['sagas.view'],
+        scoped: [{ sagaType: 'OrderSaga', permissions: ['access.manage'] }],
+      },
+    };
+
+    it('is lazy, and matches only for someone who may manage access', () => {
+      const route = routes.find((r) => r.path === 'admin');
+
+      expect(route?.component).toBeUndefined();
+      expect(route?.loadChildren).toBeInstanceOf(Function);
+      expect(route?.canMatch).toEqual([adminGuard]);
+      // Not canActivate: that would fetch the chunk first and judge afterwards.
+      expect(route?.canActivate).toBeUndefined();
+    });
+
+    it('opens on the users for a manager, and downloads the area once', async () => {
+      await visit('/admin', MANAGER);
+
+      expect(url()).toBe('/admin/users');
+      expect(harness.routeDebugElement?.componentInstance).toBeInstanceOf(AdminShell);
+      expect(shown().textContent).toContain('Administration');
+      expect(loads['admin']).toHaveBeenCalledTimes(1);
+    });
+
+    // Every page the area has is a real route: none of them lands on the catch-all, which would send the manager to /sagas.
+    it.each([
+      '/admin/users',
+      '/admin/users/new',
+      '/admin/users/3d9f6c1e-8a2b-4c7d-9e0f-1a2b3c4d5e6f',
+      '/admin/teams',
+      '/admin/teams/new',
+      '/admin/teams/b8e1d2c3-4f5a-4b6c-8d7e-9f0a1b2c3d4e',
+      '/admin/roles',
+      '/admin/roles/new',
+      '/admin/roles/e4a7c1b9-2d3f-4e5a-8b6c-7d8e9f0a1b2c',
+    ])('has a page at %s', async (address) => {
+      await visit(address, MANAGER);
+
+      expect(url()).toBe(address);
+      expect(harness.routeDebugElement?.componentInstance).toBeInstanceOf(AdminShell);
+    });
+
+    it('shows the page once the area has read its data', async () => {
+      await visit('/admin/roles', MANAGER);
+      answerLoad(TestBed.inject(HttpTestingController));
+      await new Promise((resolve) => setTimeout(resolve));
+      harness.detectChanges();
+      await harness.fixture.whenStable();
+
+      expect(shown().querySelector('h2')?.textContent).toBe('Roles');
+    });
+
+    it('sends someone who may not manage access to the saga list, and never downloads the area', async () => {
+      await visit('/admin', VIEWER);
+
+      expect(url()).toBe('/sagas');
+      expect(harness.routeDebugElement?.componentInstance).toBeInstanceOf(SagaStub);
+      expect(loads['admin']).not.toHaveBeenCalled();
+    });
+
+    it('does the same for every address below it', async () => {
+      await visit('/admin/roles/new', VIEWER);
+
+      expect(url()).toBe('/sagas');
+      expect(loads['admin']).not.toHaveBeenCalled();
+    });
+
+    it('does not count access.manage held for one saga type: the API never scopes it', async () => {
+      await visit('/admin/users', scopedManage);
+
+      expect(url()).toBe('/sagas');
+      expect(loads['admin']).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['/admin', '/login?returnUrl=%2Fadmin'],
+      ['/admin/roles/abc', '/login?returnUrl=%2Fadmin%2Froles%2Fabc'],
+    ])('sends an anonymous visitor from %s to sign in, and back', async (from, settled) => {
+      await visit(from, ANONYMOUS);
+
+      expect(url()).toBe(settled);
+      expect(loads['admin']).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['no user yet, setup open', '/setup'],
+      ['no user yet, setup closed by a seed', '/setup'],
+      ['API unreachable', '/login?returnUrl=%2Fadmin'],
+      ['signed in, must change the password', '/account'],
+    ])('sends a visitor who is %s to %s', async (session, settled) => {
+      await visit('/admin', SESSIONS[session]);
+
+      expect(url()).toBe(settled);
+      expect(loads['admin']).not.toHaveBeenCalled();
+    });
+
+    it('is where a manager returns to after signing in', async () => {
+      await visit('/login?returnUrl=%2Fadmin%2Froles', MANAGER);
+
+      expect(url()).toBe('/admin/roles');
+      expect(loads['admin']).toHaveBeenCalledTimes(1);
     });
   });
 

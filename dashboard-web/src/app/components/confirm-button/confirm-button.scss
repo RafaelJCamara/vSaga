@@ -1,0 +1,21 @@
+:host {
+  display: inline-flex;
+}
+
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.confirm-prompt {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* aria-disabled, not disabled: see the component comment. */
+button[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}

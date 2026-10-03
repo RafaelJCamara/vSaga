@@ -1,0 +1,139 @@
+@if (notFound()) {
+  <div class="banner banner--warning" role="alert">
+    This no longer exists. It may have been deleted by someone else.
+    <a routerLink="/admin/roles">Back to the roles</a>
+  </div>
+} @else {
+  <div class="page-header">
+    <h2 class="section-title">{{ heading() }}</h2>
+    @if (readOnly()) {
+      <span class="chip chip--muted">Built-in</span>
+    }
+  </div>
+
+  @if (readOnly()) {
+    <div class="banner banner--info">
+      A built-in role cannot be changed or deleted. Duplicate it to start a custom role with the
+      same permissions.
+    </div>
+  }
+
+  @if (failure(); as problem) {
+    <div class="banner banner--error" role="alert">{{ problem.message }}</div>
+  }
+  @if (saved()) {
+    <div class="banner banner--success" role="status">Saved.</div>
+  }
+
+  <form class="card" method="post" ngNoForm novalidate (submit)="$event.preventDefault(); save()">
+    <div class="field">
+      <label class="label" for="role-name">Name</label>
+      <input
+        #nameField
+        id="role-name"
+        name="name"
+        class="input"
+        type="text"
+        autocomplete="off"
+        [attr.maxlength]="nameLimit"
+        [readOnly]="readOnly()"
+        aria-required="true"
+        [(ngModel)]="name"
+        (ngModelChange)="edited('name')"
+        [attr.aria-invalid]="errors().name ? 'true' : null"
+        [attr.aria-describedby]="errors().name ? 'role-name-error' : null"
+      />
+      @if (errors().name; as message) {
+        <span id="role-name-error" class="field-error">{{ message }}</span>
+      }
+    </div>
+
+    <div class="field">
+      <label class="label" for="role-description">Description</label>
+      <textarea
+        #descriptionField
+        id="role-description"
+        name="description"
+        class="input"
+        rows="3"
+        [attr.maxlength]="descriptionLimit"
+        [readOnly]="readOnly()"
+        [(ngModel)]="description"
+        (ngModelChange)="edited('description')"
+        [attr.aria-invalid]="errors().description ? 'true' : null"
+        [attr.aria-describedby]="errors().description ? 'role-description-error' : null"
+      ></textarea>
+      @if (errors().description; as message) {
+        <span id="role-description-error" class="field-error">{{ message }}</span>
+      }
+    </div>
+
+    <fieldset
+      class="permissions"
+      [attr.aria-describedby]="errors().permissions ? 'role-permissions-error' : null"
+    >
+      <legend class="label">Permissions</legend>
+      @for (permission of store.permissions(); track permission.key) {
+        <label class="permission">
+          <input
+            #firstPermission
+            type="checkbox"
+            [value]="permission.key"
+            [checked]="has(permission.key)"
+            [disabled]="readOnly()"
+            (change)="toggle(permission.key, $event)"
+          />
+          <span class="permission-text">
+            <span class="permission-name"
+              >{{ permission.name }} <code>{{ permission.key }}</code></span
+            >
+            <span class="field-hint">{{ permission.description }}</span>
+          </span>
+        </label>
+      }
+      @if (errors().permissions; as message) {
+        <span id="role-permissions-error" class="field-error">{{ message }}</span>
+      }
+    </fieldset>
+
+    <div class="actions">
+      @if (readOnly()) {
+        @if (role(); as builtIn) {
+          <a class="btn" routerLink="/admin/roles/new" [queryParams]="{ from: builtIn.id }"
+            >Duplicate as custom role</a
+          >
+        }
+        <a class="btn btn--quiet" routerLink="/admin/roles">Back to the roles</a>
+      } @else {
+        <button type="submit" class="btn" [disabled]="busy()">
+          {{ busy() ? 'Saving…' : creating() ? 'Create role' : 'Save' }}
+        </button>
+        <!-- Not "Cancel" on a role that exists: the delete's own question has a Cancel, and two would be ambiguous. -->
+        <a class="btn btn--quiet" routerLink="/admin/roles">{{
+          creating() ? 'Cancel' : 'Back to the roles'
+        }}</a>
+      }
+    </div>
+
+    @if (role(); as custom) {
+      @if (!custom.isBuiltIn) {
+        <div class="actions danger">
+          <app-confirm-button
+            label="Delete role"
+            [prompt]="'Delete the role ' + custom.name + '? This cannot be undone.'"
+            confirmLabel="Yes, delete"
+            [busy]="deleting()"
+            [disabled]="usedBy() > 0"
+            (confirmed)="remove()"
+          />
+          @if (usedBy() > 0) {
+            <span class="field-hint">
+              Used by {{ usedBy() }} {{ usedBy() === 1 ? 'grant' : 'grants' }}: remove them from the
+              users and teams that hold it to delete the role.
+            </span>
+          }
+        </div>
+      }
+    }
+  </form>
+}

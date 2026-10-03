@@ -1,0 +1,34 @@
+@if (confirming() && !disabled()) {
+  <!-- Both buttons are described by the question, so a screen reader reads it with the focused one. -->
+  <span class="confirm" (keydown.escape)="escape($event)">
+    <span [id]="promptId" class="confirm-prompt">{{ prompt() }}</span>
+    <button
+      type="button"
+      class="btn btn--danger"
+      [attr.aria-describedby]="promptId"
+      (click)="confirm()"
+    >
+      {{ confirmLabel() }}
+    </button>
+    <button
+      #cancelButton
+      type="button"
+      class="btn btn--quiet"
+      [attr.aria-describedby]="promptId"
+      (click)="cancel()"
+    >
+      Cancel
+    </button>
+  </span>
+} @else {
+  <button
+    #askButton
+    type="button"
+    class="btn btn--danger"
+    [disabled]="disabled()"
+    [attr.aria-disabled]="busy() ? 'true' : null"
+    (click)="ask()"
+  >
+    {{ label() }}
+  </button>
+}
