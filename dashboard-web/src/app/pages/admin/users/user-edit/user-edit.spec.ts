@@ -13,6 +13,7 @@ import {
   ADMINISTRATOR_ID,
   AdminData,
   OPERATOR_ID,
+  PERMISSIONS,
   VIEWER_ID,
   adminData,
   adminUser,
@@ -22,7 +23,7 @@ import {
   role,
   team,
 } from '../../../../testing/admin';
-import { createAuthMock, provideAuthMock } from '../../../../testing/auth-mock';
+import { AuthMockOptions, createAuthMock, provideAuthMock } from '../../../../testing/auth-mock';
 import createUserRequest from '../../../../testing/contracts/admin/create-user.request.json';
 import resetPasswordRequest from '../../../../testing/contracts/admin/reset-password.request.json';
 import updateUserRequest from '../../../../testing/contracts/admin/update-user.request.json';
@@ -67,13 +68,17 @@ describe('UserEdit', () => {
   let harness: RouterTestingHarness;
   let store: AdminStore;
 
-  async function open(url: string, data: AdminData = adminData()): Promise<void> {
+  async function open(
+    url: string,
+    data: AdminData = adminData(),
+    auth: AuthMockOptions = {},
+  ): Promise<void> {
     TestBed.configureTestingModule({
       providers: [
         provideRouter(ROUTES),
         provideHttpClient(),
         provideHttpClientTesting(),
-        provideAuthMock(createAuthMock({ user: SIGNED_IN })),
+        provideAuthMock(createAuthMock({ user: SIGNED_IN, ...auth })),
         AdminStore,
       ],
     });
@@ -87,11 +92,16 @@ describe('UserEdit', () => {
     await settle();
   }
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    vi.useRealTimers();
+    http.verify();
+  });
 
   /** Lets promises finish and the model write its values to the inputs, then renders. */
   async function settle(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve));
+    // Under fake timers a real timeout would never come: let the promises run and the faked ones due now.
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+    else await new Promise((resolve) => setTimeout(resolve));
     harness.detectChanges();
     await harness.fixture.whenStable();
   }
@@ -563,8 +573,28 @@ describe('UserEdit', () => {
         expect(url()).toBe('/admin/users/new');
       });
 
-      it('moves focus to the grant when a grant is the only thing wrong', async () => {
+      // The focus is put somewhere else before the answer: that it ends up on the grant is the page's doing, not
+      // where it happened to be (the grants editor focuses the new grant's role when a grant is added).
+      it("moves focus to the grant's saga types when a grant's saga types are the only thing wrong", async () => {
         await filled();
+        displayName().focus();
+        expect(focused()).toBe(displayName());
+
+        refuse(
+          write('POST', '/api/admin/users'),
+          400,
+          problem('validation', 'x', {
+            'grants[0].sagaTypes': ['Name 1 to 100 saga types, or grant all saga types.'],
+          }),
+        );
+        await settle();
+
+        expect(focused()).toBe(grantBox(0, 'OrderSaga'));
+      });
+
+      it("moves focus to the grant's role when its role is the only thing wrong", async () => {
+        await filled();
+        displayName().focus();
 
         refuse(
           write('POST', '/api/admin/users'),
@@ -574,6 +604,97 @@ describe('UserEdit', () => {
         await settle();
 
         expect(focused()).toBe(grantSelect(1));
+      });
+
+      it('moves focus to the grant with a problem on the update page too', async () => {
+        await open('/admin/users/u-alice');
+        await save();
+        displayName().focus();
+
+        refuse(
+          write('PUT', '/api/admin/users/u-alice'),
+          400,
+          problem('validation', 'x', {
+            'grants[0].sagaTypes': ['Name 1 to 100 saga types, or grant all saga types.'],
+          }),
+        );
+        await settle();
+
+        expect(focused()).toBe(grantBox(0, 'OrderSaga'));
+      });
+
+      // m1: the draft changed while the request ran.
+      it('says what the API said in the banner, not on the fields or the grants, when the draft was changed while the request ran, and leaves the focus', async () => {
+        await filled();
+        type(displayName(), 'Changed meanwhile');
+        displayName().focus();
+
+        refuse(
+          write('POST', '/api/admin/users'),
+          400,
+          problem('validation', 'x', {
+            username: [
+              'Use 3 to 64 letters, digits or . _ @ + -, starting with a letter or a digit.',
+            ],
+            'grants[0].sagaTypes': ['Name 1 to 100 saga types, or grant all saga types.'],
+          }),
+        );
+        await settle();
+
+        expect(message('user-username-error')).toBeUndefined();
+        expect(username().getAttribute('aria-invalid')).toBeNull();
+        expect(editor().textContent).not.toContain('Name 1 to 100 saga types');
+        const alert = banner('.banner--error[role="alert"]')!;
+        expect(alert.textContent).toContain('Use 3 to 64 letters');
+        expect(alert.textContent).toContain('Name 1 to 100 saga types, or grant all saga types.');
+        expect(alert.textContent).toContain('About what was sent, which you have changed since.');
+        expect(focused()).toBe(displayName());
+        expect(displayName().value).toBe('Changed meanwhile');
+        expect(submit().disabled).toBe(false);
+      });
+
+      it('does not put a message about a grant on another grant when a grant was removed while the request ran', async () => {
+        await filled();
+        await removeGrant(0);
+
+        refuse(
+          write('POST', '/api/admin/users'),
+          400,
+          problem('validation', 'x', { 'grants[1].roleId': ['No role has this id.'] }),
+        );
+        await settle();
+
+        // One grant is left, at position 0; the message was about the one that was at 1.
+        expect(editor().querySelector('.field-error')).toBeNull();
+        expect(banner('.banner--error[role="alert"]')?.textContent).toContain(
+          'No role has this id.',
+        );
+      });
+
+      it('does not mark the username as taken when it was changed while the request ran', async () => {
+        await filled();
+        type(username(), 'alice2');
+
+        refuse(
+          write('POST', '/api/admin/users'),
+          409,
+          problem('username_taken', "A user named 'alice' already exists."),
+        );
+        await reloaded();
+
+        expect(el().querySelector('#user-failure')?.textContent).toContain('already exists');
+        expect(username().getAttribute('aria-invalid')).toBeNull();
+        expect(username().getAttribute('aria-describedby')).not.toContain('user-failure');
+      });
+
+      it('shows a refusal that is not about fields as it was, whether or not the draft changed', async () => {
+        await filled();
+        type(displayName(), 'Changed meanwhile');
+
+        refuse(write('POST', '/api/admin/users'), 500, problem('x', 'server words'));
+        await settle();
+
+        expect(banner('.banner--error[role="alert"]')?.textContent).toContain('HTTP 500');
       });
 
       it('sends the draft again when Save is used again with nothing changed since a 400: the old messages do not block it', async () => {
@@ -1215,6 +1336,17 @@ describe('UserEdit', () => {
   });
 
   describe('the effective access', () => {
+    it('labels the permissions with the names the API gives them, not the built-in ones', async () => {
+      const permissions = PERMISSIONS.map((p) =>
+        p.key === 'sagas.view' ? { ...p, name: 'See sagas' } : p,
+      );
+      await open('/admin/users/u-alice', adminData({ permissions }));
+
+      const labels = preview().flatMap((row) => row.permissions.map(([label]) => label));
+      expect(labels).toContain('See sagas');
+      expect(labels).not.toContain('View sagas');
+    });
+
     it('is what the grants and the teams confer, with what grants each permission', async () => {
       await open('/admin/users/u-alice');
 
@@ -1639,6 +1771,9 @@ describe('UserEdit', () => {
       await open('/admin/users/u-alice');
       await filledReset();
       await setIt();
+      // Not on the new password, where opening the form put it: the page must bring it back.
+      newConfirmation().focus();
+      expect(focused()).toBe(newConfirmation());
 
       refuse(
         write('POST', '/api/admin/users/u-alice/password'),
@@ -1735,7 +1870,7 @@ describe('UserEdit', () => {
     const locked = () =>
       adminData({ users: [ADMIN, adminUser({ ...ALICE, lockedUntilUtc: FUTURE })] });
 
-    it('is not offered for an account that is not locked, nor for a lockout that has ended', async () => {
+    it('is not offered for an account that is not locked', async () => {
       await open('/admin/users/u-alice');
       expect(button('Unlock')).toBeUndefined();
       expect(el().querySelector('.locked')).toBeNull();
@@ -1781,15 +1916,20 @@ describe('UserEdit', () => {
       expect(focused()).toBe(button('Reset password'));
     });
 
-    it('is disabled while it runs, and sends once', async () => {
+    it('is disabled while it runs, and refuses a second unlock however it is asked for', async () => {
       await open('/admin/users/u-alice', locked());
 
       button('Unlock')!.click();
       await settle();
 
       expect((button('Unlock') as HTMLButtonElement).disabled).toBe(true);
-      (button('Unlock') as HTMLButtonElement).click();
+      // The attribute is one guard; the page's own is that nothing starts while something runs.
+      const page = harness.routeDebugElement!.componentInstance as unknown as {
+        unlock(): Promise<void>;
+      };
+      await page.unlock();
       await settle();
+      // One request, not two: expectOne fails when there are more.
       write('POST', '/api/admin/users/u-alice/unlock').flush(ALICE);
       await reloaded();
     });
@@ -2008,14 +2148,222 @@ describe('UserEdit', () => {
     });
   });
 
+  describe('the exact-name box of the grants', () => {
+    it('is added when the user saves, not dropped: a name typed and not added with Add type', async () => {
+      await open('/admin/users/u-alice');
+      const box = grantGroups()[0].querySelector<HTMLInputElement>('input.input')!;
+      type(box, '  ShippingSaga ');
+
+      await save();
+
+      const put = write('PUT', '/api/admin/users/u-alice');
+      expect((put.request.body as { grants: unknown }).grants).toEqual([
+        grant(OPERATOR_ID, ['OrderSaga', 'ShippingSaga']),
+      ]);
+      put.flush(ALICE);
+      await reloaded();
+    });
+
+    it('stops Save when a typed name cannot be added, with its message and the focus on its box, and sends nothing', async () => {
+      await open('/admin/users/u-alice');
+      const box = grantGroups()[0].querySelector<HTMLInputElement>('input.input')!;
+      type(box, 'x'.repeat(201));
+
+      await save();
+
+      http.expectNone((r) => r.method !== 'GET');
+      expect(grantGroups()[0].querySelector('.custom .field-error')?.textContent).toBe(
+        'Use at most 200 characters.',
+      );
+      expect(focused()).toBe(box);
+    });
+
+    it('does not stop Save when nothing is typed in it', async () => {
+      await open('/admin/users/u-alice');
+
+      await save();
+
+      write('PUT', '/api/admin/users/u-alice').flush(ALICE);
+      await reloaded();
+    });
+  });
+
+  describe('the access of the signed-in user', () => {
+    const warning = 'You are removing your own access to administration.';
+
+    it('is warned about when the draft no longer gives the user access.manage for every saga type, in a region that was there before', async () => {
+      await open('/admin/users/u-admin');
+      const region = el().querySelector('app-grants-editor')!.nextElementSibling!;
+      expect(region.getAttribute('role')).toBe('status');
+      expect(region.textContent?.trim()).toBe('');
+
+      await removeGrant(0);
+
+      expect(region.textContent).toContain(warning);
+      expect(region.textContent).toContain('you will no longer be able to manage access');
+    });
+
+    it('stops saying it when the grant comes back', async () => {
+      await open('/admin/users/u-admin');
+      await removeGrant(0);
+      expect(el().textContent).toContain('You are removing your own access');
+
+      await addGrant(ADMINISTRATOR_ID, 'all');
+
+      expect(el().textContent).not.toContain('You are removing your own access');
+    });
+
+    it('is warned about too when the administrator grant is only for some saga types, since access.manage counts for every one', async () => {
+      await open('/admin/users/u-admin');
+      await removeGrant(0);
+      await addGrant(ADMINISTRATOR_ID, ['OrderSaga']);
+
+      expect(el().textContent).toContain(warning);
+    });
+
+    it('is not warned about when a team of the user keeps it', async () => {
+      await open(
+        '/admin/users/u-admin',
+        adminData({
+          teams: [
+            team({
+              id: 't-admins',
+              name: 'Admins',
+              memberIds: ['u-admin'],
+              grants: [grant(ADMINISTRATOR_ID)],
+            }),
+          ],
+        }),
+      );
+
+      await removeGrant(0);
+
+      expect(el().textContent).not.toContain(warning);
+    });
+
+    it('is not warned about when the user did not hold it to begin with', async () => {
+      await open(
+        '/admin/users/u-admin',
+        adminData({ users: [adminUser({ ...ADMIN, grants: [grant(VIEWER_ID, ['OrderSaga'])] })] }),
+      );
+
+      await removeGrant(0);
+
+      expect(el().textContent).not.toContain(warning);
+    });
+
+    it('is not warned about when the draft of another user lacks it, or on the record of another user', async () => {
+      await open('/admin/users/u-alice');
+      await removeGrant(0);
+      expect(el().textContent).not.toContain(warning);
+
+      await harness.navigateByUrl('/admin/users/u-admin');
+      await settle();
+      expect(el().textContent).not.toContain(warning);
+    });
+
+    it('is not warned about on another user who holds it', async () => {
+      await open(
+        '/admin/users/u-alice',
+        adminData({ users: [ADMIN, adminUser({ ...ALICE, grants: [grant(ADMINISTRATOR_ID)] })] }),
+      );
+
+      await removeGrant(0);
+
+      expect(el().textContent).not.toContain(warning);
+    });
+  });
+
+  describe('what the page says of a username and a password', () => {
+    it('names the reserved username in the hint of the username', async () => {
+      await open('/admin/users/new');
+
+      expect(message('user-username-hint')).toContain('api-key');
+      expect(message('user-username-hint')).toContain('reserved');
+    });
+
+    it('asks for a long password, with no minimum, when the session does not give one, and leaves the length to the API', async () => {
+      await open('/admin/users/new', adminData(), { passwordMinLength: null });
+
+      expect(message('user-password-hint')).toContain('Choose a long password.');
+      expect(password().getAttribute('minlength')).toBeNull();
+      type(username(), 'alice');
+      type(displayName(), 'Alice');
+      type(password(), 'abc');
+      type(confirmation(), 'abc');
+
+      await save();
+
+      // Nothing is refused here for its length: the API says if it is too short.
+      expect(message('user-password-error')).toBeUndefined();
+      const post = write('POST', '/api/admin/users');
+      expect(post.request.body).toMatchObject({ password: 'abc' });
+      post.flush(adminUser());
+      await reloaded();
+    });
+
+    it('does the same for the new password of a reset', async () => {
+      await open('/admin/users/u-alice', adminData(), { passwordMinLength: null });
+      button('Reset password')!.click();
+      await settle();
+
+      expect(message('user-new-password-hint')).toContain('Choose a long password.');
+      expect(field('user-new-password').getAttribute('minlength')).toBeNull();
+    });
+  });
+
+  describe('the clock', () => {
+    const lockedFor = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+    const chips = () =>
+      Array.from(el().querySelectorAll('.page-header .chip')).map((c) => c.textContent);
+
+    async function openLocked(minutes: number): Promise<void> {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+      await open(
+        '/admin/users/u-alice',
+        adminData({ users: [ADMIN, adminUser({ ...ALICE, lockedUntilUtc: lockedFor(minutes) })] }),
+      );
+    }
+
+    it('drops Locked and Unlock when the lockout ends while the page is open, and not before', async () => {
+      await openLocked(15);
+      expect(chips()).toEqual(['Locked']);
+      expect(button('Unlock')).toBeDefined();
+
+      await vi.advanceTimersByTimeAsync(14 * 60_000);
+      await settle();
+      expect(chips()).toEqual(['Locked']);
+      expect(button('Unlock')).toBeDefined();
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      await settle();
+      expect(chips()).toEqual([]);
+      expect(button('Unlock')).toBeUndefined();
+      expect(el().querySelector('.locked')).toBeNull();
+    });
+
+    it('leaves no timer behind when the page is left', async () => {
+      await openLocked(15);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      const timersWithTheClock = vi.getTimerCount();
+
+      await harness.navigateByUrl('/admin/users');
+      await settle();
+
+      expect(vi.getTimerCount()).toBeLessThan(timersWithTheClock);
+    });
+  });
+
   it('has its status regions in place before there is anything to say', async () => {
     await open('/admin/users/u-alice');
 
+    // Saved, the grants editor's, the warning about one's own access, and the account section's.
     const regions = Array.from(el().querySelectorAll('[role="status"]'));
-    expect(regions.length).toBeGreaterThanOrEqual(2);
+    expect(regions).toHaveLength(4);
     expect(
       regions.filter((r) => r.children.length === 0 && r.textContent?.trim() === ''),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
   });
 
   it('uses a role that is a custom one in the select and in the preview', async () => {

@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { RouterLink } from '@angular/router';
 import { LocalTime } from '../../../../components/local-time/local-time';
 import { AuthService } from '../../../../services/auth.service';
+import { lockoutClock } from '../../../../util/lockout-clock';
 import { summarizeGrants } from '../../access-explain';
 import { AdminUser } from '../../admin.model';
 import { AdminStore } from '../../admin.store';
@@ -36,13 +37,15 @@ export class UsersList {
   private readonly auth = inject(AuthService);
 
   protected readonly filter = signal('');
+  /** The time, moved when a lockout of a listed user ends: a "Locked" chip does not outlive the lockout. */
+  private readonly now = lockoutClock(() => this.store.users());
 
   /** Every user, by username ignoring case, with what the table shows of each. */
   private readonly all = computed<UserRow[]>(() => {
     const teams = this.store.teams();
     const roles = this.store.roles();
     const me = this.auth.user()?.id;
-    const now = Date.now();
+    const now = this.now();
     return [...this.store.users()]
       .sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()))
       .map((user) => ({

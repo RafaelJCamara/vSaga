@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { provideRouter } from '@angular/router';
 import {
   AdminData,
@@ -352,6 +353,76 @@ describe('UsersList', () => {
 
     expect(names()).toEqual(['admin', 'alice', 'Bob', 'carol', 'dave']);
     expect(count()).toBe('5 total');
+  });
+
+  describe('the clock', () => {
+    afterEach(() => vi.useRealTimers());
+
+    const chipsOf = (name: string) =>
+      Array.from(
+        rows()
+          .find((row) => cells(row)[0].textContent?.includes(name))!
+          .querySelectorAll('.chip'),
+      ).map((chip) => chip.textContent?.trim());
+
+    it('drops Locked when the lockout of a listed user ends while the page is open, and not before', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+      await render({
+        users: [
+          ME,
+          adminUser({ id: 'u-x', username: 'xavier', lockedUntilUtc: '2026-10-03T12:15:00+00:00' }),
+        ],
+      });
+      expect(chipsOf('xavier')).toEqual(['Locked']);
+
+      await vi.advanceTimersByTimeAsync(14 * 60_000);
+      fixture.detectChanges();
+      expect(chipsOf('xavier')).toEqual(['Locked']);
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      fixture.detectChanges();
+      expect(chipsOf('xavier')).toEqual([]);
+    });
+
+    it('follows each lockout of several, one after the other', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+      await render({
+        users: [
+          adminUser({ id: 'u-a', username: 'aaa', lockedUntilUtc: '2026-10-03T12:05:00+00:00' }),
+          adminUser({ id: 'u-b', username: 'bbb', lockedUntilUtc: '2026-10-03T12:10:00+00:00' }),
+        ],
+      });
+
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      fixture.detectChanges();
+      expect(chipsOf('aaa')).toEqual([]);
+      expect(chipsOf('bbb')).toEqual(['Locked']);
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      fixture.detectChanges();
+      expect(chipsOf('bbb')).toEqual([]);
+    });
+
+    it('sets no timer when no listed user is locked, and clears it when the page is destroyed', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      await render({ users: [ME] });
+      expect(vi.getTimerCount()).toBe(0);
+      fixture.destroy();
+
+      vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+      TestBed.resetTestingModule();
+      await render({
+        users: [
+          adminUser({ id: 'u-a', username: 'aaa', lockedUntilUtc: '2026-10-03T12:05:00+00:00' }),
+        ],
+      });
+      expect(vi.getTimerCount()).toBe(1);
+      fixture.destroy();
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it('says there are no users yet, with no filter in the way', async () => {

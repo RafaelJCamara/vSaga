@@ -264,6 +264,8 @@ export class TeamEdit {
 
   protected async save(): Promise<void> {
     if (this.working()) return;
+    // A name typed in an exact-name box and not added is added now, not dropped; one that cannot be added stops Save.
+    if (this.editor()?.commitTyped() === false) return;
     this.submitted.set(true);
     this.serverErrors.set({});
     this.failure.set(null);

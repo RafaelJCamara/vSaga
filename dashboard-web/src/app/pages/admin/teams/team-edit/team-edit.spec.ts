@@ -13,6 +13,7 @@ import {
   ADMINISTRATOR_ID,
   AdminData,
   OPERATOR_ID,
+  PERMISSIONS,
   VIEWER_ID,
   adminData,
   adminUser,
@@ -1224,6 +1225,38 @@ describe('TeamEdit', () => {
       expect(focused()).toBe(grantBox(0, 'OrderSaga'));
     });
 
+    it('adds a name typed in an exact-name box and not added when Save is used, and stops Save when it cannot be added', async () => {
+      await open('/admin/teams/t-pay');
+      const box = grantGroups()[0].querySelector<HTMLInputElement>('input.input')!;
+      type(box, 'x'.repeat(201));
+
+      await save();
+
+      http.expectNone((r) => r.method !== 'GET');
+      expect(grantGroups()[0].querySelector('.custom .field-error')?.textContent).toBe(
+        'Use at most 200 characters.',
+      );
+      expect(focused()).toBe(box);
+
+      type(box, '  ShippingSaga ');
+      await save();
+
+      const put = write('PUT', '/api/admin/teams/t-pay');
+      expect((put.request.body as { grants: unknown }).grants).toEqual([
+        grant(OPERATOR_ID, ['OrderSaga', 'ShippingSaga']),
+      ]);
+      put.flush(PAYMENTS);
+      await reloaded(teams(PAYMENTS, OPERATIONS));
+    });
+
+    it('says a grant ignores access.manage when it is scoped, by the catalogue the page passes', async () => {
+      await open('/admin/teams/t-ops');
+
+      await addGrant(ADMINISTRATOR_ID, ['OrderSaga']);
+
+      expect(editor().textContent).toContain('access.manage is ignored in a scoped grant');
+    });
+
     it('is sent once a saga type is picked', async () => {
       await open('/admin/teams/t-ops');
       await addGrant(OPERATOR_ID, []);
@@ -1666,6 +1699,17 @@ describe('TeamEdit', () => {
   });
 
   describe('the effective access', () => {
+    it('labels the permissions with the names the API gives them, not the built-in ones', async () => {
+      const permissions = PERMISSIONS.map((p) =>
+        p.key === 'sagas.view' ? { ...p, name: 'See sagas' } : p,
+      );
+      await open('/admin/teams/t-pay', { ...teams(PAYMENTS, OPERATIONS), permissions });
+
+      const labels = preview().flatMap((row) => row.permissions.map(([label]) => label));
+      expect(labels).toContain('See sagas');
+      expect(labels).not.toContain('View sagas');
+    });
+
     it('is what the grants confer to each member, with the team as the origin of each permission', async () => {
       await open('/admin/teams/t-pay');
 
@@ -1951,11 +1995,11 @@ describe('TeamEdit', () => {
     await open('/admin/teams/t-pay');
 
     const regions = Array.from(el().querySelectorAll('[role="status"]'));
-    // The saved notice has no text yet; the member count already has.
-    expect(regions).toHaveLength(2);
+    // The saved notice and the grants editor's have no text yet; the member count already has.
+    expect(regions).toHaveLength(3);
     expect(
       regions.filter((r) => r.children.length === 0 && r.textContent?.trim() === ''),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(count()).toBe('4 users');
   });
 });

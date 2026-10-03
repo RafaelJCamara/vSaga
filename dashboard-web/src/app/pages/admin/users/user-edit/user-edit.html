@@ -56,8 +56,8 @@
           "
         />
         <span id="user-username-hint" class="field-hint">
-          3 to 64 letters, digits or . _ &#64; + -, starting with a letter or a digit. It cannot be
-          changed later.
+          3 to 64 letters, digits or . _ &#64; + -, starting with a letter or a digit. The name
+          api-key is reserved, in any case. It cannot be changed later.
         </span>
         @if (errors().username; as message) {
           <span id="user-username-error" class="field-error">{{ message }}</span>
@@ -204,8 +204,18 @@
         (grantsChange)="setGrants($event)"
         [roles]="roles()"
         [sagaTypes]="sagaTypes()"
+        [catalogue]="catalogue()"
         [errors]="grantErrors()"
       />
+      <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
+      <div role="status">
+        @if (dropsOwnAdministration()) {
+          <div class="banner banner--warning">
+            You are removing your own access to administration. If you save, you will no longer be
+            able to manage access.
+          </div>
+        }
+      </div>
     </div>
 
     <section class="preview" aria-labelledby="user-access-title">
@@ -220,7 +230,12 @@
         </p>
       }
       @if (isEnabled()) {
-        <app-access-summary [access]="access()" perspective="user" [origins]="origins()" />
+        <app-access-summary
+          [access]="access()"
+          perspective="user"
+          [origins]="origins()"
+          [catalogue]="catalogue()"
+        />
       } @else {
         <p class="muted">A disabled user holds no access.</p>
       }

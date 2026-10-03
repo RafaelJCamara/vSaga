@@ -11,16 +11,13 @@ import {
   signal,
 } from '@angular/core';
 import { belongsToField } from '../../../util/admin-failure';
-import { Grant, Role } from '../admin.model';
+import { Grant, PermissionInfo, Role } from '../admin.model';
 
 /** The request member the grants are written under, on a user and on a team: the key of the API's errors. */
 const FIELD = 'grants';
 
 /** The API's limit on a saga type name (`AccessValidation.MaxSagaTypeLength`), so the form says so before sending. */
 const MAX_SAGA_TYPE = 200;
-
-/** Held for every saga type only: the API never scopes it. */
-const ACCESS_MANAGE = 'access.manage';
 
 /**
  * The positions of the grants that name saga types but none: such a grant confers nothing, the API refuses it
@@ -67,8 +64,9 @@ interface GrantRow {
   types: string[];
   /** Names saga types, none yet: Save is blocked. */
   noTypes: boolean;
-  /** The role holds `access.manage` and the grant is scoped, so that permission does nothing here. */
-  manageIgnored: boolean;
+  /** The permissions the role holds that the catalogue does not scope (`access.manage`), when the grant is scoped:
+   *  they count only for every saga type, so they do nothing here. */
+  ignored: string[];
   /** What the API said about this grant (a message about the grant as a whole, its role, its saga types). */
   whole: readonly string[];
   roleErrors: readonly string[];
@@ -85,11 +83,19 @@ let nextId = 0;
  * instances) and per type the grant already names, and takes a type typed in by its exact name, trimmed
  * (Enter adds it, and does not submit the page's form), because a type that has not run yet is not listed.
  *
- * It says, beside the grant, what Save cannot send: "Pick at least one saga type", and that `access.manage` is
- * ignored in a scoped grant. The page blocks its Save with `scopedWithoutTypes` and builds the request with
- * `grantsBody`. `errors` are the API's messages by request path (`grants`, `grants[0]`, `grants[0].roleId`,
- * `grants[1].sagaTypes`): each goes with its grant, and `focusProblem()` moves focus to the first. The page
- * clears them when `grants` changes, since they were about the value that was sent.
+ * It says, beside the grant, what Save cannot send: "Pick at least one saga type", and that a permission the
+ * `catalogue` does not scope (`access.manage`) is ignored in a scoped grant. The page blocks its Save with
+ * `scopedWithoutTypes` and builds the request with `grantsBody`. `errors` are the API's messages by request path
+ * (`grants`, `grants[0]`, `grants[0].roleId`, `grants[1].sagaTypes`): each goes with its grant, and
+ * `focusProblem()` moves focus to the first (call it once the errors have been rendered into the editor: it reads
+ * what the editor shows now). The page clears them when `grants` changes, since they were about the value that
+ * was sent.
+ *
+ * Switching a grant to every saga type keeps the saga types it had ticked, so that switching back is no loss;
+ * `grantsBody` leaves them out of the request. A name typed in the exact-name box and not yet added is added by
+ * `commitTyped()`, which a page calls when it saves, so that Save never drops it silently. What the editor
+ * did that moves or removes something the user was looking at ("Removed the Operator grant.") is said in an
+ * always-present live region.
  */
 @Component({
   selector: 'app-grants-editor',
@@ -107,12 +113,25 @@ export class GrantsEditor {
   readonly roles = input.required<readonly Role[]>();
   /** The saga types the API knows. */
   readonly sagaTypes = input<readonly string[]>([]);
+  /** The permission catalogue (`GET /api/admin/permissions`): which permissions a scoped grant cannot confer. */
+  readonly catalogue = input<readonly PermissionInfo[]>([]);
   /** The API's messages about the grants, by request path; paths that are not below `grants` are ignored. */
   readonly errors = input<Readonly<Record<string, readonly string[]>>>({});
 
   protected readonly uid = `grants-${nextId++}`;
   /** What is wrong with the name typed in one grant's exact-name input (one at a time), by the grant's key. */
   private readonly typedProblem = signal<{ key: number; message: string } | null>(null);
+  /** What the editor says in its live region: a removal, a name that was already there. */
+  protected readonly announcement = signal('');
+  /** The keys of the permissions the catalogue does not scope. */
+  private readonly unscoped = computed(
+    () =>
+      new Set(
+        this.catalogue()
+          .filter((p) => !p.scopable)
+          .map((p) => p.key),
+      ),
+  );
   /** The grants' keys. A grant the editor changes hands its key to the new object; one that comes from outside
    *  (the page seeding another user, say) gets a new one, so what was typed beside the old one is gone. */
   private readonly keys = new WeakMap<Grant, number>();
@@ -123,6 +142,7 @@ export class GrantsEditor {
     const roles = this.roles();
     const known = this.sagaTypes();
     const errors = this.errors();
+    const unscoped = this.unscoped();
     const used = new Set(grants.map((g) => g.roleId));
     const messages = (path: string) => errors[path] ?? [];
     return grants.map((grant, index) => {
@@ -136,7 +156,9 @@ export class GrantsEditor {
         roleKnown: role !== undefined,
         types: [...known, ...grant.sagaTypes.filter((name) => !known.includes(name))],
         noTypes: !grant.allSagaTypes && grant.sagaTypes.length === 0,
-        manageIgnored: !grant.allSagaTypes && (role?.permissions.includes(ACCESS_MANAGE) ?? false),
+        ignored: grant.allSagaTypes
+          ? []
+          : (role?.permissions.filter((key) => unscoped.has(key)) ?? []),
         whole: messages(own),
         roleErrors: messages(`${own}.roleId`),
         typeErrors: messages(`${own}.sagaTypes`),
@@ -160,9 +182,14 @@ export class GrantsEditor {
     return this.roles().filter((r) => !used.has(r.id));
   });
 
-  /** Moves focus to the first grant with something wrong (a message of the API, or no saga type picked). */
+  /**
+   * Moves focus to the first grant with something wrong (a message of the API, or no saga type picked); false when
+   * there is none. It focuses at once, from what the editor shows now: a page that has just set the errors calls it
+   * after the next render (`afterNextRender`), when they have reached the editor.
+   */
   focusProblem(): boolean {
-    const index = this.rows().findIndex(
+    const rows = this.rows();
+    const index = rows.findIndex(
       (row) =>
         row.roleErrors.length > 0 ||
         row.typeErrors.length > 0 ||
@@ -170,17 +197,24 @@ export class GrantsEditor {
         row.noTypes,
     );
     if (index < 0) return false;
-    afterNextRender(
-      () => {
-        const row = this.rows()[index];
-        // The role's own message goes to the role; the rest to where the saga types are chosen.
-        const target = row?.roleErrors.length
-          ? this.id('role', index)
-          : this.firstTypeControl(index);
-        this.host.querySelector<HTMLElement>(`#${target}`)?.focus();
-      },
-      { injector: this.injector },
+    // The role's own message goes to the role; the rest to where the saga types are chosen.
+    this.focusId(
+      rows[index].roleErrors.length ? this.id('role', index) : this.firstTypeControl(index),
     );
+    return true;
+  }
+
+  /**
+   * Adds the names typed in the exact-name boxes that were not added with "Add type": a page calls it when it
+   * saves, since a name left in a box would otherwise be dropped without a word. False when a name cannot be
+   * added (its message is shown beside the box and the box has the focus): the page does not save then.
+   */
+  commitTyped(): boolean {
+    for (let index = 0; index < this.grants().length; index++) {
+      const input = this.host.querySelector<HTMLInputElement>(`#${this.id('custom', index)}`);
+      if (input === null || input.value.trim() === '') continue;
+      if (!this.addTyped(index, input)) return false;
+    }
     return true;
   }
 
@@ -193,21 +227,27 @@ export class GrantsEditor {
   }
 
   protected add(): void {
-    // Least privilege both ways: the role that holds the fewest permissions (the first of them in the select's
-    // order when several do), not the first role, which is the administrator's; and no saga type until it is
-    // told which, so that Save waits for the choice.
-    const role = [...this.available()].sort(
-      (a, b) => a.permissions.length - b.permissions.length,
-    )[0];
+    // Least privilege both ways: a role that holds nothing the catalogue keeps for every saga type (access.manage)
+    // before one that does, then the one with the fewest permissions (the first of them in the select's order when
+    // several do), not the first role, which is the administrator's; and no saga type until it is told which, so
+    // that Save waits for the choice.
+    const unscoped = this.unscoped();
+    const rank = (role: Role) =>
+      (role.permissions.some((key) => unscoped.has(key)) ? 1000 : 0) + role.permissions.length;
+    const role = [...this.available()].sort((a, b) => rank(a) - rank(b))[0];
     if (role === undefined) return;
+    this.announcement.set('');
     const index = this.grants().length;
     this.grants.set([...this.grants(), { roleId: role.id, allSagaTypes: false, sagaTypes: [] }]);
     afterNextRender(() => this.focusId(this.id('role', index)), { injector: this.injector });
   }
 
   protected remove(index: number): void {
+    const name = this.rows()[index].roleName;
     this.grants.set(this.grants().filter((_, i) => i !== index));
     this.typedProblem.set(null);
+    // The grant the user was looking at is gone, and the focus moves: say so.
+    this.announcement.set(`Removed the ${name} grant.`);
     afterNextRender(() => this.focusId(`${this.uid}-add`), { injector: this.injector });
   }
 
@@ -217,13 +257,18 @@ export class GrantsEditor {
   }
 
   protected setAll(index: number, allSagaTypes: boolean): void {
-    // A grant for every saga type names none: the API refuses one that does.
-    this.change(index, { allSagaTypes, sagaTypes: [] });
+    // The saga types stay in the draft: an accidental click on "All saga types" loses no choice. `grantsBody`
+    // leaves them out of the request (the API refuses a grant for every saga type that names some).
+    this.change(index, { allSagaTypes });
   }
 
   protected toggle(index: number, name: string, event: Event): void {
     const on = (event.target as HTMLInputElement).checked;
     const held = this.grants()[index].sagaTypes;
+    // A type the API does not know is listed only while the grant names it: unticking it removes its checkbox,
+    // and the focus it held goes to the next one (or the one before, or the exact-name box).
+    const types = this.rows()[index].types;
+    const vanishes = !on && !this.sagaTypes().includes(name);
     this.change(index, {
       sagaTypes: on
         ? held.includes(name)
@@ -231,6 +276,15 @@ export class GrantsEditor {
           : [...held, name]
         : held.filter((n) => n !== name),
     });
+    if (!vanishes) return;
+    const position = types.indexOf(name);
+    const left = types.length - 1;
+    this.announcement.set(`Removed ${name} from the list.`);
+    const target =
+      left === 0
+        ? this.id('custom', index)
+        : this.typeId(index, position < left ? position : left - 1);
+    afterNextRender(() => this.focusId(target), { injector: this.injector });
   }
 
   /** What is typed beside a grant changed: what was said about the name before no longer applies. */
@@ -239,19 +293,22 @@ export class GrantsEditor {
   }
 
   /** Adds the saga type typed in `input`, trimmed. A blank or unusable name is said so, beside the input, and kept. */
-  protected addTyped(index: number, input: HTMLInputElement): void {
+  protected addTyped(index: number, input: HTMLInputElement): boolean {
     const name = input.value.trim();
     const problem = problemWith(name);
     const key = this.keyOf(this.grants()[index]);
     if (problem !== null) {
       this.typedProblem.set({ key, message: problem });
-      return;
+      input.focus();
+      return false;
     }
     const held = this.grants()[index].sagaTypes;
-    if (!held.includes(name)) this.change(index, { sagaTypes: [...held, name] });
+    if (held.includes(name)) this.announcement.set(`${name} is already in the list.`);
+    else this.change(index, { sagaTypes: [...held, name] });
     this.typedProblem.set(null);
     input.value = '';
     input.focus();
+    return true;
   }
 
   protected typedMessage(key: number): string | null {
@@ -260,6 +317,7 @@ export class GrantsEditor {
   }
 
   private change(index: number, changes: Partial<Grant>): void {
+    this.announcement.set('');
     this.grants.set(
       this.grants().map((grant, i) => {
         if (i !== index) return grant;

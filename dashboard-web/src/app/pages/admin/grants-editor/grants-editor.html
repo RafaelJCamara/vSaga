@@ -131,9 +131,11 @@
     } @else if (row.typeErrors.length > 0) {
       <span class="field-error">{{ row.typeErrors.join(' ') }}</span>
     }
-    @if (row.manageIgnored) {
+    @if (row.ignored.length > 0) {
       <span class="field-hint">
-        access.manage is ignored in a scoped grant: it counts only for all saga types.
+        {{ row.ignored.join(', ') }} {{ row.ignored.length === 1 ? 'is' : 'are' }} ignored in a
+        scoped grant: {{ row.ignored.length === 1 ? 'it counts' : 'they count' }} only for all saga
+        types.
       </span>
     }
   </div>
@@ -153,3 +155,6 @@
     <span class="field-hint">Every role is already granted.</span>
   }
 </div>
+
+<!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
+<div role="status" class="field-hint">{{ announcement() }}</div>

@@ -121,6 +121,20 @@ export function explainAccess(input: ExplainInput): AccessRow[] {
 }
 
 /**
+ * Whether `rows` hold, for every saga type, a permission the catalogue does not scope (`access.manage`): what
+ * lets a user into the administration. Pure.
+ */
+export function holdsUnscopedPermission(
+  rows: readonly AccessRow[],
+  permissions: readonly PermissionInfo[],
+): boolean {
+  const unscoped = new Set(permissions.filter((p) => !p.scopable).map((p) => p.key));
+  return (
+    rows.find((row) => row.sagaType === null)?.permissions.some((p) => unscoped.has(p.key)) ?? false
+  );
+}
+
+/**
  * The rows as the session endpoint shapes access, which `AccessSummary` takes: what is held for every saga type,
  * then per saga type what is held for it beyond that (`SessionAccess` in `AccessDtos.cs`). The component adds
  * the first to each type's row again, so it shows the rows `explainAccess` returned.

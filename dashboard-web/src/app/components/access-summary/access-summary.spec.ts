@@ -294,4 +294,122 @@ describe('AccessSummary', () => {
       );
     });
   });
+
+  describe("given the permission catalogue (the administration pages pass the API's)", () => {
+    const CATALOGUE = [
+      { key: 'sagas.view', name: 'See sagas', scopable: true },
+      { key: 'sagas.data', name: 'See their data', scopable: true },
+      { key: 'sagas.retry', name: 'Run again', scopable: true },
+      { key: 'access.manage', name: 'Administer', scopable: false },
+    ];
+
+    function withCatalogue(
+      access: SessionAccess | null,
+      catalogue: typeof CATALOGUE | null = CATALOGUE,
+    ): HTMLElement {
+      const fixture = TestBed.createComponent(AccessSummary);
+      fixture.componentRef.setInput('access', access);
+      fixture.componentRef.setInput('catalogue', catalogue);
+      fixture.detectChanges();
+      return fixture.nativeElement;
+    }
+
+    it("labels the permissions with the catalogue's names", () => {
+      const el = withCatalogue({ permissions: ['sagas.view', 'sagas.retry'], scoped: [] });
+
+      expect(rows(el)[0].permissions).toEqual(['See sagas', 'Run again']);
+      // The key is still on hover.
+      expect(el.querySelector('.chip')?.getAttribute('title')).toBe('sagas.view');
+    });
+
+    it("lists the permissions in the catalogue's order, not the built-in one", () => {
+      const reversed = [...CATALOGUE].reverse();
+
+      const el = withCatalogue(
+        { permissions: ['sagas.view', 'sagas.data', 'sagas.retry'], scoped: [] },
+        reversed,
+      );
+
+      expect(rows(el)[0].permissions).toEqual(['Run again', 'See their data', 'See sagas']);
+    });
+
+    it("keeps out of a saga type's row what the catalogue does not scope, whatever it is called", () => {
+      const el = withCatalogue({
+        permissions: ['sagas.view', 'access.manage'],
+        scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.retry'] }],
+      });
+
+      expect(rows(el)).toEqual([
+        { scope: 'All saga types', permissions: ['See sagas', 'Administer'] },
+        { scope: 'OrderSaga', permissions: ['See sagas', 'Run again'] },
+      ]);
+    });
+
+    it('follows the catalogue when it scopes something else: retry is then no permission on a saga type', () => {
+      const retryUnscoped = CATALOGUE.map((p) =>
+        p.key === 'sagas.retry' ? { ...p, scopable: false } : p,
+      );
+
+      const el = withCatalogue(
+        {
+          permissions: ['sagas.view', 'sagas.retry'],
+          scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.data'] }],
+        },
+        retryUnscoped,
+      );
+
+      expect(rows(el)[1]).toEqual({
+        scope: 'OrderSaga',
+        permissions: ['See sagas', 'See their data'],
+      });
+    });
+
+    it('keeps access.manage in a saga type row when the catalogue says it can be scoped', () => {
+      const scopesEverything = CATALOGUE.map((p) => ({ ...p, scopable: true }));
+
+      const el = withCatalogue(
+        {
+          permissions: ['access.manage'],
+          scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }],
+        },
+        scopesEverything,
+      );
+
+      expect(rows(el)[1].permissions).toEqual(['See sagas', 'Administer']);
+      // And holding it for every saga type is then access to a saga: the types not listed are not hidden.
+      expect(el.querySelector('.field-hint')).toBeNull();
+    });
+
+    it("says the saga types not listed are not available by the catalogue's flags: only what it does not scope is held for every type", () => {
+      const el = withCatalogue({
+        permissions: ['access.manage'],
+        scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }],
+      });
+
+      expect(el.querySelector('.field-hint')?.textContent).toContain('not listed');
+
+      const scopesEverything = CATALOGUE.map((p) => ({ ...p, scopable: true }));
+      expect(
+        withCatalogue(
+          {
+            permissions: ['access.manage'],
+            scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }],
+          },
+          scopesEverything,
+        ).querySelector('.field-hint'),
+      ).toBeNull();
+    });
+
+    it('shows a key the catalogue does not list as it is, after the ones it does', () => {
+      const el = withCatalogue({ permissions: ['sagas.purge', 'sagas.view'], scoped: [] });
+
+      expect(rows(el)[0].permissions).toEqual(['See sagas', 'sagas.purge']);
+    });
+
+    it('is the built-in four, as before, without a catalogue', () => {
+      const el = withCatalogue({ permissions: ['access.manage', 'sagas.view'], scoped: [] }, null);
+
+      expect(rows(el)[0].permissions).toEqual(['View sagas', 'Manage access']);
+    });
+  });
 });

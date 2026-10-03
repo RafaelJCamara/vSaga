@@ -137,6 +137,7 @@
         (grantsChange)="setGrants($event)"
         [roles]="roles()"
         [sagaTypes]="sagaTypes()"
+        [catalogue]="store.permissions()"
         [errors]="grantErrors()"
       />
     </div>
@@ -147,7 +148,12 @@
         With the grants above, saved or not. Members hold this on top of their own grants and those
         of their other teams.
       </p>
-      <app-access-summary [access]="access()" perspective="team" [origins]="origins()" />
+      <app-access-summary
+        [access]="access()"
+        perspective="team"
+        [origins]="origins()"
+        [catalogue]="store.permissions()"
+      />
     </section>
 
     @if (!creating()) {

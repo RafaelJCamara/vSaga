@@ -62,6 +62,8 @@ fieldset {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  /* The live region under it: what was removed or already there. */
+  margin-bottom: 0.4rem;
 }
 
 .none {

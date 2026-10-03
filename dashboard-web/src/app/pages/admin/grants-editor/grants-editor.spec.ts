@@ -4,11 +4,12 @@ import {
   ADMINISTRATOR_ID,
   BUILT_IN_ROLES,
   OPERATOR_ID,
+  PERMISSIONS,
   VIEWER_ID,
   grant,
   role,
 } from '../../../testing/admin';
-import { Grant, Role } from '../admin.model';
+import { Grant, PermissionInfo, Role } from '../admin.model';
 import { GrantsEditor, grantsBody, scopedWithoutTypes } from './grants-editor';
 
 const SUPPORT = role();
@@ -23,6 +24,7 @@ const SUPPORT = role();
         [(grants)]="grants"
         [roles]="roles()"
         [sagaTypes]="sagaTypes()"
+        [catalogue]="catalogue()"
         [errors]="errors()"
       />
     </form>
@@ -34,6 +36,7 @@ class Host {
   readonly roles = signal<Role[]>([...BUILT_IN_ROLES, SUPPORT]);
   readonly sagaTypes = signal<string[]>(['OrderSaga', 'PaymentSaga']);
   readonly errors = signal<Record<string, string[]>>({});
+  readonly catalogue = signal<PermissionInfo[]>(PERMISSIONS);
   submits = 0;
   readonly editor = viewChild.required(GrantsEditor);
 }
@@ -82,6 +85,9 @@ describe('GrantsEditor', () => {
   const addGrant = () => button('Add grant');
   const text = (i: number) => group(i).textContent?.replace(/\s+/g, ' ');
   const focused = () => document.activeElement;
+  /** The editor's live region (the last role="status" in it). */
+  const status = () => el().querySelector<HTMLElement>('app-grants-editor > [role="status"]')!;
+  const announcement = () => status().textContent?.trim();
 
   async function pickRole(i: number, id: string): Promise<void> {
     select(i).value = id;
@@ -208,6 +214,38 @@ describe('GrantsEditor', () => {
       expect(host.grants()[0].roleId).not.toBe(ADMINISTRATOR_ID);
     });
 
+    it('puts a role that holds only what the catalogue keeps for every saga type after one that holds more', async () => {
+      const manageOnly = role({
+        id: 'role-manage',
+        name: 'Manage only',
+        permissions: ['access.manage'],
+      });
+      await render([], (h) => h.roles.set([...BUILT_IN_ROLES, manageOnly]));
+
+      addGrant().click();
+      await settle();
+
+      // One permission would beat Viewer's two by count alone; access.manage in a scoped grant does nothing.
+      expect(host.grants()[0].roleId).toBe(VIEWER_ID);
+    });
+
+    it('goes by the number of permissions alone when it has no catalogue to tell it which ones a scoped grant ignores', async () => {
+      const manageOnly = role({
+        id: 'role-manage',
+        name: 'Manage only',
+        permissions: ['access.manage'],
+      });
+      await render([], (h) => {
+        h.roles.set([...BUILT_IN_ROLES, manageOnly]);
+        h.catalogue.set([]);
+      });
+
+      addGrant().click();
+      await settle();
+
+      expect(host.grants()[0].roleId).toBe(manageOnly.id);
+    });
+
     it('starts the last role there is with that role, even the administrator', async () => {
       await render([grant(OPERATOR_ID), grant(VIEWER_ID), grant(SUPPORT.id)]);
 
@@ -277,14 +315,37 @@ describe('GrantsEditor', () => {
   });
 
   describe('all or selected saga types', () => {
-    it('changes a scoped grant to every saga type, with no saga type named, and takes the list away', async () => {
+    it('changes a scoped grant to every saga type and takes the list away, keeping the saga types in the draft', async () => {
       await render([grant(OPERATOR_ID, ['OrderSaga'])]);
 
       await choose(0, 'All saga types');
 
-      expect(host.grants()).toEqual([grant(OPERATOR_ID)]);
+      // `grantsBody` leaves the names out of the request; the draft keeps them for the way back.
+      expect(host.grants()).toEqual([
+        { roleId: OPERATOR_ID, allSagaTypes: true, sagaTypes: ['OrderSaga'] },
+      ]);
       expect(boxes(0)).toEqual([]);
       expect(group(0).querySelector('input.input')).toBeNull();
+    });
+
+    it('gives back the saga types that were ticked when the grant goes back to selected ones: an accidental click loses nothing', async () => {
+      await render([grant(OPERATOR_ID, ['PaymentSaga', 'Legacy'])]);
+
+      await choose(0, 'All saga types');
+      await choose(0, 'Selected saga types');
+
+      expect(ticked(0)).toEqual(['PaymentSaga', 'Legacy']);
+      expect(host.grants()).toEqual([grant(OPERATOR_ID, ['PaymentSaga', 'Legacy'])]);
+      expect(text(0)).not.toContain('Pick at least one saga type');
+    });
+
+    it('does not count a grant for every saga type that still names some as one that names none, or the other way', async () => {
+      expect(
+        scopedWithoutTypes([
+          { roleId: 'a', allSagaTypes: true, sagaTypes: ['X'] },
+          { roleId: 'b', allSagaTypes: true, sagaTypes: [] },
+        ]),
+      ).toEqual([]);
     });
 
     it('changes a grant for every saga type to selected ones, with none picked yet', async () => {
@@ -515,6 +576,7 @@ describe('GrantsEditor', () => {
       await render([grant(ADMINISTRATOR_ID, ['OrderSaga'])]);
 
       expect(text(0)).toContain(hint);
+      expect(text(0)).toContain('it counts only for all saga types');
     });
 
     it('says nothing for a grant for every saga type, or for a role without it', async () => {
@@ -534,6 +596,37 @@ describe('GrantsEditor', () => {
       await choose(0, 'All saga types');
       expect(text(0)).not.toContain(hint);
     });
+
+    // The editor reads which permission a scoped grant cannot confer from the catalogue, not from a name.
+    it('names what the catalogue does not scope: another permission, or several', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga'])], (h) =>
+        h.catalogue.set(
+          PERMISSIONS.map((p) => (p.key === 'sagas.retry' ? { ...p, scopable: false } : p)),
+        ),
+      );
+      expect(text(0)).toContain('sagas.retry is ignored in a scoped grant: it counts only');
+      expect(text(0)).not.toContain('access.manage');
+
+      host.catalogue.set(PERMISSIONS.map((p) => ({ ...p, scopable: p.key === 'sagas.view' })));
+      await settle();
+      expect(text(0)).toContain(
+        'sagas.data, sagas.retry are ignored in a scoped grant: they count only for all saga types',
+      );
+    });
+
+    it('says nothing when the catalogue scopes everything the role holds, even access.manage', async () => {
+      await render([grant(ADMINISTRATOR_ID, ['OrderSaga'])], (h) =>
+        h.catalogue.set(PERMISSIONS.map((p) => ({ ...p, scopable: true }))),
+      );
+
+      expect(text(0)).not.toContain('ignored in a scoped grant');
+    });
+
+    it('has nothing to say without a catalogue: it is not told what a scoped grant cannot confer', async () => {
+      await render([grant(ADMINISTRATOR_ID, ['OrderSaga'])], (h) => h.catalogue.set([]));
+
+      expect(text(0)).not.toContain('ignored in a scoped grant');
+    });
   });
 
   describe('Remove', () => {
@@ -549,6 +642,8 @@ describe('GrantsEditor', () => {
       expect(groups()).toHaveLength(1);
       // Where focus can go on: the row it was in is gone.
       expect(focused()).toBe(addGrant());
+      // And what happened is said, in the region that was there before.
+      expect(announcement()).toBe('Removed the Operator grant.');
     });
   });
 
@@ -662,6 +757,163 @@ describe('GrantsEditor', () => {
       await settle();
 
       expect(focused()).toBe(before);
+    });
+  });
+
+  describe('what it says in its live region', () => {
+    it('has the region before it has anything to say', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga'])]);
+
+      expect(status()).not.toBeNull();
+      expect(announcement()).toBe('');
+    });
+
+    it('says which grant was removed, and stops saying it at the next change', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga']), grant(VIEWER_ID)]);
+      const region = status();
+
+      button('Remove', group(1)).click();
+      await settle();
+      expect(status()).toBe(region);
+      expect(announcement()).toBe('Removed the Viewer grant.');
+
+      await tick(0, 'PaymentSaga');
+      expect(announcement()).toBe('');
+    });
+
+    it('says a name that was typed is already in the list, and adds nothing', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga'])]);
+
+      await typeName(0, ' OrderSaga ');
+      await addTyped(0);
+
+      expect(announcement()).toBe('OrderSaga is already in the list.');
+      expect(host.grants()[0].sagaTypes).toEqual(['OrderSaga']);
+      expect(customInput(0).value).toBe('');
+      expect(focused()).toBe(customInput(0));
+    });
+
+    it('says an unknown saga type was removed when it is unticked, and moves the focus on to the next checkbox', async () => {
+      await render([grant(OPERATOR_ID, ['Legacy', 'Other'])]);
+      // Known types first (OrderSaga, PaymentSaga), then the granted ones: Legacy at position 2, Other at 3.
+      expect(typeLabels(0)).toEqual(['OrderSaga', 'PaymentSaga', 'Legacy', 'Other']);
+      boxes(0)[2].focus();
+
+      await tick(0, 'Legacy', false);
+
+      expect(typeLabels(0)).toEqual(['OrderSaga', 'PaymentSaga', 'Other']);
+      expect(announcement()).toBe('Removed Legacy from the list.');
+      expect(focused()).toBe(boxes(0)[2]);
+      expect(focused()?.closest('label')?.textContent?.trim()).toBe('Other');
+    });
+
+    it('moves the focus to the one before when the unticked unknown type was the last', async () => {
+      await render([grant(OPERATOR_ID, ['Legacy'])]);
+      boxes(0)[2].focus();
+
+      await tick(0, 'Legacy', false);
+
+      expect(focused()).toBe(boxes(0)[1]);
+    });
+
+    it('moves the focus to the exact-name box when no checkbox is left', async () => {
+      await render([grant(OPERATOR_ID, ['Legacy'])], (h) => h.sagaTypes.set([]));
+      boxes(0)[0].focus();
+
+      await tick(0, 'Legacy', false);
+
+      expect(boxes(0)).toEqual([]);
+      expect(focused()).toBe(customInput(0));
+    });
+
+    it('keeps the checkbox of a known saga type when it is unticked, and says nothing', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga'])]);
+      boxes(0)[0].focus();
+
+      await tick(0, 'OrderSaga', false);
+
+      expect(typeLabels(0)).toEqual(['OrderSaga', 'PaymentSaga']);
+      expect(announcement()).toBe('');
+      expect(focused()).toBe(boxes(0)[0]);
+    });
+  });
+
+  describe('a name typed and not added', () => {
+    it('is added by commitTyped, trimmed, in the grant it was typed beside', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga']), grant(VIEWER_ID, [])]);
+      await typeName(1, '  ShippingSaga ');
+
+      expect(host.editor().commitTyped()).toBe(true);
+      await settle();
+
+      expect(host.grants()).toEqual([
+        grant(OPERATOR_ID, ['OrderSaga']),
+        grant(VIEWER_ID, ['ShippingSaga']),
+      ]);
+      expect(customInput(1).value).toBe('');
+    });
+
+    it('adds the names of several grants at once, and ignores boxes that are empty or blank', async () => {
+      await render([grant(OPERATOR_ID, []), grant(VIEWER_ID, []), grant(SUPPORT.id, [])]);
+      await typeName(0, 'A');
+      await typeName(1, '   ');
+      await typeName(2, 'C');
+
+      expect(host.editor().commitTyped()).toBe(true);
+
+      expect(host.grants().map((g) => g.sagaTypes)).toEqual([['A'], [], ['C']]);
+    });
+
+    it('is true and changes nothing when nothing is typed, or when the grants are for every saga type', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga']), grant(VIEWER_ID)]);
+      const before = host.grants();
+
+      expect(host.editor().commitTyped()).toBe(true);
+
+      expect(host.grants()).toBe(before);
+      expect(announcement()).toBe('');
+    });
+
+    it('is false when a name cannot be added, says why beside its box, focuses it, and adds none after it', async () => {
+      await render([grant(OPERATOR_ID, []), grant(VIEWER_ID, []), grant(SUPPORT.id, [])]);
+      await typeName(0, 'Fine');
+      await typeName(1, 'x'.repeat(201));
+      await typeName(2, 'Later');
+
+      expect(host.editor().commitTyped()).toBe(false);
+      await settle();
+
+      expect(group(1).querySelector('.custom .field-error')?.textContent).toBe(
+        'Use at most 200 characters.',
+      );
+      expect(focused()).toBe(customInput(1));
+      // The ones before it were added; the one after waits for the user to fix the one that failed.
+      expect(host.grants().map((g) => g.sagaTypes)).toEqual([['Fine'], [], []]);
+    });
+  });
+
+  describe('moving focus to a problem', () => {
+    it('focuses at once, from what the editor shows, without waiting for a render', async () => {
+      await render([grant(OPERATOR_ID, []), grant(VIEWER_ID, ['OrderSaga'])], (h) =>
+        h.sagaTypes.set(['OrderSaga']),
+      );
+      (document.activeElement as HTMLElement | null)?.blur();
+
+      expect(host.editor().focusProblem()).toBe(true);
+
+      expect(focused()).toBe(boxes(0)[0]);
+    });
+
+    it('does not see messages that have not been rendered into it yet: a page calls it after the render', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga']), grant(VIEWER_ID, ['OrderSaga'])]);
+      host.errors.set({ 'grants[1].roleId': ['No role has this id.'] });
+
+      // Set, not yet bound into the editor: it shows nothing wrong, so it has nothing to focus.
+      expect(host.editor().focusProblem()).toBe(false);
+
+      fixture.detectChanges();
+      expect(host.editor().focusProblem()).toBe(true);
+      expect(focused()).toBe(select(1));
     });
   });
 

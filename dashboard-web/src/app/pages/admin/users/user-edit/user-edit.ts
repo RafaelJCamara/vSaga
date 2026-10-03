@@ -24,8 +24,14 @@ import {
   belongsToField,
   placeFieldErrors,
 } from '../../../../util/admin-failure';
+import { lockoutClock } from '../../../../util/lockout-clock';
 import { leaveTo, trackDestroyed } from '../../../../util/page-lifecycle';
-import { explainAccess, originsOf, sessionAccessOf } from '../../access-explain';
+import {
+  explainAccess,
+  holdsUnscopedPermission,
+  originsOf,
+  sessionAccessOf,
+} from '../../access-explain';
 import { AdminUser, Grant } from '../../admin.model';
 import { AdminStore } from '../../admin.store';
 import { GrantsEditor, grantsBody, scopedWithoutTypes } from '../../grants-editor/grants-editor';
@@ -100,9 +106,14 @@ export class UserEdit {
     return id === null ? null : (this.store.users().find((u) => u.id === id) ?? this.pending());
   });
   protected readonly creating = computed(() => this.id() === null);
+  /** The time, moved when the user's lockout ends: "Locked" and Unlock do not outlive it. */
+  private readonly now = lockoutClock(() => {
+    const user = this.user();
+    return user === null ? [] : [user];
+  });
   protected readonly status = computed<UserStatus | null>(() => {
     const user = this.user();
-    return user === null ? null : userStatus(user);
+    return user === null ? null : userStatus(user, this.now());
   });
   /** The signed-in user's own record. */
   protected readonly own = computed(() => {
@@ -194,6 +205,31 @@ export class UserEdit {
   /** The access the draft confers, in the shape `AccessSummary` takes, and where each permission comes from. */
   protected readonly access = computed(() => sessionAccessOf(this.explanation()));
   protected readonly origins = computed(() => originsOf(this.explanation()));
+  /** The catalogue the editor and the preview read: which permissions a scoped grant cannot confer. */
+  protected readonly catalogue = this.store.permissions;
+  /**
+   * On the signed-in user's own record: the draft no longer gives the user a permission for every saga type that the
+   * catalogue does not scope (`access.manage`), though the saved record does. The API refuses the change when nobody
+   * else would hold it; when somebody would, saving it ends the user's own access to this area.
+   */
+  protected readonly dropsOwnAdministration = computed(() => {
+    const user = this.user();
+    if (user === null || !this.own()) return false;
+    const permissions = this.store.permissions();
+    const holds = (grants: readonly Grant[]) =>
+      holdsUnscopedPermission(
+        explainAccess({
+          userId: user.id,
+          enabled: true,
+          grants,
+          teams: this.store.teams(),
+          roles: this.store.roles(),
+          permissions,
+        }),
+        permissions,
+      );
+    return holds(user.grants) && !holds(this.grants());
+  });
 
   /** What is wrong with each field, once the form has been submitted; the API's message where it gave one. */
   protected readonly errors = computed<Partial<Record<Field, string>>>(() => {
@@ -285,6 +321,8 @@ export class UserEdit {
 
   protected async save(): Promise<void> {
     if (this.working()) return;
+    // A name typed in an exact-name box and not added is added now, not dropped; one that cannot be added stops Save.
+    if (this.editor()?.commitTyped() === false) return;
     this.submitted.set(true);
     this.serverErrors.set({});
     this.failure.set(null);
@@ -313,13 +351,18 @@ export class UserEdit {
               grants,
             });
     } catch (err) {
-      this.refused(adminFailure(err, 'The user could not be saved. Try again.'));
+      this.refused(
+        adminFailure(err, 'The user could not be saved. Try again.'),
+        revision === this.revision,
+      );
       this.busy.set(false);
       return;
     }
     if (this.destroyed()) return;
     if (id === null) {
-      // Busy until the page has left: the form must not be usable again in between.
+      // Busy until the page has left: the form must not be usable again in between. The password stays in the
+      // draft until the store has answered (a refusal keeps the draft, and its answer comes after its reload,
+      // which a hung read bounds at 30 s); it goes with the answer.
       this.password.set('');
       this.confirmation.set('');
       await leaveTo(this.router, '/admin/users', () => !this.destroyed());
@@ -448,9 +491,24 @@ export class UserEdit {
   }
 
   /** Shows a refusal of Save where it belongs. The draft is never touched: the user fixes it or tries again. */
-  private refused(failure: AdminFailure): void {
+  private refused(failure: AdminFailure, current: boolean): void {
     if (failure.kind === 'gone') {
       this.gone.set(true);
+      return;
+    }
+    if (!current) {
+      // The draft has changed since the request was sent: what the API said is about the value that was sent, and a
+      // field or a grant position may mean something else now. It is said once, in the banner; the fields and the
+      // focus (the user is typing somewhere) are left alone.
+      const said =
+        failure.kind === 'validation'
+          ? `${Object.values(failure.fieldErrors).flat().join(' ')} (About what was sent, which you have changed since.)`
+          : failure.message;
+      this.failure.set({
+        ...failure,
+        kind: failure.kind === 'validation' ? 'failed' : failure.kind,
+        message: said,
+      });
       return;
     }
     if (failure.kind !== 'validation') {
@@ -518,7 +576,9 @@ export class UserEdit {
     const first = FIELDS.find((field) => (field === 'grants' ? grantsWrong : errors[field]));
     if (first === undefined) return false;
     if (!this.destroyed()) {
-      if (first === 'grants') this.editor()?.focusProblem();
+      // After the render: the API's messages reach the editor with it, and focusProblem reads what it shows.
+      if (first === 'grants')
+        afterNextRender(() => this.editor()?.focusProblem(), { injector: this.injector });
       else {
         this.focusAfterRender(
           {

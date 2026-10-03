@@ -11,6 +11,7 @@ import {
   AccessRow,
   ExplainInput,
   explainAccess,
+  holdsUnscopedPermission,
   originsOf,
   sessionAccessOf,
   summarizeGrants,
@@ -18,8 +19,10 @@ import {
 import { Grant, PermissionInfo } from './admin.model';
 
 // The cases of `AccessEvaluatorTests` (dotnet/tests/VSaga.Dashboard.Identity.Tests/Services), ported: the
-// preview must say what the server will do, so each of its cases is here, in the same words, with the same
-// roles. The server's answer is a scope per permission; this one is rows of saga types, with origins.
+// preview must say what the server will do, so all of its cases are here, in the same words, with the same
+// roles, but one: `Evaluate_AUserWhoMustChangeTheirPassword_HoldsNothing`, which the page words beside the
+// preview instead (the function answers for what the user holds once the password is chosen). The server's
+// answer is a scope per permission; this one is rows of saga types, with origins.
 
 const RETRY_ONLY = role({
   id: 'role-retry-only',
@@ -296,6 +299,15 @@ describe('explainAccess', () => {
       expect(rows.map((r) => r.sagaType)).toEqual([null, 'Alpha', 'Zeta', 'beta']);
     });
 
+    // The grants editor keeps the saga types of a grant that was switched to every saga type, for the way back.
+    it('reads a grant for every saga type that still names saga types as one for every saga type', () => {
+      const rows = explain({
+        grants: [{ roleId: VIEWER_ID, allSagaTypes: true, sagaTypes: ['OrderSaga'] }],
+      });
+
+      expect(plain(rows)).toEqual({ '*': ['sagas.view', 'sagas.data'] });
+    });
+
     it('leaves out a saga type whose permissions are all held for every saga type already', () => {
       const rows = explain({ grants: [grant(VIEWER_ID), grant(VIEWER_ID, ['OrderSaga'])] });
 
@@ -399,6 +411,39 @@ describe('sessionAccessOf', () => {
   });
 });
 
+describe('holdsUnscopedPermission', () => {
+  const holds = (...grants: Grant[]) => holdsUnscopedPermission(explain({ grants }), PERMISSIONS);
+
+  it('is true when a permission the catalogue does not scope is held for every saga type', () => {
+    expect(holds(grant(ADMINISTRATOR_ID))).toBe(true);
+    expect(holds(grant(MANAGE_ONLY.id))).toBe(true);
+  });
+
+  it('is false when it is held for some saga types only (it counts for none), or not at all', () => {
+    expect(holds(grant(ADMINISTRATOR_ID, ['OrderSaga']))).toBe(false);
+    expect(holds(grant(OPERATOR_ID))).toBe(false);
+    expect(holds()).toBe(false);
+  });
+
+  it('asks the catalogue, not a name: a catalogue that scopes everything has none, another may not scope retry', () => {
+    const scopesEverything = PERMISSIONS.map((p) => ({ ...p, scopable: true }));
+    const retryUnscoped = PERMISSIONS.map((p) =>
+      p.key === 'sagas.retry' ? { ...p, scopable: false } : p,
+    );
+
+    expect(
+      holdsUnscopedPermission(explain({ grants: [grant(ADMINISTRATOR_ID)] }), scopesEverything),
+    ).toBe(false);
+    expect(holdsUnscopedPermission(explain({ grants: [grant(OPERATOR_ID)] }), retryUnscoped)).toBe(
+      true,
+    );
+  });
+
+  it('is false for no rows', () => {
+    expect(holdsUnscopedPermission([], PERMISSIONS)).toBe(false);
+  });
+});
+
 describe('summarizeGrants', () => {
   const roles = [...BUILT_IN_ROLES, RETRY_ONLY];
 
@@ -409,6 +454,12 @@ describe('summarizeGrants', () => {
         roles,
       ),
     ).toEqual(['Viewer · all types', 'Operator · 2 types', 'Retry only · 1 type']);
+  });
+
+  it('says "all types" for a grant for every saga type that still names some', () => {
+    expect(
+      summarizeGrants([{ roleId: VIEWER_ID, allSagaTypes: true, sagaTypes: ['A', 'B'] }], roles),
+    ).toEqual(['Viewer · all types']);
   });
 
   it('says nothing for no grants, and leaves out a grant of a role that is not there', () => {
