@@ -152,7 +152,10 @@ the API does on its side is in [`docs/dashboard.md`](../docs/dashboard.md#authen
   behind the app's back, so it signs out locally, stops the hub and goes to `/login` (`reason=expired`); a
   **403** reads the session again (at most every 5 s), since access may have changed; a **400** with the code
   `antiforgery` reads the session again, which re-issues the cookie, and sends the request **once** more with
-  the new token. A failure always reaches the caller unchanged.
+  the new token. A failure always reaches the caller unchanged. This is also what two stacks in one browser
+  rely on, since they share the one `XSRF-TOKEN` cookie: with the base stack and the Wolverine overlay in two
+  tabs, each of ten alternating writes was refused once with `400` `antiforgery`, then succeeded on this retry,
+  with nothing shown to the user.
 - **The identity-epoch contract.** `AuthService` counts the moments the identity behind the cookie may have
   changed (`identityEpoch`: a local sign-out, and every sign-in, sign-out, setup and password-change request
   settling, whether it succeeded or not). A 401 to a request that was sent before the latest change says

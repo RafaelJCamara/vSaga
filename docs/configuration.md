@@ -386,8 +386,10 @@ configuration keys (as an environment variable `:` is written `__`, so `Dashboar
 while it composes itself, and validates it there: a value outside the range given below stops the API from
 starting with an `InvalidOperationException` that names the key and the value, instead of surfacing at the
 first sign-in or the first retry, and a change needs a restart. The exceptions are `Dashboard:ApiKey`, which
-the API-key handler reads from `IConfiguration` on each request, and `Dashboard:Identity:Sqlite:Path`, whose
-problem does not stop the API (see its row). `docker-compose.yml` sets `Dashboard__ApiKey`,
+the API-key handler reads from `IConfiguration` on each request, and two settings whose problems do not stop
+the API: `Dashboard:Identity:Sqlite:Path` and the seed administrator (`Dashboard:Admin:Username` and
+`Dashboard:Admin:Password`). A path or a seed that cannot be used leaves `identity` Degraded with the reason
+and the rest of the API running (see their rows). `docker-compose.yml` sets `Dashboard__ApiKey`,
 `Dashboard__ApiKeyRole`, `Dashboard__TrustedProxies`, the identity path, the seeded administrator and the
 session cookie name; it leaves `Dashboard:WebOrigin` empty, because the bundled UI is served on the API's own
 origin (see [`dashboard.md`](dashboard.md#the-spa)).
@@ -396,8 +398,8 @@ origin (see [`dashboard.md`](dashboard.md#the-spa)).
 | --- | --- | --- | --- |
 | Identity store | `Dashboard:Identity:Provider` | `Sqlite` | Which identity store the API composes. `Sqlite` is the only value; anything else stops the API at start. See [The identity store](dashboard.md#the-identity-store). |
 | Identity store | `Dashboard:Identity:Sqlite:Path` | Outside a container `{LocalApplicationData}/vSaga/dashboard/identity.db`; **none in a container** | The identity database file, made absolute. When `DOTNET_RUNNING_IN_CONTAINER` is `true` (the official images set it) there is deliberately no default: an unset path does not stop the API but is reported by the `identity` health check (`Degraded`, sign-in unavailable), because a file in the container layer would lose every user and the key ring when the container is recreated. The dashboard API image and compose set `/var/lib/vsaga-dashboard/identity.db`, on a named volume. |
-| First administrator | `Dashboard:Admin:Username` | unset | With `Dashboard:Admin:Password`: the administrator created at the first start against an empty identity store (never touched afterwards). While either is set, first-run setup is never offered. Compose seeds `admin`. See [The first administrator](dashboard.md#the-first-administrator). |
-| First administrator | `Dashboard:Admin:Password` | unset | The seed administrator's password, which must meet the password policy; never logged. Compose seeds the public `dev-local-only-change-me`. |
+| First administrator | `Dashboard:Admin:Username` | unset | With `Dashboard:Admin:Password`: the administrator created at the first start against an empty identity store (never touched afterwards). While either is set, first-run setup is never offered. A seed that cannot be applied does not stop the API: `identity` is `Degraded` with the reason and setup stays closed. Compose seeds `admin`. See [The first administrator](dashboard.md#the-first-administrator). |
+| First administrator | `Dashboard:Admin:Password` | unset | The seed administrator's password, which must meet the password policy; never logged. A password the policy rejects does not stop the API either: `identity` is `Degraded` naming this key (never its value) and setup stays closed. Compose seeds the public `dev-local-only-change-me`. |
 | First administrator | `Dashboard:Admin:ResetOnStart` | `false` | `true` or `false`. When `true`, every start resets the seed user's password, re-enables and unlocks the account, ends its sessions and restores an Administrator grant for all saga types. Needs at least one of the two seed keys, or the API refuses to start. Set it back to `false` once you can sign in. |
 | First administrator | `Dashboard:Setup:Code` | unset: a code is generated and logged at start when there is no user and no seed key | The one-time setup code, presetting the generated one: 16 to 128 characters not counting spaces and hyphens, never logged. |
 | Sessions | `Dashboard:Session:CookieName` | `vsaga.session` | The session cookie's name: 1 to 128 letters, digits, dots, hyphens or underscores, not starting with `__`. Compose sets `vsaga.session.<compose project>`, so stacks side by side on `localhost` do not share a sign-in. |
@@ -405,7 +407,7 @@ origin (see [`dashboard.md`](dashboard.md#the-spa)).
 | Sessions | `Dashboard:Session:AbsoluteTimeoutHours` | `24` | A session ends this long after sign-in, however active it is; an open hub socket is closed by then too. 1 to 720. |
 | Sessions | `Dashboard:Session:RequireHttps` | `false` | `true` or `false`. `true` makes the session and antiforgery cookies `Secure` always, adds the `__Host-` name prefix and sends HSTS. The API refuses to start with it unless `Dashboard:TrustedProxies` is set. |
 | Passwords | `Dashboard:Password:MinLength` | `12` | The shortest password accepted, 8 to 128 (the longest password is always 128). |
-| Passwords | `Dashboard:Lockout:MaxFailedAttempts` | `5` | Wrong passwords since the last successful sign-in that lock an account. `0` never locks; at most 100. |
+| Passwords | `Dashboard:Lockout:MaxFailedAttempts` | `5` | Consecutive wrong passwords that lock an account: the count restarts when a lock begins, and on a successful sign-in or an unlock. `0` never locks; at most 100. |
 | Passwords | `Dashboard:Lockout:Minutes` | `15` | How long a locked account refuses sign-in, 1 to 1440. |
 | Rate limits | `Dashboard:RateLimit:AuthPerMinute` | `20` | Sign-in and password-change attempts per one-minute window for one client address and username; first-run setup gets the same number per address. 1 to 1000. |
 | API key | `Dashboard:ApiKey` | *(empty in `appsettings.json`)* | The machine credential `ApiKeyAuthenticationHandler` checks. Empty fails closed: every request that presents a key is refused. See [`Dashboard:ApiKey`](#dashboardapikey). |
@@ -426,14 +428,19 @@ behaves is described in [`dashboard.md`](dashboard.md#authentication).
 
 ### Framework-owned options: the one exception
 
-The dashboard host hands what it read to ASP.NET Core's **own** options classes. They are the only options on
-this page that go through the framework's options pipeline, and they are not vSaga's: `CookieAuthenticationOptions`
-(the session cookie: its name, HttpOnly, `SameSite=Strict`, the `Secure` policy, the idle timeout and sliding
-renewal), `AntiforgeryOptions` (the `X-XSRF-TOKEN` header, and the cookie token's name, the session cookie's name
-plus `.af`), `ForwardedHeadersOptions` (only when `Dashboard:TrustedProxies` is not empty), `KeyManagementOptions`
-(the Data Protection key ring's repository, which is the identity store) and `ApiKeyAuthenticationSchemeOptions`,
-a marker type that declares no members, required because `AddScheme<TOptions, THandler>` wants a distinct
-`AuthenticationSchemeOptions` subtype. None is bound from a configuration section and no `Dashboard:*` key names
+The dashboard host configures ASP.NET Core's **own** options classes in code. They are the only options on
+this page that go through the framework's options pipeline, and they are not vSaga's. The ones the settings
+reach: `CookieAuthenticationOptions` (the session cookie: its name, HttpOnly, `SameSite=Strict`, the `Secure`
+policy, the idle timeout and sliding renewal), `AntiforgeryOptions` (the `X-XSRF-TOKEN` header, and the cookie
+token's name, the session cookie's name plus `.af`), `ForwardedHeadersOptions` (only when
+`Dashboard:TrustedProxies` is not empty), `CorsOptions` (the one credentialed policy, only when
+`Dashboard:WebOrigin` is set), `HstsOptions` (only when `Dashboard:Session:RequireHttps` is `true`) and
+`KeyManagementOptions` (the Data Protection key ring's repository, which is the identity store). The wiring
+that no `Dashboard:*` key touches, for example `AuthenticationOptions` and `PolicySchemeOptions` (the policy
+scheme that picks the cookie or the API key), `AuthorizationOptions` (every endpoint needs an authenticated
+caller; the permission policies) and `ApiKeyAuthenticationSchemeOptions`, a marker type that declares no
+members, required because `AddScheme<TOptions, THandler>` wants a distinct `AuthenticationSchemeOptions`
+subtype. None is bound from a configuration section and no `Dashboard:*` key names
 one of their properties: the code fills them from the values it read once, so the rule that vSaga's own settings
 are plain singletons read once and validated at composition still holds.
 

@@ -48,7 +48,7 @@ the failures.
 
 | Method | Route | Who | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/api/auth/session` | anonymous | Who the caller is and what they may do, always `200` (an anonymous caller gets `authenticated: false`); also issues the `XSRF-TOKEN` cookie. The SPA reads it before it routes anywhere. |
+| `GET` | `/api/auth/session` | anonymous | Who the caller is and what they may do: `200` once the identity store is ready (an anonymous caller gets `authenticated: false`), `503` `identity_unavailable` until then; also issues the `XSRF-TOKEN` cookie. The SPA reads it before it routes anywhere. |
 | `POST` | `/api/auth/login` | anonymous | `{ username, password }`. `200` with the session and the session cookie; `401` `invalid_credentials` for every failure; `429` past the rate limit. |
 | `POST` | `/api/auth/logout` | anonymous | Deletes the session cookie and closes the user's live hub connections. `200` with an anonymous session, also when there was no session. |
 | `POST` | `/api/auth/setup` | anonymous, only while no user exists | `{ username, displayName, password, code }`: creates the first administrator with the one-time setup code and signs them in. `400` `invalid_credentials` (`errors.code`) for a missing or wrong code, `409` `setup_unavailable` when setup is not open. |
@@ -109,6 +109,9 @@ here, as does a user whose `access.manage` grant is scoped to named saga types.
   of the wrong type or a body that is not a JSON object is a `400` `validation` problem naming the member,
   not a silent no-op that answers `200` having changed nothing. A body over 16 KiB (`/api/auth`) or 4 MiB
   (`/api/admin`) is a `400` too.
+- **A grant is `{ roleId, allSagaTypes, sagaTypes }`**, in users, teams and their responses alike: the role
+  granted, `true` for every saga type, and the exact names otherwise (1 to 100; a request may leave
+  `sagaTypes` out when `allSagaTypes` is `true`, a response always has the array, empty for all saga types).
 - **The wire contract is pinned from both sides.** The admin records (`isEnabled`, `isBuiltIn`,
   `lastSignInAtUtc`, arrays always present and never `null`) are checked in as golden JSON files under
   `dashboard-web/src/app/testing/contracts/admin/`, which the .NET endpoint tests and the SPA's
@@ -407,9 +410,9 @@ every user.
   There are no composition rules: length is what resists guessing, and the lockout and rate limits bound online
   attempts. Passwords are hashed with ASP.NET Core's `PasswordHasher<T>`, rehashed at sign-in when its
   parameters change. There is no multi-factor authentication and no single sign-on.
-- **Lockout.** After `Dashboard:Lockout:MaxFailedAttempts` wrong passwords (default 5; `0` never locks, the
-  key accepts up to 100) since the last successful sign-in, the account is locked for
-  `Dashboard:Lockout:Minutes` (default 15, up to 1440). A wrong *current* password on a password change counts
+- **Lockout.** After `Dashboard:Lockout:MaxFailedAttempts` consecutive wrong passwords (default 5; `0` never
+  locks, the key accepts up to 100) the account is locked for `Dashboard:Lockout:Minutes` (default 15, up to
+  1440). The count restarts when a lock begins, and on a successful sign-in or an unlock. A wrong *current* password on a password change counts
   against the same counter, and the failure that locks the account also ends its sessions, the one that made
   the attempt included. On an account that is already locked or disabled the current password is not checked:
   the change is refused with `400` `invalid_credentials` and the session is left alone, so an outsider's failed
@@ -463,10 +466,17 @@ could still ride a session. Every **unsafe** request therefore has to carry an a
   ran. If the token is still the one the request carried, or absent, it does not retry and the caller gets the
   `400`.
 - **Two stacks in one browser.** The cookie name `XSRF-TOKEN` is the same in every stack, because browsers key
-  cookies by host and not by port, so one stack can overwrite the token the other issued. A token from the
-  other stack (a different key ring) is just another token that fails validation, so the same
-  read-the-session-and-retry-once handles it. The session cookies do not collide, since compose names them per
-  project.
+  cookies by host and not by port, so one stack overwrites the token the other issued; a token from the other
+  stack (a different key ring) is just another token that fails validation. The session cookies do not
+  collide, since compose names them per project. Observed with the base stack on port 4200 and the Wolverine
+  overlay on 4300 in one browser context: five cookies for `localhost` (`vsaga.session.vsaga` and
+  `vsaga.session.vsaga-wolverine`, each with its `.af` cookie, and one shared `XSRF-TOKEN`), both tabs signed in
+  and still signed in after reloading. Across ten writes alternating between the two tabs, **every first
+  `POST` got `400` `antiforgery`** (it carried the other stack's token), the SPA read `GET /api/auth/session`,
+  and **one** retried `POST` answered `201`, with no banner; a second write in the same tab right after needed
+  no retry. So expect that one refused-and-retried request, visible in the network log, on the first change you
+  make after switching stacks; a page that has just read its own session holds its own stack's token, until
+  the other stack issues one again, and needs no retry.
 - **Not for the hub.** A browser cannot add a header to a WebSocket upgrade, so the hub is exempt and an
   [origin check](#live-updates-signalr) guards it instead.
 
@@ -499,7 +509,8 @@ and the SPA's API-key interceptor are gone).
 ### Failure responses
 
 Every failure is an `application/problem+json` body; most carry a `code` member the SPA and scripts can
-switch on, and every 401 and 403 `detail` ends with "See docs/dashboard.md#authentication."
+switch on, and the `detail` of every `unauthenticated` 401 and of every 403 ends with "See
+docs/dashboard.md#authentication." (the login failure's `invalid_credentials` 401 does not carry it).
 
 | Status | `code` | When |
 | --- | --- | --- |
@@ -691,13 +702,14 @@ so an operator can route them on their own (for example with a `Logging:LogLevel
 that category). Each event carries the **actor**, the **action**, the **target** and the **outcome**, and the
 client address when there is a request; the actor is `dashboard:<username>`, `dashboard:api-key`,
 `vsaga:configuration` (seeding and `ResetOnStart`) or `vsaga:setup` (first-run setup), names no username can
-produce. Passwords, hashes and setup codes are never logged, and a *submitted* username only when it passes
-the username rule (3 to 64 of `A-Z a-z 0-9 . _ @ + -`, starting with a letter or a digit, not `api-key`).
+produce. Audit events never carry passwords, hashes or setup codes (the one log line that contains a setup
+code is the generated-code line, 7210, which is not an audit event), and a *submitted* username appears only
+when it passes the username rule (3 to 64 of `A-Z a-z 0-9 . _ @ + -`, starting with a letter or a digit, not `api-key`).
 
 | Event id | Name | Level | What |
 | --- | --- | --- | --- |
 | 7100 | `AccessChanged` | Information | An access change was committed: `user.create`, `.update`, `.delete`, `.reset-password`, `.unlock`, `.change-password`, `.seed`, `.reset-on-start`, `.setup`; `team.create`, `.update`, `.delete`; `role.create`, `.update`, `.delete`. |
-| 7101 | `AccessChangeRejected` | Warning | An access change was refused; the outcome is the problem code (`validation`, `not_found`, `invalid_credentials`, `last_administrator` and the other rule codes). |
+| 7101 | `AccessChangeRejected` | Warning | An access change or a setup was refused; the outcome is the problem code (`validation`, `not_found`, `invalid_credentials`, `setup_unavailable`, `last_administrator` and the other rule codes) or, for a password change, `refused` (the account was locked or disabled and the password was not checked) or `invalid_credentials_locked_out` (a wrong current password that locked the account). |
 | 7102 | `AccessChangeNotificationFailed` | Warning | The change stands, but telling live hub connections failed: they keep their old access until they reconnect. |
 | 7110 | `SignedIn` | Information | A sign-in (login or setup) succeeded. |
 | 7111 | `SignInFailed` | Warning | A sign-in failed, with the reason the response never gives: `UnknownUser`, `WrongPassword`, `Disabled`, `LockedOut`, `Malformed` or `PasswordChanged`. |
@@ -790,9 +802,10 @@ SignalR itself closes a socket whose cookie ticket has expired), so the client r
 again and resubscribes, which resolves access afresh. A user who was disabled or deleted, or whose session's
 security stamp was rotated, gets `401` on that negotiate, and a client that sees its session gone stops. An
 abort would tell the client *not* to reconnect and leave the dashboard without live updates until the page is
-reloaded, so the API aborts only as a fallback, for a connection that cannot be closed the other way (event
-id 7321, Warning; 7322, Error, if even the abort fails and the connection may stay open). The API logs `Closed N
-live hub connection(s) because …` at Information (event id 7320).
+reloaded, so the API aborts only as a fallback: silently, for a connection that offers no way to close it for
+reconnect (it has no `IConnectionLifetimeNotificationFeature`), and with a Warning (event id 7321) when closing
+it throws, in which case the abort is the second attempt, and if even that fails the connection may stay open
+(event id 7322, Error). The API logs `Closed N live hub connection(s) because …` at Information (event id 7320).
 
 Checked live with the real `@microsoft/signalr` client and `withAutomaticReconnect`, through the nginx
 container: a role change closed the connection, the client reconnected within 100 ms (`RECONNECTING` 62 ms after
@@ -1021,9 +1034,11 @@ reach it. Before anyone else can:
 - **Change the administrator's password.** `dev-local-only-change-me` is public. The seed applies only to an
   empty identity volume, so editing `Dashboard__Admin__Password` on a stack that already has one changes
   nothing: sign in and change it on the Account page, or set `Dashboard__Admin__ResetOnStart=true` for one
-  start together with the new `Dashboard__Admin__Password`, or start over with `docker compose down -v`. Or
-  seed nothing: leave `Dashboard__Admin__*` unset and claim the first administrator with the
-  [setup code](#the-first-administrator) from the API log (turn `ResetOnStart` back off afterwards).
+  start together with the new `Dashboard__Admin__Password`, or start over with `docker compose down -v`. On a
+  fresh identity volume (after `down -v`, say) you can instead seed nothing: leave `Dashboard__Admin__*` unset
+  and claim the first administrator with the [setup code](#the-first-administrator) from the API log. Setup
+  exists only while no user does, so a volume that already has users never offers it (and turn `ResetOnStart`
+  back off once you can sign in).
 - **Change the API key**, to a long random value (the API warns below 24 characters), and keep
   `Dashboard:ApiKeyRole` at `Viewer` unless a machine client must retry. The key is not rate limited and has no
   lockout.
