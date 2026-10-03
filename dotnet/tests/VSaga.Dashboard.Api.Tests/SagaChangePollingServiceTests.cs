@@ -86,7 +86,7 @@ public sealed class SagaChangePollingServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task PushesEachChangedSagaToBothTheListAndItsInstanceGroup()
+    public async Task PushesEachChangedSagaToTheListGroup_ItsTypesListGroup_AndItsInstanceGroup()
     {
         var since = DateTimeOffset.UtcNow;
         var saga = await SeedAsync("OrderSaga", since.AddSeconds(1));
@@ -95,8 +95,9 @@ public sealed class SagaChangePollingServiceTests : IDisposable
 
         var groups = GroupsPushedTo();
         Assert.Contains(SagaHub.ListGroup, groups, StringComparer.Ordinal);
+        Assert.Contains(SagaHub.ListGroupForType("OrderSaga"), groups, StringComparer.Ordinal);
         Assert.Contains(SagaHub.GroupForSaga("OrderSaga", saga.CorrelationId), groups, StringComparer.Ordinal);
-        Assert.Equal(2, groups.Count);
+        Assert.Equal(3, groups.Count);
     }
 
     [Fact]
@@ -158,7 +159,7 @@ public sealed class SagaChangePollingServiceTests : IDisposable
 
         await _service.PollOnceAsync(since, CancellationToken.None);
 
-        // Two pushes per saga (list + instance); the per-saga order is what matters here.
+        // Three pushes per saga (list, type list, instance); the per-saga order is what matters here.
         var order = _hub.Recorder.SagaUpdates
             .Select(c => c.Summary.CorrelationId)
             .Distinct()
@@ -183,7 +184,8 @@ public sealed class SagaChangePollingServiceTests : IDisposable
         await _service.PollOnceAsync(since, CancellationToken.None);
 
         var instanceGroups = GroupsPushedTo()
-            .Where(g => !string.Equals(g, SagaHub.ListGroup, StringComparison.Ordinal))
+            .Where(g => !string.Equals(g, SagaHub.ListGroup, StringComparison.Ordinal)
+                && !g.StartsWith(SagaHub.TypeListGroupPrefix, StringComparison.Ordinal))
             .Distinct(StringComparer.Ordinal)
             .ToList();
 

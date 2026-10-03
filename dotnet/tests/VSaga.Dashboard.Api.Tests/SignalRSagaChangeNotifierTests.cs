@@ -16,7 +16,7 @@ public sealed class SignalRSagaChangeNotifierTests
             ParentSagaType: null, ParentCorrelationId: null);
 
     [Fact]
-    public async Task SagaUpdated_GoesToBothTheListGroupAndTheInstanceGroup()
+    public async Task SagaUpdated_GoesToTheListGroup_ItsTypesListGroup_AndTheInstanceGroup()
     {
         var context = new RecordingHubContext();
         var notifier = new SignalRSagaChangeNotifier(context);
@@ -26,10 +26,12 @@ public sealed class SignalRSagaChangeNotifierTests
 
         var groups = context.Recorder.SagaUpdates.Select(c => c.Group).ToList();
 
-        // The list view and an open detail page are separate subscriptions; a change has to reach both.
+        // The list view and an open detail page are separate subscriptions; a change has to reach both, and
+        // a list view scoped to named saga types listens on its types' own list groups.
         Assert.Contains(SagaHub.ListGroup, groups, StringComparer.Ordinal);
+        Assert.Contains(SagaHub.ListGroupForType("OrderSaga"), groups, StringComparer.Ordinal);
         Assert.Contains(SagaHub.GroupForSaga("OrderSaga", correlationId), groups, StringComparer.Ordinal);
-        Assert.Equal(2, groups.Count);
+        Assert.Equal(3, groups.Count);
     }
 
     /// <summary>
@@ -46,13 +48,16 @@ public sealed class SignalRSagaChangeNotifierTests
 
         await notifier.SagaUpdatedAsync(NewSummary("PostShipmentChoreography", correlationId, SagaKind.Choreographed));
 
-        var instanceGroups = context.Recorder.SagaUpdates
-            .Select(c => c.Group)
-            .Where(g => !string.Equals(g, SagaHub.ListGroup, StringComparison.Ordinal))
+        var groups = context.Recorder.SagaUpdates.Select(c => c.Group).ToList();
+        var instanceGroups = groups
+            .Where(g => !string.Equals(g, SagaHub.ListGroup, StringComparison.Ordinal)
+                && !g.StartsWith(SagaHub.TypeListGroupPrefix, StringComparison.Ordinal))
             .ToList();
 
         Assert.Equal(SagaHub.GroupForSaga("PostShipmentChoreography", correlationId), Assert.Single(instanceGroups));
         Assert.DoesNotContain(SagaHub.GroupForSaga("OrderSaga", correlationId), instanceGroups, StringComparer.Ordinal);
+        Assert.Contains(SagaHub.ListGroupForType("PostShipmentChoreography"), groups, StringComparer.Ordinal);
+        Assert.DoesNotContain(SagaHub.ListGroupForType("OrderSaga"), groups, StringComparer.Ordinal);
     }
 
     [Fact]

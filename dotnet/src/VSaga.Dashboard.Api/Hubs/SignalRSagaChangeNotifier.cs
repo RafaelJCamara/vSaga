@@ -8,11 +8,8 @@ namespace VSaga.Dashboard.Api.Hubs;
 /// <summary>The only place SignalR meets the saga engine — Core depends on ISagaChangeNotifier, never on this.</summary>
 public sealed class SignalRSagaChangeNotifier(IHubContext<SagaHub, ISagaHubClient> hub) : ISagaChangeNotifier
 {
-    public async Task SagaUpdatedAsync(SagaSummary summary, CancellationToken cancellationToken = default)
-    {
-        await hub.Clients.Group(SagaHub.ListGroup).SagaUpdated(summary);
-        await hub.Clients.Group(SagaHub.GroupForSaga(summary.SagaType, summary.CorrelationId)).SagaUpdated(summary);
-    }
+    public Task SagaUpdatedAsync(SagaSummary summary, CancellationToken cancellationToken = default) =>
+        SagaHub.PushSagaUpdatedAsync(hub, summary);
 
     /// <summary>
     /// Pushes the entry without its payload and error message, for everyone: a hub group is joined per

@@ -244,14 +244,18 @@ internal static class AdminApi
     private static JsonValueKind Kind(JsonNode node) => node.GetValueKind() is JsonValueKind.False ? JsonValueKind.True : node.GetValueKind();
 }
 
-/// <summary>Every log entry of a host, with its event id and formatted message.</summary>
+/// <summary>Every log entry of a host, with its event id, level and formatted message.</summary>
 internal sealed class AuditLogCapture : ILoggerProvider
 {
-    private readonly ConcurrentQueue<(string Category, int EventId, string Message)> _entries = new();
+    private readonly ConcurrentQueue<(string Category, int EventId, LogLevel Level, string Message)> _entries = new();
 
     /// <summary>The formatted messages of <see cref="DashboardAudit"/> events with <paramref name="eventId"/>.</summary>
     public IReadOnlyList<string> Audit(int eventId) =>
-        [.. _entries.Where(e => e.EventId == eventId && string.Equals(e.Category, DashboardAudit.CategoryName, StringComparison.Ordinal)).Select(e => e.Message)];
+        [.. Logged(DashboardAudit.CategoryName, eventId).Select(e => e.Message)];
+
+    /// <summary>The level and formatted message of each event with <paramref name="eventId"/> logged under <paramref name="category"/>.</summary>
+    public IReadOnlyList<(LogLevel Level, string Message)> Logged(string category, int eventId) =>
+        [.. _entries.Where(e => e.EventId == eventId && string.Equals(e.Category, category, StringComparison.Ordinal)).Select(e => (e.Level, e.Message))];
 
     public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
 
@@ -267,6 +271,6 @@ internal sealed class AuditLogCapture : ILoggerProvider
         public bool IsEnabled(LogLevel logLevel) => true;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            owner._entries.Enqueue((categoryName, eventId.Id, formatter(state, exception)));
+            owner._entries.Enqueue((categoryName, eventId.Id, logLevel, formatter(state, exception)));
     }
 }

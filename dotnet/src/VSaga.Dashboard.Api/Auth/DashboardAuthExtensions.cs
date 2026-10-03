@@ -129,8 +129,8 @@ internal static partial class DashboardAuthExtensions
 
     // What the sign-in endpoints use. The store-backed services are scoped and resolved by the endpoints only
     // once the store is ready: with no usable database path, building the store itself throws. IdentityStartup
-    // resolves FirstAdministratorService once the store is ready, to seed or open first-run setup. The observer
-    // does nothing until the hub registers one that drops live connections.
+    // resolves FirstAdministratorService once the store is ready, to seed or open first-run setup. The
+    // IAccessChangeObserver they notify is the hub's connection registry, registered with the hub.
     private static void AddSignIn(IServiceCollection services, DashboardSecuritySettings settings)
     {
         services.AddDashboardAntiforgery(settings);
@@ -141,7 +141,6 @@ internal static partial class DashboardAuthExtensions
         services.AddScoped<CredentialVerifier>();
         services.AddScoped<AccessAdministrationService>();
         services.AddScoped<FirstAdministratorService>();
-        services.TryAddSingleton<IAccessChangeObserver, NoAccessChangeObserver>();
     }
 
     // HttpOnly and SameSite=Strict always; Secure on HTTPS requests, or always (with the __Host- prefix,

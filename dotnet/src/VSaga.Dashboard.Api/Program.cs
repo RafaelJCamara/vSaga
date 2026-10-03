@@ -125,6 +125,11 @@ builder.Services.AddScoped<SagaResetSnapshotRecorder>();
 builder.Services.AddSingleton<SagaTypeNameCache>();
 builder.Services.AddScoped<ScopedSagaLister>();
 
+// The live hub connections, and the observer sign-out, password changes and access administration tell:
+// it aborts the connections an access change affects, so they reconnect under the current access.
+builder.Services.AddSingleton<HubConnectionRegistry>();
+builder.Services.AddSingleton<IAccessChangeObserver>(provider => provider.GetRequiredService<HubConnectionRegistry>());
+
 builder.Services.AddSingleton<ISagaChangeNotifier, SignalRSagaChangeNotifier>();
 builder.Services.AddHostedService<SagaChangePollingService>();
 
@@ -183,13 +188,18 @@ if (app.Environment.IsDevelopment())
 
 app.UseDashboardEdge();
 app.UseApiResponseHeaders();
+app.UseHubOriginGuard();
 app.UseDashboardAuth();
 
 app.MapAuthEndpoints();
 app.MapAdminEndpoints();
 app.MapSagaEndpoints();
-// The only endpoints exempt from antiforgery enforcement: a WebSocket upgrade cannot carry the header.
-app.MapHub<SagaHub>("/hubs/saga").RequireAuthorization().WithMetadata(AntiforgeryExemption.Hub);
+// The only endpoints exempt from antiforgery enforcement: a WebSocket upgrade cannot carry the header, so
+// HubOriginGuard checks the Origin instead. A socket outlives the cookie check that opened it: it is closed
+// when its ticket expires, and HubConnectionRegistry aborts it when the user's access changes.
+app.MapHub<SagaHub>("/hubs/saga", options => options.CloseOnAuthenticationExpiration = true)
+    .RequireAuthorization()
+    .WithMetadata(AntiforgeryExemption.Hub);
 // Left unauthenticated: infra probes (docker-compose healthcheck, orchestrators) hit this without a key.
 app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = WriteHealthResponseAsync }).AllowAnonymous();
 

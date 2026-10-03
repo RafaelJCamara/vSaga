@@ -146,6 +146,18 @@ public static class AuthProblems
             "The request's X-XSRF-TOKEN header is missing or does not match this session; read GET /api/auth/session again and retry.",
             AntiforgeryCode);
 
+    /// <summary>
+    /// 403 <see cref="ForbiddenCode"/> from <see cref="HubOriginGuard"/>: the hub was reached from a page on another
+    /// origin. The expected origin is logged, not echoed.
+    /// </summary>
+    public static IResult ForeignHubOrigin() =>
+        Problem(
+            StatusCodes.Status403Forbidden,
+            "Forbidden",
+            "The live-update hub accepts connections only from the dashboard's own origin, or from Dashboard:WebOrigin when that is set. "
+            + DocumentationPointer,
+            ForbiddenCode);
+
     /// <summary>429 <see cref="RateLimitedCode"/> with a <c>Retry-After</c> header in whole seconds.</summary>
     public static IResult RateLimited(HttpContext context, TimeSpan retryAfter)
     {

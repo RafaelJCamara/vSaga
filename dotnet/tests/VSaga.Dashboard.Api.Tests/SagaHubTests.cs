@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.Extensions.Logging.Abstractions;
 using VSaga.Dashboard.Api.Hubs;
 
 namespace VSaga.Dashboard.Api.Tests;
@@ -12,13 +14,15 @@ public sealed class SagaHubTests
 {
     private const string ConnectionId = "conn-1";
 
+    // A caller who may view every saga type: these tests are about the groups' names and shape; what access
+    // decides is SagaHubAccessTests.
     private static (SagaHub Hub, RecordingGroupManager Groups) NewHub()
     {
         var groups = new RecordingGroupManager();
-        var hub = new SagaHub
+        var hub = new SagaHub(StubCallerAccessResolver.FullAccess(), new HubConnectionRegistry(NullLogger<HubConnectionRegistry>.Instance))
         {
             Groups = groups,
-            Context = new TestHubCallerContext(ConnectionId),
+            Context = new TestHubCallerContext(ConnectionId, new ClaimsPrincipal(new ClaimsIdentity("Test"))),
         };
 
         return (hub, groups);
@@ -150,5 +154,22 @@ public sealed class SagaHubTests
     public void ListGroup_IsDistinctFromEveryPerSagaGroup()
     {
         Assert.NotEqual(SagaHub.ListGroup, SagaHub.GroupForSaga("OrderSaga", Guid.NewGuid()), StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// The per-type list groups have a prefix of their own, so no saga type name (not even "list") can make one
+    /// equal the shared list group or an instance group.
+    /// </summary>
+    [Theory]
+    [InlineData("OrderSaga")]
+    [InlineData("list")]
+    [InlineData("")]
+    public void ListGroupForType_IsDistinctFromTheSharedListGroupAndEveryInstanceGroup(string sagaType)
+    {
+        var group = SagaHub.ListGroupForType(sagaType);
+
+        Assert.Equal("saga-list:" + sagaType, group);
+        Assert.NotEqual(SagaHub.ListGroup, group, StringComparer.Ordinal);
+        Assert.False(group.StartsWith("saga:", StringComparison.Ordinal));
     }
 }

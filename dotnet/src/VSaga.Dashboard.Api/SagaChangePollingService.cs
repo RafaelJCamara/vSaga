@@ -119,8 +119,7 @@ internal sealed class SagaChangePollingService(
                 if (summary.UpdatedAtUtc <= since)
                     continue;
 
-                await hub.Clients.Group(SagaHub.ListGroup).SagaUpdated(summary);
-                await hub.Clients.Group(SagaHub.GroupForSaga(summary.SagaType, summary.CorrelationId)).SagaUpdated(summary);
+                await SagaHub.PushSagaUpdatedAsync(hub, summary);
 
                 if (newest is { } previous && previous < summary.UpdatedAtUtc)
                     newestBelowFinalTie = previous;

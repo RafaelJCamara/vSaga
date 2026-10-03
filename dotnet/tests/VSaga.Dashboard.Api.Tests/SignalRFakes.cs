@@ -1,7 +1,10 @@
+using System.Security.Claims;
 using VSaga.Abstractions.Persistence;
 using VSaga.Dashboard.Api.Hubs;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
+using VSaga.Dashboard.Identity.Model;
+using VSaga.Dashboard.Identity.Services;
 
 namespace VSaga.Dashboard.Api.Tests;
 
@@ -86,14 +89,19 @@ internal sealed class RecordingGroupManager : IGroupManager
     }
 }
 
-/// <summary>Minimal <see cref="HubCallerContext"/> — the hub only ever reads <see cref="ConnectionId"/>.</summary>
-internal sealed class TestHubCallerContext(string connectionId) : HubCallerContext
+/// <summary>
+/// Minimal <see cref="HubCallerContext"/>: the connection id, the principal the connection authenticated as
+/// (none by default), the per-connection items, and whether <see cref="Abort"/> was called.
+/// </summary>
+internal sealed class TestHubCallerContext(string connectionId, ClaimsPrincipal? user = null) : HubCallerContext
 {
+    private int _aborts;
+
     public override string ConnectionId { get; } = connectionId;
 
     public override string? UserIdentifier => null;
 
-    public override System.Security.Claims.ClaimsPrincipal? User => null;
+    public override ClaimsPrincipal? User { get; } = user;
 
     public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
 
@@ -101,7 +109,35 @@ internal sealed class TestHubCallerContext(string connectionId) : HubCallerConte
 
     public override CancellationToken ConnectionAborted => CancellationToken.None;
 
-    public override void Abort()
+    /// <summary>How many times the connection was aborted.</summary>
+    public int Aborts => Volatile.Read(ref _aborts);
+
+    public override void Abort() => Interlocked.Increment(ref _aborts);
+}
+
+/// <summary>
+/// An <see cref="ICallerAccessResolver"/> that answers <see cref="Caller"/>, whatever the principal, and counts
+/// the calls, so a test can change the answer between two subscriptions and see that each one asked again.
+/// </summary>
+internal sealed class StubCallerAccessResolver(CallerAccess? caller) : ICallerAccessResolver
+{
+    private int _calls;
+
+    public CallerAccess? Caller { get; set; } = caller;
+
+    public int Calls => Volatile.Read(ref _calls);
+
+    /// <summary>A signed-in user holding <paramref name="grants"/> of the built-in roles.</summary>
+    public static CallerAccess UserWith(params AccessGrant[] grants) =>
+        new(CallerKind.User, Guid.NewGuid(), "someone", "Someone", MustChangePassword: false, AccessEvaluator.EvaluateGrants(grants, BuiltInRoles.All));
+
+    /// <summary>A resolver whose caller may view every saga type.</summary>
+    public static StubCallerAccessResolver FullAccess() =>
+        new(UserWith(new AccessGrant(BuiltInRoles.ViewerId, AllSagaTypes: true, [])));
+
+    public Task<CallerAccess?> ResolveAsync(ClaimsPrincipal principal, CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref _calls);
+        return Task.FromResult(Caller);
     }
 }
