@@ -4,7 +4,8 @@
  *
  * The default is the session most specs want: signed in, holding every permission for every saga type.
  * `can`, `canAny` and `canManageAccess` answer through the same pure functions as the real service
- * (`util/session-access.ts`), so a spec that narrows `access` sees the rule production applies:
+ * (`util/session-access.ts`), and, like the real service, hold nothing unless the status is
+ * `authenticated`, so a spec that narrows `access` sees the rule production applies:
  *
  *     createAuthMock({ access: { permissions: ['sagas.view'], scoped: [] } })      // no retry anywhere
  *     createAuthMock({ access: { permissions: ['sagas.view'],
@@ -12,6 +13,12 @@
  *
  * Every state is a writable signal, so a spec can change the session after the component exists, and every
  * method is a `vi.fn()`: assert on it, or reprogram it (`mock.login.mockRejectedValue(err)`).
+ *
+ * The flows do not move the state: `login`, `setup`, `changePassword` and `logout` resolve and record the
+ * call, and leave `status`, `user` and `access` as they are (the real ones read the session afterwards). A
+ * spec whose component reacts to the outcome says what the outcome is:
+ *
+ *     mock.setup.mockImplementation(async () => mock.status.set('authenticated'))
  */
 
 import { Provider, computed, signal } from '@angular/core';
@@ -26,13 +33,19 @@ import {
 import { AuthService } from '../services/auth.service';
 import { holds, holdsAccessManage, holdsAny } from '../util/session-access';
 
+/** `satisfies` makes the compiler hold this to `PermissionKey` both ways: a key added to the type and
+ *  missing here, or a key here that is not in the type, fails the build of every spec. */
+const EVERY_PERMISSION = {
+  'sagas.view': true,
+  'sagas.data': true,
+  'sagas.retry': true,
+  'access.manage': true,
+} satisfies Record<PermissionKey, true>;
+
 /** The permissions a role can combine: what the default mock holds, for every saga type. */
-export const ALL_PERMISSIONS: readonly PermissionKey[] = [
-  'sagas.view',
-  'sagas.data',
-  'sagas.retry',
-  'access.manage',
-];
+export const ALL_PERMISSIONS: readonly PermissionKey[] = Object.keys(
+  EVERY_PERMISSION,
+) as PermissionKey[];
 
 export interface AuthMockOptions {
   /** Default `authenticated`. */
@@ -66,6 +79,8 @@ export function createAuthMock(options: AuthMockOptions = {}) {
       ? options.access
       : { permissions: [...ALL_PERMISSIONS], scoped: [] },
   );
+  // What the real service answers `can` from: access exists only while authenticated.
+  const effectiveAccess = computed(() => (status() === 'authenticated' ? access() : null));
 
   // `satisfies` ties the mock to the service: a public member added to AuthService and missing here, or
   // typed differently, fails the spec build instead of surfacing as `undefined is not a function` at run time.
@@ -80,7 +95,7 @@ export function createAuthMock(options: AuthMockOptions = {}) {
     passwordMinLength: signal<number | null>(
       options.passwordMinLength !== undefined ? options.passwordMinLength : 12,
     ),
-    canManageAccess: computed(() => holdsAccessManage(access())),
+    canManageAccess: computed(() => holdsAccessManage(effectiveAccess())),
     signInUnavailable: signal(options.signInUnavailable ?? false),
 
     bootstrap: vi.fn<AuthService['bootstrap']>(() => Promise.resolve()),
@@ -90,9 +105,12 @@ export function createAuthMock(options: AuthMockOptions = {}) {
     setup: vi.fn<AuthService['setup']>(() => Promise.resolve()),
     changePassword: vi.fn<AuthService['changePassword']>(() => Promise.resolve()),
     handleUnauthorized: vi.fn<AuthService['handleUnauthorized']>(),
+    currentIdentityEpoch: vi.fn<AuthService['currentIdentityEpoch']>(() => 0),
     noteForbidden: vi.fn<AuthService['noteForbidden']>(),
-    can: vi.fn<AuthService['can']>((permission, sagaType) => holds(access(), permission, sagaType)),
-    canAny: vi.fn<AuthService['canAny']>((permission) => holdsAny(access(), permission)),
+    can: vi.fn<AuthService['can']>((permission, sagaType) =>
+      holds(effectiveAccess(), permission, sagaType),
+    ),
+    canAny: vi.fn<AuthService['canAny']>((permission) => holdsAny(effectiveAccess(), permission)),
   } satisfies { [K in keyof AuthService]: AuthService[K] };
 }
 

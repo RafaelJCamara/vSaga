@@ -4,7 +4,13 @@ import { DestroyRef, Injectable, InjectionToken, computed, inject, signal } from
 import { Router } from '@angular/router';
 import { firstValueFrom, timeout } from 'rxjs';
 import { API_BASE_URL } from '../api-config';
-import { PermissionKey, SessionInfo, SessionStatus, SetupRequest } from '../models/auth.model';
+import {
+  PermissionKey,
+  SessionAccess,
+  SessionInfo,
+  SessionStatus,
+  SetupRequest,
+} from '../models/auth.model';
 import { problemOf } from '../util/http-error';
 import { holds, holdsAccessManage, holdsAny } from '../util/session-access';
 import { SagaHubService } from './saga-hub.service';
@@ -24,8 +30,9 @@ export const PAGE_RELOAD = new InjectionToken<() => void>('PAGE_RELOAD', {
 const AUTH_URL = `${API_BASE_URL}/api/auth`;
 const SESSION_URL = `${AUTH_URL}/session`;
 
-/** How long one session request may take before it counts as failed: an app that starts under this
- *  budget is never held on a hung API, and a refresh can never stay in flight for good. */
+/** How long one session request, or the sign-out POST, may take before it counts as failed: an app that
+ *  starts under this budget is never held on a hung API, and neither a refresh nor a sign-out can stay in
+ *  flight for good. */
 const SESSION_TIMEOUT_MS = 8000;
 /** A 403 refreshes access at most this often: a page that fires many forbidden requests asks once. */
 const FORBIDDEN_REFRESH_INTERVAL_MS = 5000;
@@ -43,6 +50,10 @@ const VISIBLE_REFRESH_INTERVAL_MS = 60000;
  * - After every identity change (sign-in, sign-out, setup, password change) the session is read again,
  *   which also re-issues the `XSRF-TOKEN` cookie: the API binds antiforgery tokens to the identity, so a
  *   token read before the change fails the next unsafe request.
+ * - An answer to a session read that was sent before the identity changed is dropped, whatever it says: it
+ *   describes the identity from before the change, and adopting it would undo a sign-out or announce an
+ *   expiry that never happened. `identityEpoch` counts the changes; `currentIdentityEpoch()` and the
+ *   optional argument of `handleUnauthorized` let a caller that sent a request apply the same rule to its 401.
  * - The dependency on the hub is one way: this service stops, resumes and probes it; the hub knows nothing
  *   of this service.
  *
@@ -65,6 +76,17 @@ export class AuthService {
   private inFlight: Promise<SessionStatus> | null = null;
   private lastForbiddenRefreshAt = Number.NEGATIVE_INFINITY;
   private lastVisibleRefreshAt = Number.NEGATIVE_INFINITY;
+  /** Counts the moments the identity behind the cookie may have changed: a local sign-out, and every
+   *  sign-in, sign-out, setup and password-change request settling (answered, refused or timed out: the
+   *  server may have acted either way). A request sent under an older value may describe, or have been
+   *  refused for, an identity that is gone. */
+  private identityEpoch = 0;
+  /** Whether the latest session read that was not dropped failed; `login` tells "could not confirm" from
+   *  "confirmed, still anonymous" by it. */
+  private lastReadFailed = false;
+  /** True while `changePassword` reads the session it changed: a sign-out found then is its result, which
+   *  the caller reports, not a session that expired. */
+  private sessionEndIsExpected = false;
 
   readonly status = this.statusState.asReadonly();
   readonly isAuthenticated = computed(() => this.statusState() === 'authenticated');
@@ -80,9 +102,11 @@ export class AuthService {
   /** The shortest password the policy accepts; null until the first answer. */
   readonly passwordMinLength = computed(() => this.sessionState()?.passwordMinLength ?? null);
   readonly canManageAccess = computed(() => holdsAccessManage(this.access()));
-  /** True while the latest session request was answered 503: the API is up but its identity store is not,
-   *  so nobody can sign in. A login page shows "sign-in is unavailable" for this, and "cannot reach the
-   *  API" for `unreachable` otherwise. Cleared by the next session the server describes. */
+  /** True while the latest session request was answered 503 with the code `identity_unavailable`: the API
+   *  is up but its identity store is not, so nobody can sign in. A login page shows "sign-in is
+   *  unavailable" for this, and "cannot reach the API" for `unreachable` otherwise (a 503 without the code
+   *  is a proxy's, not the API's). The latest answer decides: any later failure that is not that 503, and
+   *  any session the server describes, clears it. */
   readonly signInUnavailable = this.unavailableState.asReadonly();
 
   constructor() {
@@ -96,7 +120,7 @@ export class AuthService {
     const onVisibilityChange = (): void => {
       if (this.document.visibilityState !== 'visible') return;
       const now = Date.now();
-      if (now - this.lastVisibleRefreshAt < VISIBLE_REFRESH_INTERVAL_MS) return;
+      if (!intervalElapsed(this.lastVisibleRefreshAt, now, VISIBLE_REFRESH_INTERVAL_MS)) return;
       this.lastVisibleRefreshAt = now;
       void this.refresh();
     };
@@ -121,39 +145,57 @@ export class AuthService {
     return this.inFlight;
   }
 
-  /** Rejects with the `HttpErrorResponse` when the server refuses, and when the session is still not
-   *  authenticated afterwards (a cookie the browser dropped, say). */
+  /**
+   * Rejects with the `HttpErrorResponse` when the server refuses (the session is read again first, see
+   * `postIdentityChange`), and when no session is established afterwards, in one of two ways the caller
+   * must tell apart: status 401 when the read succeeded and the session is still anonymous (a cookie the
+   * browser dropped, say), status 0 when the read failed or timed out, so the sign-in may well have worked.
+   */
   async login(username: string, password: string): Promise<void> {
-    await firstValueFrom(this.http.post(`${AUTH_URL}/login`, { username, password }));
+    await this.postIdentityChange(`${AUTH_URL}/login`, { username, password });
     await this.reload();
-    if (this.statusState() !== 'authenticated') {
-      throw new HttpErrorResponse({
-        status: 401,
-        statusText: 'Unauthorized',
-        url: `${AUTH_URL}/login`,
-        error: {
-          title: 'Sign-in did not start a session',
-          detail:
-            'The server accepted the sign-in but no session was established. Check that the browser accepts cookies for this site.',
-        },
-      });
-    }
+    if (this.statusState() === 'authenticated') return;
+
+    throw this.lastReadFailed
+      ? new HttpErrorResponse({
+          status: 0,
+          statusText: 'Unknown Error',
+          url: SESSION_URL,
+          error: {
+            title: 'Sign-in not confirmed',
+            detail: 'Signed in, but the session could not be confirmed; try again.',
+          },
+        })
+      : new HttpErrorResponse({
+          status: 401,
+          statusText: 'Unauthorized',
+          url: `${AUTH_URL}/login`,
+          error: {
+            title: 'Sign-in did not start a session',
+            detail:
+              'The server accepted the sign-in but no session was established. Check that the browser accepts cookies for this site.',
+          },
+        });
   }
 
   /**
-   * Ends the session: the hub first (it must not reconnect with a cookie that is about to die), then local
-   * state, then the server (a failing POST changes nothing: the cookie may outlive it, and the next read of
-   * the session says so), then a fresh session for the anonymous `XSRF-TOKEN`, then the login page. Never
-   * rejects.
+   * Ends the session: the hub is told first and synchronously (it must not reconnect with a cookie that
+   * is about to die) but never waited for (its connection may be slow to close, and that must not hold the
+   * sign-out), then local state, then the server (bounded by the session timeout; a failing POST changes
+   * nothing: the cookie may outlive it, and the next read of the session says so), then a fresh session
+   * for the anonymous `XSRF-TOKEN`, then the login page. Never rejects.
    */
   async logout(): Promise<void> {
-    await this.hub.stopAndReset();
+    void this.hub.stopAndReset();
     this.signOutLocally();
     try {
-      await firstValueFrom(this.http.post(`${AUTH_URL}/logout`, {}));
+      await firstValueFrom(
+        this.http.post(`${AUTH_URL}/logout`, {}).pipe(timeout(SESSION_TIMEOUT_MS)),
+      );
     } catch {
       // The user asked to leave: nothing to show for a server that did not hear it.
     }
+    this.identityEpoch += 1;
     await this.reload();
     await this.router.navigate(['/login']).catch(() => false);
   }
@@ -162,15 +204,22 @@ export class AuthService {
    *  `HttpErrorResponse` when refused (a wrong code is a 400 with `errors.code`). Resolves whatever the
    *  session is afterwards: the caller checks `isAuthenticated()`. */
   async setup(body: SetupRequest): Promise<void> {
-    await firstValueFrom(this.http.post(`${AUTH_URL}/setup`, body));
+    await this.postIdentityChange(`${AUTH_URL}/setup`, body);
     await this.reload();
   }
 
   /** Rejects with the `HttpErrorResponse` when refused (a wrong current password is a 400 with
-   *  `errors.currentPassword`). The API signs the user in again under the new password. */
+   *  `errors.currentPassword`). The API signs the user in again under the new password, or signs them out
+   *  (a lockout, say): resolves either way, and the caller checks `isAuthenticated()`. A sign-out that
+   *  follows a successful change is not announced as an expiry. */
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
-    await firstValueFrom(this.http.post(`${AUTH_URL}/password`, { currentPassword, newPassword }));
-    await this.reload();
+    await this.postIdentityChange(`${AUTH_URL}/password`, { currentPassword, newPassword });
+    this.sessionEndIsExpected = true;
+    try {
+      await this.reload();
+    } finally {
+      this.sessionEndIsExpected = false;
+    }
   }
 
   /** Whether the session holds `permission`, for `sagaType` when one is given (see `holds`). */
@@ -189,8 +238,13 @@ export class AuthService {
    * goes to `/login` carrying the page to come back to, and reads the session again for the anonymous
    * `XSRF-TOKEN`. Idempotent: the requests in flight when a session ends all fail together, and only the
    * first call finds a session to end.
+   *
+   * `epoch` is `currentIdentityEpoch()` as read when the request was sent: a 401 to a request sent before
+   * the latest identity change says nothing about the session there is now (the old cookie was refused;
+   * the new one may be fine), so it is ignored. Without an epoch the call acts on whatever session there is.
    */
-  handleUnauthorized(): void {
+  handleUnauthorized(epoch?: number): void {
+    if (epoch !== undefined && epoch < this.identityEpoch) return;
     if (this.statusState() !== 'authenticated') return;
     void this.hub.stopAndReset();
     this.signOutLocally();
@@ -198,35 +252,62 @@ export class AuthService {
     void this.reload();
   }
 
+  /** For the interceptor: the identity epoch (see `identityEpoch`) to capture when a request is sent and to
+   *  hand to `handleUnauthorized` with that request's 401. */
+  currentIdentityEpoch(): number {
+    return this.identityEpoch;
+  }
+
   /** For the interceptor: a request answered 403, so access may have changed. Refreshes the session, at
    *  most once per 5 s. */
   noteForbidden(): void {
     const now = Date.now();
-    if (now - this.lastForbiddenRefreshAt < FORBIDDEN_REFRESH_INTERVAL_MS) return;
+    if (!intervalElapsed(this.lastForbiddenRefreshAt, now, FORBIDDEN_REFRESH_INTERVAL_MS)) return;
     this.lastForbiddenRefreshAt = now;
     void this.refresh();
   }
 
-  /** Waits for a refresh in flight, then reads the session afresh: an answer that was already on its way
-   *  may describe the identity from before the change the caller just made. */
+  /** POSTs a request that changes the identity behind the cookie (sign-in, setup, password change). It
+   *  counts as a change whether the server answered or refused it, so the epoch moves either way. A refusal
+   *  may still have changed what the SPA believes (a password change that locked the account signs the
+   *  cookie out; a setup that lost the race closes the form), so the session is read again before the
+   *  rejection goes on to the caller. */
+  private async postIdentityChange(url: string, body: unknown): Promise<void> {
+    try {
+      await firstValueFrom(this.http.post(url, body));
+    } catch (err) {
+      this.identityEpoch += 1;
+      void this.reload();
+      throw err;
+    }
+    this.identityEpoch += 1;
+  }
+
+  /** Waits for a refresh in flight, then reads the session afresh. The answer on its way was sent before
+   *  the change the caller just made, so it is dropped (see `fetchSession`); the wait only keeps one read in
+   *  flight at a time. */
   private async reload(): Promise<SessionStatus> {
     await this.inFlight;
     return this.refresh();
   }
 
+  /** Never throws: a read that fails in any way, including an answer that cannot be adopted, is a failed
+   *  read. An answer that arrives after the identity changed is dropped, failures included: it tells
+   *  nothing about the identity there is now. */
   private async fetchSession(): Promise<SessionStatus> {
-    let session: SessionInfo;
+    const epoch = this.identityEpoch;
     try {
-      session = await firstValueFrom(
+      const session = await firstValueFrom(
         this.http.get<SessionInfo>(SESSION_URL).pipe(timeout(SESSION_TIMEOUT_MS)),
       );
+      if (epoch !== this.identityEpoch) return this.statusState();
       if (!isSessionInfo(session))
         throw new Error('The session endpoint did not answer a session.');
+      this.lastReadFailed = false;
+      this.accept(session);
     } catch (err) {
-      this.markFailed(err);
-      return this.statusState();
+      if (epoch === this.identityEpoch) this.markFailed(err);
     }
-    this.accept(session);
     return this.statusState();
   }
 
@@ -234,6 +315,7 @@ export class AuthService {
   private accept(next: SessionInfo): void {
     const wasAuthenticated = this.statusState() === 'authenticated';
     const previousUserId = this.sessionState()?.user?.id ?? null;
+    const nextUserId = next.user?.id ?? null;
 
     this.sessionState.set(next);
     this.statusState.set(next.authenticated ? 'authenticated' : 'anonymous');
@@ -243,20 +325,22 @@ export class AuthService {
       this.hub.resume();
       // Another tab signed in as someone else: the cookie is shared, so this tab's requests are already
       // that user's, but everything it shows was loaded as the previous one. Start over.
-      if (previousUserId !== null && next.user !== null && next.user.id !== previousUserId) {
+      if (previousUserId !== null && nextUserId !== null && nextUserId !== previousUserId) {
         this.reloadPage();
       }
     } else if (wasAuthenticated) {
       // Signed out elsewhere, or the session expired, and nothing was requested in between to say so. The
       // session read already carried the anonymous XSRF token, so unlike `handleUnauthorized` it reads nothing more.
       void this.hub.stopAndReset();
-      this.goToLoginAsExpired();
+      if (!this.sessionEndIsExpected) this.goToLoginAsExpired();
     }
   }
 
   /** The session could not be read. Keep what was known; mark `unreachable` only when nothing was. */
   private markFailed(err: unknown): void {
-    this.unavailableState.set(problemOf(err, '').status === 503);
+    this.lastReadFailed = true;
+    const problem = problemOf(err, '');
+    this.unavailableState.set(problem.status === 503 && problem.code === 'identity_unavailable');
     if (this.statusState() === 'unknown') this.statusState.set('unreachable');
   }
 
@@ -265,6 +349,7 @@ export class AuthService {
       s ? { ...s, authenticated: false, user: null, access: null } : s,
     );
     this.statusState.set('anonymous');
+    this.identityEpoch += 1;
   }
 
   /** To `/login?returnUrl=<where the user was>&reason=expired`; nowhere when already on `/login` or `/setup`. */
@@ -278,14 +363,32 @@ export class AuthService {
   }
 }
 
-/** A session the server described, as opposed to whatever else answered 200 (a proxy's fallback page). */
+/** Whether `interval` ms have passed since `last`. A clock that stepped back (`now` before `last`) counts as
+ *  passed: otherwise the throttle would hold every call until the clock caught up. */
+function intervalElapsed(last: number, now: number, interval: number): boolean {
+  const elapsed = now - last;
+  return elapsed < 0 || elapsed >= interval;
+}
+
+/**
+ * A session the server described, as opposed to whatever else answered 200 (a proxy's fallback page): the
+ * flags, and `access` as null or as the two lists the permission checks read. Nothing else is read without
+ * a guard (`user` is looked up with `?.`), so a body that passes cannot make adopting it throw.
+ */
 function isSessionInfo(value: unknown): value is SessionInfo {
-  const session = value as Partial<SessionInfo> | null;
+  if (typeof value !== 'object' || value === null) return false;
+  const session = value as Partial<Record<keyof SessionInfo, unknown>>;
   return (
-    typeof session === 'object' &&
-    session !== null &&
     typeof session.authenticated === 'boolean' &&
     typeof session.setupRequired === 'boolean' &&
-    typeof session.setupAvailable === 'boolean'
+    typeof session.setupAvailable === 'boolean' &&
+    isSessionAccess(session.access)
   );
+}
+
+function isSessionAccess(value: unknown): boolean {
+  if (value === null) return true;
+  if (typeof value !== 'object') return false;
+  const access = value as Partial<Record<keyof SessionAccess, unknown>>;
+  return Array.isArray(access.permissions) && Array.isArray(access.scoped);
 }

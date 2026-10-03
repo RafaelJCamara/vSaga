@@ -12,8 +12,8 @@ import {
 } from '@angular/common/http/testing';
 import { inject } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Router } from '@angular/router';
-import { Mock, vi } from 'vitest';
+import { Router, provideRouter } from '@angular/router';
+import { Mock, MockInstance, vi } from 'vitest';
 import { PermissionKey, SessionAccess, SessionInfo, SessionUser } from '../models/auth.model';
 import { problemOf } from '../util/http-error';
 import { AuthService, PAGE_RELOAD } from './auth.service';
@@ -24,6 +24,16 @@ const LOGIN = '/api/auth/login';
 const LOGOUT = '/api/auth/logout';
 const SETUP = '/api/auth/setup';
 const PASSWORD = '/api/auth/password';
+
+/** The slice of Node's `process` the unhandled-rejection spec uses (the spec tsconfig has no Node types). */
+const nodeProcess = (
+  globalThis as unknown as {
+    process: {
+      on(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+      off(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+    };
+  }
+).process;
 
 const ALICE: SessionUser = {
   id: 'user-alice',
@@ -63,6 +73,13 @@ function signedIn(
   return anonymous({ authenticated: true, user, access });
 }
 
+/** A body the API would never send: the session with one member missing (the types say it is always there). */
+function without(session: SessionInfo, member: keyof SessionInfo): Record<string, unknown> {
+  const body: Record<string, unknown> = { ...session };
+  delete body[member];
+  return body;
+}
+
 describe('AuthService', () => {
   let service: AuthService;
   let httpMock: HttpTestingController;
@@ -78,6 +95,8 @@ describe('AuthService', () => {
     navigate: Mock<(commands: unknown[], extras?: unknown) => Promise<boolean>>;
   };
   let pageReload: Mock<() => void>;
+  let addListener: MockInstance<Document['addEventListener']>;
+  let removeListener: MockInstance<Document['removeEventListener']>;
 
   /** Records each request as it leaves, with what the service believed at that moment. */
   const recordRequests: HttpInterceptorFn = (req, next) => {
@@ -141,6 +160,9 @@ describe('AuthService', () => {
       }),
     };
     pageReload = vi.fn<() => void>();
+    // Before the service exists: its constructor registers the listener, and the spy has to see it.
+    addListener = vi.spyOn(document, 'addEventListener');
+    removeListener = vi.spyOn(document, 'removeEventListener');
 
     TestBed.configureTestingModule({
       providers: [
@@ -164,6 +186,8 @@ describe('AuthService', () => {
     } finally {
       Reflect.deleteProperty(document, 'visibilityState');
       vi.useRealTimers();
+      addListener.mockRestore();
+      removeListener.mockRestore();
       TestBed.resetTestingModule();
     }
   });
@@ -313,6 +337,58 @@ describe('AuthService', () => {
 
       expect(service.signInUnavailable()).toBe(false);
     });
+
+    it('does not mark sign-in unavailable on a 503 without the identity_unavailable code: that is a proxy, not the API', async () => {
+      const loading = service.bootstrap();
+      (await request('GET', SESSION)).flush('<html>Service Unavailable</html>', {
+        status: 503,
+        statusText: 'Service Unavailable',
+      });
+      await loading;
+
+      expect(service.status()).toBe('unreachable');
+      expect(service.signInUnavailable()).toBe(false);
+    });
+
+    it('does not mark sign-in unavailable on a 503 that carries another code', async () => {
+      const loading = service.bootstrap();
+      (await request('GET', SESSION)).flush(
+        { code: 'rate_limited' },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+      await loading;
+
+      expect(service.signInUnavailable()).toBe(false);
+    });
+
+    it.each([
+      ['an authenticated flag that is not a boolean', { ...anonymous(), authenticated: 'yes' }],
+      ['no access member', without(anonymous(), 'access')],
+      ['access that is not an object', { ...anonymous(), access: 'everything' }],
+      [
+        'access without the scoped list',
+        { ...signedIn(), access: { permissions: ['sagas.view'] } },
+      ],
+      ['access without the permissions list', { ...signedIn(), access: { scoped: [] } }],
+      ['a null body', null],
+    ])('treats a 200 with %s as unreachable, not as a session', async (_name, body) => {
+      const loading = service.bootstrap();
+      (await request('GET', SESSION)).flush(body);
+      await loading;
+
+      expect(service.status()).toBe('unreachable');
+      expect(service.user()).toBeNull();
+    });
+
+    it('adopts an authenticated session that carries no user, as the API key does', async () => {
+      const loading = service.bootstrap();
+      (await request('GET', SESSION)).flush(without(signedIn(ALICE), 'user'));
+      await expect(loading).resolves.toBeUndefined();
+
+      expect(service.status()).toBe('authenticated');
+      expect(service.user()).toBeNull();
+      expect(service.can('sagas.retry')).toBe(true);
+    });
   });
 
   describe('refresh()', () => {
@@ -376,6 +452,62 @@ describe('AuthService', () => {
       expect(service.signInUnavailable()).toBe(false);
     });
 
+    it('says sign-in is unavailable only while the latest answer was that 503: the next failure of any other kind clears it', async () => {
+      await load(signedIn());
+
+      const first = service.refresh();
+      (await request('GET', SESSION)).flush(
+        { code: 'identity_unavailable' },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+      await first;
+      expect(service.signInUnavailable()).toBe(true);
+
+      const second = service.refresh();
+      (await request('GET', SESSION)).error(new ProgressEvent('error'));
+      await expect(second).resolves.toBe('authenticated');
+      expect(service.signInUnavailable()).toBe(false);
+
+      const third = service.refresh();
+      (await request('GET', SESSION)).flush(
+        { code: 'identity_unavailable' },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+      await third;
+      expect(service.signInUnavailable()).toBe(true);
+
+      const fourth = service.refresh();
+      (await request('GET', SESSION)).flush('Bad gateway', {
+        status: 502,
+        statusText: 'Bad Gateway',
+      });
+      await fourth;
+      expect(service.signInUnavailable()).toBe(false);
+    });
+
+    it('never rejects for an answer it cannot adopt: an authenticated body without a user, after a user was known', async () => {
+      await load(signedIn(ALICE));
+
+      const refreshing = service.refresh();
+      (await request('GET', SESSION)).flush(without(signedIn(ALICE), 'user'));
+
+      await expect(refreshing).resolves.toBe('authenticated');
+      expect(service.user()).toBeNull();
+      expect(pageReload).not.toHaveBeenCalled();
+    });
+
+    it('never rejects when adopting the answer throws (the hub misbehaves): it counts as a failed read', async () => {
+      hub.resume.mockImplementation(() => {
+        throw new Error('hub exploded');
+      });
+
+      const loading = service.bootstrap();
+      await answerSession(signedIn(ALICE));
+
+      await expect(loading).resolves.toBeUndefined();
+      expect(service.status()).toBe('authenticated');
+    });
+
     it('marks unreachable only from unknown: an anonymous session stays anonymous when a refresh fails', async () => {
       await load(anonymous());
 
@@ -436,7 +568,7 @@ describe('AuthService', () => {
       expect(service.user()).toEqual(ALICE);
     });
 
-    it('rejects with the HttpErrorResponse when refused, leaving the session as it was and reading nothing', async () => {
+    it('rejects with the HttpErrorResponse when refused, leaving the session as it was, and reads the session once', async () => {
       await load(anonymous());
 
       const done = service.login('alice', 'wrong');
@@ -450,7 +582,31 @@ describe('AuthService', () => {
       expect(err).toBeInstanceOf(HttpErrorResponse);
       expect(problemOf(err, '')).toMatchObject({ status: 401, code: 'invalid_credentials' });
       expect(service.status()).toBe('anonymous');
+      await answerSession(anonymous());
+      expect(service.status()).toBe('anonymous');
       await expectNoRequest(SESSION);
+      expect(order).toEqual([`POST ${LOGIN} [anonymous]`, `GET ${SESSION} [anonymous]`]);
+    });
+
+    it('learns from the read after a refusal that sign-in is unavailable: the refusal itself says only 503', async () => {
+      await load(anonymous());
+
+      const rejection = service.login('alice', 'pw').catch((e: unknown) => e);
+      (await request('POST', LOGIN)).flush(
+        { code: 'identity_unavailable' },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+      expect(problemOf(await rejection, '').status).toBe(503);
+      expect(service.signInUnavailable()).toBe(false);
+
+      (await request('GET', SESSION)).flush(
+        { code: 'identity_unavailable' },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+      await flush();
+
+      expect(service.signInUnavailable()).toBe(true);
+      expect(service.status()).toBe('anonymous');
     });
 
     it('rejects with the Retry-After a 429 carries', async () => {
@@ -467,6 +623,7 @@ describe('AuthService', () => {
         code: 'rate_limited',
         retryAfterSeconds: 12,
       });
+      await answerSession(anonymous());
     });
 
     it('rejects when the session is still anonymous after the POST succeeded', async () => {
@@ -483,15 +640,58 @@ describe('AuthService', () => {
       expect(service.status()).toBe('anonymous');
     });
 
-    it('rejects when the session cannot be read after the POST succeeded', async () => {
+    it('does not blame the cookies when the session cannot be read after the POST succeeded: status 0, "could not be confirmed"', async () => {
       await load(anonymous());
 
       const rejection = service.login('alice', 'pw').catch((e: unknown) => e);
       (await request('POST', LOGIN)).flush({});
       (await request('GET', SESSION)).error(new ProgressEvent('error'));
 
-      expect(await rejection).toBeInstanceOf(HttpErrorResponse);
+      const err = await rejection;
+      expect(err).toBeInstanceOf(HttpErrorResponse);
+      expect(problemOf(err, '')).toMatchObject({
+        status: 0,
+        code: null,
+        message: 'Signed in, but the session could not be confirmed; try again.',
+      });
       expect(service.status()).toBe('anonymous');
+    });
+
+    it('says the same when the read after the POST timed out, and when it answered 502', async () => {
+      await load(anonymous());
+
+      const timedOut = service.login('alice', 'pw').catch((e: unknown) => e);
+      (await request('POST', LOGIN)).flush({});
+      await request('GET', SESSION);
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(problemOf(await timedOut, '')).toMatchObject({
+        status: 0,
+        message: 'Signed in, but the session could not be confirmed; try again.',
+      });
+
+      const badGateway = service.login('alice', 'pw').catch((e: unknown) => e);
+      (await request('POST', LOGIN)).flush({});
+      (await request('GET', SESSION)).flush('Bad gateway', {
+        status: 502,
+        statusText: 'Bad Gateway',
+      });
+      expect(problemOf(await badGateway, '')).toMatchObject({
+        status: 0,
+        message: 'Signed in, but the session could not be confirmed; try again.',
+      });
+    });
+
+    it('blames the cookies again once a read succeeds: the failure of an earlier read is not remembered', async () => {
+      await load(anonymous());
+      const failing = service.refresh();
+      (await request('GET', SESSION)).error(new ProgressEvent('error'));
+      await failing;
+
+      const rejection = service.login('alice', 'pw').catch((e: unknown) => e);
+      (await request('POST', LOGIN)).flush({});
+      await answerSession(anonymous());
+
+      expect(problemOf(await rejection, '')).toMatchObject({ status: 401 });
     });
   });
 
@@ -531,7 +731,7 @@ describe('AuthService', () => {
       expect(service.isAuthenticated()).toBe(false);
     });
 
-    it('rejects when refused, naming the field the server named, and reads nothing', async () => {
+    it('rejects when refused, naming the field the server named, and reads the session once', async () => {
       await load(anonymous({ setupRequired: true, setupAvailable: true }));
 
       const rejection = service.setup(body).catch((e: unknown) => e);
@@ -549,11 +749,13 @@ describe('AuthService', () => {
         code: 'invalid_credentials',
         fieldErrors: { code: ['The setup code is not correct.'] },
       });
+      await answerSession(anonymous({ setupRequired: true, setupAvailable: true }));
+      expect(service.setupAvailable()).toBe(true);
       await expectNoRequest(SESSION);
     });
 
-    it('rejects with setup_unavailable (409) when setup is not open', async () => {
-      await load(anonymous({ setupRequired: true }));
+    it('rejects with setup_unavailable (409) when setup is not open, and reads the session so the form does not stay open', async () => {
+      await load(anonymous({ setupRequired: true, setupAvailable: true }));
 
       const rejection = service.setup(body).catch((e: unknown) => e);
       (await request('POST', SETUP)).flush(
@@ -566,6 +768,12 @@ describe('AuthService', () => {
         code: 'setup_unavailable',
         message: 'A user already exists.',
       });
+      expect(service.setupAvailable()).toBe(true);
+
+      await answerSession(anonymous({ setupRequired: false, setupAvailable: false }));
+
+      expect(service.setupRequired()).toBe(false);
+      expect(service.setupAvailable()).toBe(false);
     });
   });
 
@@ -590,8 +798,9 @@ describe('AuthService', () => {
       expect(order).toEqual([`POST ${PASSWORD} [authenticated]`, `GET ${SESSION} [authenticated]`]);
     });
 
-    it('accepts a session that ends with the change: the caller sees it is not authenticated', async () => {
+    it('accepts a session that ends with the change: the caller sees it is not authenticated, and nothing announces an expiry', async () => {
       await load(signedIn());
+      router.url = '/account';
 
       const done = service.changePassword('old password 1', 'new password 2');
       (await request('POST', PASSWORD)).flush({});
@@ -599,6 +808,29 @@ describe('AuthService', () => {
 
       await expect(done).resolves.toBeUndefined();
       expect(service.isAuthenticated()).toBe(false);
+      expect(service.user()).toBeNull();
+      expect(hub.stopAndReset).toHaveBeenCalledTimes(1);
+      expect(router.navigate).not.toHaveBeenCalled();
+    });
+
+    it('announces a session that ends later as expired again: the quiet sign-out was only for the change', async () => {
+      await load(signedIn());
+      router.url = '/sagas';
+
+      const done = service.changePassword('old password 1', 'new password 2');
+      (await request('POST', PASSWORD)).flush({});
+      await answerSession(signedIn());
+      await done;
+      expect(router.navigate).not.toHaveBeenCalled();
+
+      const later = service.refresh();
+      await answerSession(anonymous());
+      await later;
+
+      expect(router.navigate).toHaveBeenCalledTimes(1);
+      expect(router.navigate).toHaveBeenCalledWith(['/login'], {
+        queryParams: { returnUrl: '/sagas', reason: 'expired' },
+      });
     });
 
     it('rejects on a wrong current password (400 with errors.currentPassword) and keeps the session', async () => {
@@ -619,7 +851,38 @@ describe('AuthService', () => {
         'The current password is not correct.',
       ]);
       expect(service.isAuthenticated()).toBe(true);
+      await answerSession(signedIn());
+      expect(service.isAuthenticated()).toBe(true);
       await expectNoRequest(SESSION);
+    });
+
+    it('reads the session after a refusal that signed the user out (a lockout), so the SPA does not keep a dead session and a stale XSRF token', async () => {
+      await load(signedIn());
+      router.url = '/account';
+
+      const rejection = service.changePassword('wrong', 'new password 2').catch((e: unknown) => e);
+      (await request('POST', PASSWORD)).flush(
+        {
+          code: 'invalid_credentials',
+          detail:
+            'The current password is not correct, and too many wrong attempts have locked the account for now; you have been signed out.',
+          errors: { currentPassword: ['The current password is not correct.'] },
+        },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      expect(problemOf(await rejection, '')).toMatchObject({
+        status: 400,
+        code: 'invalid_credentials',
+      });
+      expect(service.isAuthenticated()).toBe(true);
+
+      await answerSession(anonymous());
+
+      expect(service.isAuthenticated()).toBe(false);
+      expect(hub.stopAndReset).toHaveBeenCalledTimes(1);
+      expect(router.navigate).toHaveBeenCalledWith(['/login'], {
+        queryParams: { returnUrl: '/account', reason: 'expired' },
+      });
     });
   });
 
@@ -700,6 +963,67 @@ describe('AuthService', () => {
 
       await expect(done).resolves.toBeUndefined();
     });
+
+    it('does not wait for the hub: a connection that never finishes stopping still leaves the user signed out, POSTed and on /login', async () => {
+      await load(signedIn());
+      // The real one awaits signalR's stop(), which awaits the negotiate in flight (100 s by default).
+      hub.stopAndReset.mockImplementationOnce(() => {
+        order.push('hub.stopAndReset');
+        return new Promise<void>(() => undefined);
+      });
+
+      const done = service.logout();
+      const post = await request('POST', LOGOUT);
+      expect(order).toEqual(['hub.stopAndReset', `POST ${LOGOUT} [anonymous]`]);
+      expect(service.status()).toBe('anonymous');
+
+      post.flush(anonymous());
+      await answerSession(anonymous());
+
+      await expect(done).resolves.toBeUndefined();
+      expect(router.navigate).toHaveBeenCalledWith(['/login']);
+      expect(hub.stopAndReset).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives up on a POST that never answers after 8 s: it counts as failed, the session is read and the login page opens', async () => {
+      await load(signedIn());
+
+      let settled = false;
+      const done = service.logout().then(() => {
+        settled = true;
+      });
+      const post = await request('POST', LOGOUT);
+      expect(service.status()).toBe('anonymous');
+
+      await vi.advanceTimersByTimeAsync(7999);
+      expect(post.cancelled).toBe(false);
+      expect(router.navigate).not.toHaveBeenCalled();
+      httpMock.expectNone(SESSION);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(post.cancelled).toBe(true);
+      await answerSession(anonymous());
+      await done;
+
+      expect(settled).toBe(true);
+      expect(router.navigate).toHaveBeenCalledTimes(1);
+      expect(router.navigate).toHaveBeenCalledWith(['/login']);
+      expect(service.status()).toBe('anonymous');
+    });
+
+    it('does not claim a sign-out the server did not perform: when the POST failed and the cookie survived, the read says authenticated and the caller can tell', async () => {
+      await load(signedIn());
+
+      const done = service.logout();
+      await request('POST', LOGOUT);
+      await vi.advanceTimersByTimeAsync(8000);
+      await answerSession(signedIn());
+      await done;
+
+      expect(service.isAuthenticated()).toBe(true);
+      expect(router.navigate).toHaveBeenCalledWith(['/login']);
+      expect(pageReload).not.toHaveBeenCalled();
+    });
   });
 
   describe('handleUnauthorized()', () => {
@@ -772,6 +1096,261 @@ describe('AuthService', () => {
 
       expect(router.navigate).toHaveBeenCalledTimes(2);
       await answerSession(anonymous());
+    });
+
+    it('leaves no rejection unhandled when the navigation to /login fails, and still reads the session', async () => {
+      await load(signedIn());
+      // A plain function, not `vi.fn`: a spy records the promise it returns by attaching handlers to it, which
+      // would make Node count every rejection it hands out as handled.
+      let attempts = 0;
+      (router as { navigate: unknown }).navigate = (): Promise<boolean> => {
+        attempts += 1;
+        return Promise.reject(new Error('chunk failed'));
+      };
+      const unhandled: unknown[] = [];
+      const record = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      // A fire-and-forget navigation has no caller to reject to: an unhandled rejection is the only symptom,
+      // and Node raises it once the microtask queue has drained, which `flush` waits for.
+      nodeProcess.on('unhandledRejection', record);
+      try {
+        service.handleUnauthorized();
+        await flush();
+        await flush();
+      } finally {
+        nodeProcess.off('unhandledRejection', record);
+      }
+
+      expect(attempts).toBe(1);
+      expect(unhandled).toEqual([]);
+      expect(service.status()).toBe('anonymous');
+      await answerSession(anonymous());
+    });
+
+    it('ignores a 401 to a request sent before the identity last changed, and acts on one sent since', async () => {
+      await load(signedIn(ALICE));
+      const sentBefore = service.currentIdentityEpoch();
+
+      // Another user signs in through this tab: the epoch moves on.
+      service.handleUnauthorized();
+      await answerSession(anonymous());
+      const loggingIn = service.login('bob', 'pw');
+      (await request('POST', LOGIN)).flush({});
+      await answerSession(signedIn(BOB));
+      await loggingIn;
+      expect(service.currentIdentityEpoch()).toBeGreaterThan(sentBefore);
+      router.navigate.mockClear();
+      hub.stopAndReset.mockClear();
+
+      service.handleUnauthorized(sentBefore);
+
+      expect(service.status()).toBe('authenticated');
+      expect(service.user()).toEqual(BOB);
+      expect(hub.stopAndReset).not.toHaveBeenCalled();
+      expect(router.navigate).not.toHaveBeenCalled();
+      await expectNoRequest(SESSION);
+
+      service.handleUnauthorized(service.currentIdentityEpoch());
+
+      expect(service.status()).toBe('anonymous');
+      expect(hub.stopAndReset).toHaveBeenCalledTimes(1);
+      expect(router.navigate).toHaveBeenCalledTimes(1);
+      await answerSession(anonymous());
+    });
+  });
+
+  describe('the identity epoch', () => {
+    it('starts at 0 and moves on a local sign-out and when each identity request settles, answered or refused', async () => {
+      await load(signedIn());
+      const epochs = [service.currentIdentityEpoch()];
+      expect(epochs[0]).toBe(0);
+
+      const changing = service.changePassword('old password 1', 'new password 2');
+      (await request('POST', PASSWORD)).flush({});
+      await flush();
+      expect(service.currentIdentityEpoch()).toBeGreaterThan(epochs[0]);
+      await answerSession(signedIn());
+      await changing;
+      epochs.push(service.currentIdentityEpoch());
+
+      const refused = service.changePassword('wrong', 'new password 2').catch(() => undefined);
+      (await request('POST', PASSWORD)).flush({}, { status: 400, statusText: 'Bad Request' });
+      await refused;
+      expect(service.currentIdentityEpoch()).toBeGreaterThan(epochs[1]);
+      await answerSession(signedIn());
+      epochs.push(service.currentIdentityEpoch());
+
+      service.handleUnauthorized();
+      expect(service.currentIdentityEpoch()).toBeGreaterThan(epochs[2]);
+      await answerSession(anonymous());
+      epochs.push(service.currentIdentityEpoch());
+
+      const loggingIn = service.login('alice', 'pw');
+      (await request('POST', LOGIN)).flush({});
+      await flush();
+      expect(service.currentIdentityEpoch()).toBeGreaterThan(epochs[3]);
+      await answerSession(signedIn());
+      await loggingIn;
+    });
+
+    it('does not move for a plain refresh, a failed one, or a read that finds the session gone', async () => {
+      await load(signedIn());
+
+      const ok = service.refresh();
+      await answerSession(signedIn());
+      await ok;
+      const failing = service.refresh();
+      (await request('GET', SESSION)).error(new ProgressEvent('error'));
+      await failing;
+      const gone = service.refresh();
+      await answerSession(anonymous());
+      await gone;
+
+      expect(service.currentIdentityEpoch()).toBe(0);
+    });
+
+    describe('an answer to a read sent before the identity changed', () => {
+      it('is dropped after logout(): the session stays anonymous, the hub is not resumed, nothing navigates a second time', async () => {
+        await load(signedIn());
+        const stale = service.refresh();
+        const staleRequest = await request('GET', SESSION);
+
+        const done = service.logout();
+        (await request('POST', LOGOUT)).flush(anonymous());
+        await flush();
+        staleRequest.flush(signedIn());
+        await expect(stale).resolves.toBe('anonymous');
+
+        expect(service.status()).toBe('anonymous');
+        expect(service.user()).toBeNull();
+        expect(hub.resume).not.toHaveBeenCalled();
+
+        await answerSession(anonymous());
+        await done;
+
+        expect(service.status()).toBe('anonymous');
+        expect(hub.resume).not.toHaveBeenCalled();
+        expect(router.navigate).toHaveBeenCalledTimes(1);
+        expect(router.navigate).toHaveBeenCalledWith(['/login']);
+        expect(hub.stopAndReset).toHaveBeenCalledTimes(1);
+      });
+
+      it('is dropped after the logout POST settled, though it was sent after the local sign-out: the server may have answered it before it acted on the logout', async () => {
+        await load(signedIn());
+
+        const done = service.logout();
+        const post = await request('POST', LOGOUT);
+        const racing = service.refresh();
+        const racingRequest = await request('GET', SESSION);
+        post.flush(anonymous());
+        await flush();
+        racingRequest.flush(signedIn());
+        await expect(racing).resolves.toBe('anonymous');
+
+        expect(service.status()).toBe('anonymous');
+        expect(hub.resume).not.toHaveBeenCalled();
+
+        await answerSession(anonymous());
+        await done;
+
+        expect(service.status()).toBe('anonymous');
+        expect(router.navigate).toHaveBeenCalledTimes(1);
+        expect(router.navigate).toHaveBeenCalledWith(['/login']);
+        expect(hub.stopAndReset).toHaveBeenCalledTimes(1);
+      });
+
+      it('is dropped after handleUnauthorized(): no window where the guards see a session, no second, spurious navigation', async () => {
+        await load(signedIn());
+        router.url = '/sagas';
+        const stale = service.refresh();
+        const staleRequest = await request('GET', SESSION);
+
+        service.handleUnauthorized();
+        expect(router.navigate).toHaveBeenCalledTimes(1);
+        staleRequest.flush(signedIn());
+        await expect(stale).resolves.toBe('anonymous');
+
+        expect(service.status()).toBe('anonymous');
+        expect(hub.resume).not.toHaveBeenCalled();
+
+        await answerSession(anonymous());
+
+        expect(service.status()).toBe('anonymous');
+        expect(router.navigate).toHaveBeenCalledTimes(1);
+        expect(hub.stopAndReset).toHaveBeenCalledTimes(1);
+        expect(hub.resume).not.toHaveBeenCalled();
+      });
+
+      it('is dropped after the POST of a password change settled, even an answer that says anonymous: it describes the old cookie', async () => {
+        await load(signedIn());
+        const stale = service.refresh();
+        const staleRequest = await request('GET', SESSION);
+
+        const changing = service.changePassword('old password 1', 'new password 2');
+        (await request('POST', PASSWORD)).flush({});
+        await flush();
+        staleRequest.flush(anonymous());
+        await stale;
+
+        expect(service.status()).toBe('authenticated');
+        expect(hub.stopAndReset).not.toHaveBeenCalled();
+        expect(router.navigate).not.toHaveBeenCalled();
+
+        await answerSession(signedIn());
+        await changing;
+        expect(service.isAuthenticated()).toBe(true);
+        expect(hub.stopAndReset).not.toHaveBeenCalled();
+        expect(router.navigate).not.toHaveBeenCalled();
+      });
+
+      it('is dropped after a refused identity request too: the server may have acted before refusing', async () => {
+        await load(signedIn());
+        const stale = service.refresh();
+        const staleRequest = await request('GET', SESSION);
+
+        const rejection = service
+          .changePassword('wrong', 'new password 2')
+          .catch((e: unknown) => e);
+        (await request('POST', PASSWORD)).flush({}, { status: 400, statusText: 'Bad Request' });
+        await rejection;
+        staleRequest.flush(anonymous());
+        await stale;
+
+        expect(service.status()).toBe('authenticated');
+        expect(router.navigate).not.toHaveBeenCalled();
+        await answerSession(signedIn());
+      });
+
+      it('is dropped when it is a failure too: a stale 503 does not say sign-in is unavailable, a stale network error is no news', async () => {
+        await load(anonymous());
+        const stale = service.refresh();
+        const staleRequest = await request('GET', SESSION);
+
+        const loggingIn = service.login('alice', 'pw');
+        (await request('POST', LOGIN)).flush({});
+        await flush();
+        staleRequest.flush(
+          { code: 'identity_unavailable' },
+          { status: 503, statusText: 'Service Unavailable' },
+        );
+        await stale;
+        expect(service.signInUnavailable()).toBe(false);
+
+        await answerSession(signedIn());
+        await loggingIn;
+        expect(service.isAuthenticated()).toBe(true);
+      });
+
+      it('is not dropped when nothing changed: the epoch is read when the request is sent, not when it is answered', async () => {
+        await load(signedIn());
+
+        const refreshing = service.refresh();
+        await answerSession(signedIn(ALICE, { permissions: ['sagas.view'], scoped: [] }));
+        await refreshing;
+
+        expect(service.access()?.permissions).toEqual(['sagas.view']);
+      });
     });
   });
 
@@ -860,6 +1439,23 @@ describe('AuthService', () => {
       expect(service.can('sagas.retry')).toBe(false);
     });
 
+    it('is not held back by a clock that stepped back: the interval is measured only forwards', async () => {
+      await load(signedIn());
+
+      service.noteForbidden();
+      await answerSession(signedIn());
+
+      vi.setSystemTime(new Date('2026-10-03T11:00:00Z'));
+      service.noteForbidden();
+      await answerSession(signedIn());
+
+      service.noteForbidden();
+      await expectNoRequest(SESSION);
+      await vi.advanceTimersByTimeAsync(5000);
+      service.noteForbidden();
+      await answerSession(signedIn());
+    });
+
     it('catches up with access that changed: the permission-aware UI follows the new session', async () => {
       await load(signedIn());
       expect(service.can('sagas.retry')).toBe(true);
@@ -891,6 +1487,23 @@ describe('AuthService', () => {
       await answerSession(signedIn());
     });
 
+    it('is not held back by a clock that stepped back: the interval is measured only forwards', async () => {
+      await load(signedIn());
+
+      setVisibility('visible');
+      await answerSession(signedIn());
+
+      vi.setSystemTime(new Date('2026-10-03T11:00:00Z'));
+      setVisibility('visible');
+      await answerSession(signedIn());
+
+      setVisibility('visible');
+      await expectNoRequest(SESSION);
+      await vi.advanceTimersByTimeAsync(60_000);
+      setVisibility('visible');
+      await answerSession(signedIn());
+    });
+
     it('ignores the tab being hidden, and a hidden event does not use up the interval', async () => {
       await load(signedIn());
 
@@ -914,12 +1527,16 @@ describe('AuthService', () => {
       });
     });
 
-    it('stops listening when the service is destroyed', () => {
-      const remove = vi.spyOn(document, 'removeEventListener');
+    it('stops listening when the service is destroyed, removing the very function it added', () => {
+      const added = addListener.mock.calls.filter(([type]) => type === 'visibilitychange');
+      expect(added).toHaveLength(1);
+      expect(removeListener).not.toHaveBeenCalledWith('visibilitychange', expect.anything());
 
       TestBed.resetTestingModule();
 
-      expect(remove).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+      const removed = removeListener.mock.calls.filter(([type]) => type === 'visibilitychange');
+      expect(removed).toHaveLength(1);
+      expect(removed[0][1]).toBe(added[0][1]);
     });
   });
 
@@ -1108,6 +1725,70 @@ describe('AuthService', () => {
       expect(service.can('sagas.retry', 'AnySaga')).toBe(true);
       expect(service.canManageAccess()).toBe(false);
     });
+  });
+});
+
+describe('AuthService with the real Router', () => {
+  let service: AuthService;
+  let router: Router;
+  let httpMock: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([
+          { path: 'sagas/:type/:id', children: [] },
+          { path: 'login', children: [] },
+        ]),
+        {
+          provide: SagaHubService,
+          useValue: {
+            setSessionProbe: vi.fn(),
+            resume: vi.fn(),
+            stopAndReset: vi.fn(() => Promise.resolve()),
+          },
+        },
+        { provide: PAGE_RELOAD, useValue: vi.fn() },
+      ],
+    });
+    service = TestBed.inject(AuthService);
+    router = TestBed.inject(Router);
+    httpMock = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => {
+    try {
+      httpMock.verify({ ignoreCancelled: true });
+    } finally {
+      TestBed.resetTestingModule();
+    }
+  });
+
+  const sessionRequest = (): Promise<TestRequest> =>
+    vi.waitFor(() => httpMock.expectOne({ method: 'GET', url: SESSION }));
+
+  it('carries the page through /login?returnUrl= and back without encoding it twice or losing the query and the fragment', async () => {
+    const loading = service.bootstrap();
+    (await sessionRequest()).flush(signedIn());
+    await loading;
+    const page = '/sagas/Order%20Saga/x?tab=map#f';
+    await router.navigateByUrl(page);
+    expect(router.url).toBe(page);
+
+    service.handleUnauthorized();
+    await vi.waitFor(() => expect(router.url).toMatch(/^\/login\?/));
+    (await sessionRequest()).flush(anonymous());
+
+    const login = router.parseUrl(router.url);
+    expect(login.queryParams['reason']).toBe('expired');
+    expect(login.queryParams['returnUrl']).toBe(page);
+    expect(router.url).toContain('returnUrl=%2Fsagas%2FOrder%2520Saga%2Fx%3Ftab%3Dmap%23f');
+
+    // What the login page does once the user has signed in again.
+    await router.navigateByUrl(login.queryParams['returnUrl'] as string);
+    expect(router.url).toBe(page);
   });
 });
 

@@ -56,11 +56,16 @@ function text(value: unknown): string | undefined {
  * path segment keeps a body that slipped through in .NET casing (`Grants[0].SagaTypes`) usable. A value is
  * a list of messages (a lone string counts as one); anything else is dropped. Keys that collapse into one
  * after lowering keep all their messages.
+ *
+ * Collected in a `Map`: a key is whatever the server sent, and on a plain object `constructor`, `toString`
+ * and `__proto__` already exist (as inherited members), so reading the list so far would find them and
+ * spreading what it found would throw. `Object.fromEntries` then makes every key an own property, the
+ * special ones included.
  */
 function fieldErrorsOf(value: unknown): Record<string, string[]> {
   const errors = asRecord(value);
-  const result: Record<string, string[]> = {};
-  if (!errors) return result;
+  if (!errors) return {};
+  const result = new Map<string, string[]>();
 
   for (const [key, raw] of Object.entries(errors)) {
     const messages = (Array.isArray(raw) ? raw : [raw]).filter(
@@ -71,9 +76,9 @@ function fieldErrorsOf(value: unknown): Record<string, string[]> {
       /(^|\.)([A-Z])/g,
       (_, dot: string, letter: string) => dot + letter.toLowerCase(),
     );
-    result[camel] = [...(result[camel] ?? []), ...messages];
+    result.set(camel, [...(result.get(camel) ?? []), ...messages]);
   }
-  return result;
+  return Object.fromEntries(result);
 }
 
 /** Whole seconds only: the API always sends `Retry-After` as a delay, never as a date. */

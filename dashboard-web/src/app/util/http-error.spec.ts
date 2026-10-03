@@ -169,6 +169,23 @@ describe('problemOf', () => {
       expect(problem.fieldErrors).toEqual({ code: ['first', 'second'] });
     });
 
+    it('keeps keys that are members of every object (constructor, toString, __proto__) as plain keys, without throwing', () => {
+      // JSON.parse, not a literal: `__proto__` in a literal sets the prototype instead of adding a key.
+      const body = JSON.parse(
+        '{"errors":{"constructor":["a"],"toString":["b"],"__proto__":["c"],"Constructor":["d"],"hasOwnProperty":"e"}}',
+      ) as unknown;
+
+      const problem = problemOf(failure(400, body), FALLBACK);
+
+      expect(Object.entries(problem.fieldErrors)).toEqual([
+        ['constructor', ['a', 'd']],
+        ['toString', ['b']],
+        ['__proto__', ['c']],
+        ['hasOwnProperty', ['e']],
+      ]);
+      expect(Object.getPrototypeOf(problem.fieldErrors)).toBe(Object.prototype);
+    });
+
     it('is empty when errors is missing, an array or not an object', () => {
       expect(problemOf(failure(400, {}), FALLBACK).fieldErrors).toEqual({});
       expect(problemOf(failure(400, { errors: ['x'] }), FALLBACK).fieldErrors).toEqual({});
