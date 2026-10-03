@@ -94,6 +94,9 @@ let connection: FakeHubConnection;
  *  background (a reconnect policy's probe) and a test cannot await directly. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+// Relies on `"splitting": false` on the test target in angular.json. With the builder's default, every module the
+// specs have in common is one shared chunk per worker, so a worker that already loaded the real saga-hub.service
+// for another spec runs this one against the real signalR, and this mock is bypassed.
 vi.mock('@microsoft/signalr', () => ({
   HubConnectionState: { Disconnected: 'Disconnected', Connected: 'Connected' },
   HubConnectionBuilder: class {
