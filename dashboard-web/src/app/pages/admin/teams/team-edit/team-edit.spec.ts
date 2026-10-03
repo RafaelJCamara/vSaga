@@ -252,8 +252,10 @@ describe('TeamEdit', () => {
       expect(grantGroups()).toHaveLength(0);
       expect(button('Create team')).toBeDefined();
       expect((button('Cancel') as HTMLAnchorElement).getAttribute('href')).toBe('/admin/teams');
-      // Nothing that belongs to a team that exists.
+      // Nothing that belongs to a team that exists: there is nothing yet for a save to replace.
       expect(button('Delete team')).toBeUndefined();
+      expect(el().querySelector('#team-save-hint')).toBeNull();
+      expect(submit().getAttribute('aria-describedby')).toBeNull();
     });
 
     it('sets the attributes of the fields: the API limits, and the global textarea primitive', async () => {
@@ -515,6 +517,16 @@ describe('TeamEdit', () => {
       await open('/admin/teams/t-ops');
 
       expect(description().value).toBe('');
+    });
+
+    it('says beside Save that it replaces the members and the access with what is shown, and describes Save by it', async () => {
+      await open('/admin/teams/t-pay');
+
+      expect(message('team-save-hint')).toBe(
+        "Saving replaces the team's members and access with what is shown here.",
+      );
+      expect(el().querySelector('#team-save-hint')?.classList).toContain('field-hint');
+      expect(submit().getAttribute('aria-describedby')).toBe('team-save-hint');
     });
 
     it('is not called Cancel: the question of Delete team has a Cancel of its own, and the way back is "Back to the teams"', async () => {
@@ -869,6 +881,28 @@ describe('TeamEdit', () => {
       expect(listed().filter(([, on]) => on)).toEqual([['carol Carol Example', true]]);
     });
 
+    it('mark a disabled user with a "Disabled" chip inside the label, so that the name of the box says it', async () => {
+      await open(
+        '/admin/teams/t-ops',
+        adminData({
+          users: [ADMIN, ALICE, adminUser({ ...BOB, isEnabled: false }), CAROL],
+          teams: [OPERATIONS],
+        }),
+      );
+
+      const chips = (username: string) =>
+        Array.from(box(username).closest('label')!.querySelectorAll('.chip')).map((chip) =>
+          chip.textContent?.trim(),
+        );
+      expect(chips('Bob')).toEqual(['Disabled']);
+      expect(memberLabel(box('Bob'))).toBe('Bob Robert Builder Disabled');
+      expect(chips('alice')).toEqual([]);
+      expect(chips('carol')).toEqual([]);
+      expect(box('Bob').closest('label')!.querySelector('.chip')?.classList).toContain(
+        'chip--muted',
+      );
+    });
+
     it('describe the fieldset by that count', async () => {
       await open('/admin/teams/t-ops');
 
@@ -1003,7 +1037,7 @@ describe('TeamEdit', () => {
         expect(filter().value).toBe('carol');
       });
 
-      it('is not a change of the draft: Saved stays, and an answer still re-seeds it', async () => {
+      it('does not take Saved away once it has been said: filtering is not a change of the draft', async () => {
         await open('/admin/teams/t-pay');
         type(name(), '  First ');
         await save();
@@ -1015,6 +1049,22 @@ describe('TeamEdit', () => {
         await settle();
 
         expect(banner('.banner--success')).not.toBeNull();
+      });
+
+      it('does not keep the answer to a save from re-seeding the draft and saying Saved when it is typed meanwhile', async () => {
+        await open('/admin/teams/t-pay');
+        type(name(), '  First ');
+        await save();
+        const put = write('PUT', '/api/admin/teams/t-pay');
+
+        type(filter(), 'ali');
+        put.flush({ ...PAYMENTS, name: 'First' });
+        await reloaded(teams({ ...PAYMENTS, name: 'First' }, OPERATIONS));
+
+        // The draft is what the API stored (the name trimmed), and it is announced as saved.
+        expect(name().value).toBe('First');
+        expect(banner('.banner--success')).not.toBeNull();
+        expect(filter().value).toBe('ali');
       });
 
       it('does not submit the form when Enter is pressed in it', async () => {
@@ -1030,6 +1080,45 @@ describe('TeamEdit', () => {
 
         expect(enter.defaultPrevented).toBe(true);
         http.expectNone((r) => r.method !== 'GET');
+      });
+    });
+
+    describe('Enter on a checkbox', () => {
+      const enter = () =>
+        new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true });
+
+      it('does not submit the form, which would replace the whole team', async () => {
+        await open('/admin/teams/t-pay');
+        const event = enter();
+
+        box('alice').dispatchEvent(event);
+        await settle();
+
+        expect(event.defaultPrevented).toBe(true);
+        http.expectNone((r) => r.method !== 'GET');
+      });
+
+      it('does not submit the form from the row of a member the lists do not know either', async () => {
+        await open(
+          '/admin/teams/t-pay',
+          teams(team({ ...PAYMENTS, memberIds: ['u-alice', 'u-gone'] }), OPERATIONS),
+        );
+        const event = enter();
+
+        boxes().at(-1)!.dispatchEvent(event);
+        await settle();
+
+        expect(event.defaultPrevented).toBe(true);
+        http.expectNone((r) => r.method !== 'GET');
+      });
+
+      it('leaves Space alone: it is what ticks a box', async () => {
+        await open('/admin/teams/t-pay');
+        const space = new KeyboardEvent('keydown', { key: ' ', cancelable: true, bubbles: true });
+
+        box('alice').dispatchEvent(space);
+
+        expect(space.defaultPrevented).toBe(false);
       });
     });
 
@@ -1060,10 +1149,31 @@ describe('TeamEdit', () => {
           'u-gone',
         ]);
         refuse(put, 400, problem('validation', 'x', { 'memberIds[2]': ['No user has this id.'] }));
-        await settle();
+        await reloaded(withStranger());
 
         expect(message('team-members-error')).toBe('No user has this id.');
         expect(boxes().at(-1)!.checked).toBe(true);
+      });
+
+      it('is not said to be "no user that matches" under the filter, nor "no users yet" when there are none', async () => {
+        await open('/admin/teams/t-pay', withStranger());
+
+        type(filter(), 'nobody');
+
+        expect(boxes()).toHaveLength(1);
+        expect(el().querySelector('.member-list')?.textContent).not.toContain('No user matches');
+      });
+
+      it('is not said to be "no users yet" when the user list is empty and the team still names a member', async () => {
+        await open(
+          '/admin/teams/t-pay',
+          adminData({ users: [], teams: [team({ ...PAYMENTS, memberIds: ['u-gone'] })] }),
+        );
+
+        expect(boxes()).toHaveLength(1);
+        expect(el().querySelector('.member-list')?.textContent).not.toContain(
+          'There are no users yet.',
+        );
       });
 
       it('is removed from the team by unticking it', async () => {
@@ -1174,7 +1284,7 @@ describe('TeamEdit', () => {
           'grants[0].sagaTypes': ["'OrderSaga' is listed twice."],
         }),
       );
-      await settle();
+      await reloaded();
 
       expect(message('team-name-error')).toContain('Enter 1 to 64 characters');
       expect(message('team-description-error')).toBe('Use at most 256 characters.');
@@ -1201,7 +1311,7 @@ describe('TeamEdit', () => {
         400,
         problem('validation', 'x', { 'memberIds[0]': ['No user has this id.'] }),
       );
-      await settle();
+      await reloaded();
 
       expect(el().querySelector('fieldset.members')!.getAttribute('aria-describedby')).toBe(
         'team-members-selected team-members-error',
@@ -1218,13 +1328,17 @@ describe('TeamEdit', () => {
         400,
         problem('validation', 'x', { 'memberIds[0]': ['No user has this id.'] }),
       );
-      await settle();
+      await reloaded();
 
       expect(focused()).toBe(filter());
     });
 
-    it('moves focus to the grant when a grant is the only thing wrong', async () => {
+    // The focus is put somewhere else before the answer: that it ends up on the grant is the page's doing, not
+    // where it happened to be (the grants editor focuses the new grant's role when a grant is added).
+    it("moves focus to the grant's role when its role is the only thing wrong, from wherever the focus was", async () => {
       await filled();
+      name().focus();
+      expect(focused()).toBe(name());
 
       refuse(
         write('POST', '/api/admin/teams'),
@@ -1234,6 +1348,77 @@ describe('TeamEdit', () => {
       await settle();
 
       expect(focused()).toBe(grantSelect(1));
+    });
+
+    it("moves focus to the grant's saga types when they are the only thing wrong", async () => {
+      await filled();
+      name().focus();
+
+      refuse(
+        write('POST', '/api/admin/teams'),
+        400,
+        problem('validation', 'x', {
+          'grants[0].sagaTypes': ['Name 1 to 100 saga types, or grant all saga types.'],
+        }),
+      );
+      await settle();
+
+      expect(focused()).toBe(grantBox(0, 'OrderSaga'));
+    });
+
+    it('reads the lists again after a 400 about a member, so that a user deleted meanwhile is labelled instead of left a bare id', async () => {
+      await open('/admin/teams/t-pay');
+      await save();
+
+      refuse(
+        write('PUT', '/api/admin/teams/t-pay'),
+        400,
+        problem('validation', 'x', { 'memberIds[0]': ['No user has this id.'] }),
+      );
+      await settle();
+      // Alice was deleted since the lists were read: the answer to the reads says so.
+      answerReload(http, adminData({ users: [ADMIN, BOB, CAROL], teams: [PAYMENTS, OPERATIONS] }));
+      await settle();
+
+      expect(message('team-members-error')).toBe('No user has this id.');
+      const last = boxes().at(-1)!;
+      expect(last.checked).toBe(true);
+      expect(last.closest('label')?.querySelector('code')?.textContent).toBe('u-alice');
+      expect(boxes()).toHaveLength(4);
+    });
+
+    it('does not read the lists again for a 400 that is not about the members', async () => {
+      await open('/admin/teams/t-pay');
+      await save();
+
+      refuse(
+        write('PUT', '/api/admin/teams/t-pay'),
+        400,
+        problem('validation', 'x', {
+          name: ['Bad.'],
+          'grants[0].roleId': ['No role has this id.'],
+        }),
+      );
+      await settle();
+
+      http.expectNone('/api/admin/users');
+      http.expectNone('/api/admin/teams');
+    });
+
+    it('says a message once, whichever members it is about', async () => {
+      await filled();
+
+      refuse(
+        write('POST', '/api/admin/teams'),
+        400,
+        problem('validation', 'x', {
+          'memberIds[0]': ['No user has this id.'],
+          'memberIds[1]': ['No user has this id.'],
+        }),
+      );
+      await reloaded();
+
+      expect(message('team-members-error')).toBe('No user has this id.');
     });
 
     it('sends the draft again when Save is used again with nothing changed since a 400: the old messages do not block it', async () => {
@@ -1265,7 +1450,7 @@ describe('TeamEdit', () => {
           'memberIds[0]': ['No user has this id.'],
         }),
       );
-      await settle();
+      await reloaded();
 
       type(name(), 'Payments 2');
       expect(message('team-name-error')).toBeUndefined();
@@ -1295,8 +1480,9 @@ describe('TeamEdit', () => {
       expect(editor().textContent).not.toContain('No role has this id.');
     });
 
-    it('lists the messages of a path it has no field for in the banner', async () => {
+    it('lists the messages of a path it has no field for in the banner, which takes the focus: nothing else does', async () => {
       await filled();
+      name().focus();
 
       refuse(
         write('POST', '/api/admin/teams'),
@@ -1308,7 +1494,47 @@ describe('TeamEdit', () => {
       expect(banner('.banner--error[role="alert"]')?.textContent).toContain(
         'Not a member of the request.',
       );
+      expect(focused()).toBe(banner('.banner--error[role="alert"]'));
     });
+
+    it('keeps the focus on the field when a path with no field comes with one that has', async () => {
+      await filled();
+      description().focus();
+
+      refuse(
+        write('POST', '/api/admin/teams'),
+        400,
+        problem('validation', 'x', { teamIds: ['Not a member of the request.'], name: ['Bad.'] }),
+      );
+      await settle();
+
+      expect(focused()).toBe(name());
+    });
+
+    // The banner is at the top of a page that may be long, and a screen reader user may be anywhere in it.
+    it.each([
+      ['a last-administrator refusal', 409, problem('last_administrator', LAST_ADMIN)],
+      ['another rule of the API', 409, problem('role_in_use', 'Some rule says no.')],
+      ['a lost permission', 403, problem('forbidden', 'x')],
+      ['a server error', 500, problem('x', 'server words')],
+    ])(
+      'moves focus to the banner for %s, from wherever the focus was',
+      async (_what, status, body) => {
+        await filled();
+        description().focus();
+        expect(focused()).toBe(description());
+
+        refuse(write('POST', '/api/admin/teams'), status, body);
+        // The store reads the lists again after a 409, and after nothing else.
+        if (status === 409) await reloaded();
+        else await settle();
+
+        const alert = banner('.banner--error[role="alert"]')!;
+        expect(alert.getAttribute('tabindex')).toBe('-1');
+        expect(focused()).toBe(alert);
+        expect(name().value).toBe('Payments');
+      },
+    );
 
     it('shows a taken name as a banner with the server detail, marks the name and focuses it', async () => {
       await filled();
@@ -1597,6 +1823,8 @@ describe('TeamEdit', () => {
       expect(url()).toBe('/admin/teams/t-admins');
       expect(name().value).toBe('Typed meanwhile');
       expect(unavailable(button('Delete team'))).toBe(false);
+      // The question was at the bottom of the page and the banner is at the top: the focus goes to the banner.
+      expect(focused()).toBe(alert);
     });
 
     it('says a lost permission for a 403', async () => {

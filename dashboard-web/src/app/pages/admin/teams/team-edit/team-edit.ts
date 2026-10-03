@@ -50,6 +50,7 @@ const PREVIEW_MEMBER = 'member';
  * Users are listed by username; the ids the body carries follow that order, whatever order the boxes were ticked
  * in, and a member the lists no longer know (the user was deleted meanwhile) is shown, ticked and labelled, and
  * sent with the rest until it is unticked: nothing is dropped unseen, and the API says if it refuses it.
+ * Saving replaces the team's members and access with what is shown here, and the page says so beside Save.
  *
  * Built like the role and user pages (see `RoleEdit`, `UserEdit`): `ngNoForm`, `ngModel` bound to signals, the
  * checks made here, and a failure shown where it belongs (`adminFailure`): a field's messages under the field
@@ -79,6 +80,8 @@ export class TeamEdit {
     viewChild<ElementRef<HTMLTextAreaElement>>('descriptionField');
   private readonly filterField = viewChild<ElementRef<HTMLInputElement>>('filterField');
   private readonly editor = viewChild(GrantsEditor);
+  /** The failure banner: it can sit far above the button that was used, so focus goes there when it appears. */
+  private readonly failureBanner = viewChild<ElementRef<HTMLElement>>('failureBanner');
   /** The link of the "no longer exists" notice: focus goes there when it replaces the form. */
   private readonly goneLink = viewChild<ElementRef<HTMLAnchorElement>>('goneLink');
 
@@ -209,7 +212,8 @@ export class TeamEdit {
       const messages = Object.entries(server)
         .filter(([path]) => belongsToField(path, field))
         .flatMap(([, texts]) => texts);
-      if (messages.length > 0) errors[field] = messages.join(' ');
+      // Each message once: `memberIds[0]` and `memberIds[2]` may say the same.
+      if (messages.length > 0) errors[field] = [...new Set(messages)].join(' ');
     }
     return errors;
   });
@@ -340,6 +344,9 @@ export class TeamEdit {
       if (failure.kind === 'conflict' && failure.code === 'name_taken') {
         this.nameTaken.set(true);
         this.focusAfterRender(this.nameField);
+      } else {
+        // The banner is at the top of a page that may be long: it takes the focus, as the name does for a taken name.
+        this.focusAfterRender(this.failureBanner);
       }
       return;
     }
@@ -348,7 +355,13 @@ export class TeamEdit {
     // Messages for request paths this form has no field for are not lost: they join the banner.
     if (unplaced.length > 0)
       this.failure.set({ ...failure, kind: 'failed', message: unplaced.join(' ') });
-    this.focusFirstError();
+    // A member the API does not know may be a user deleted since the lists were read: read them again, so that the
+    // page can label the member it is about (the unknown-member row) instead of leaving a bare id unexplained.
+    if (Object.keys(failure.fieldErrors).some((path) => belongsToField(path, 'memberIds'))) {
+      void this.store.refresh();
+    }
+    // With nothing to focus but the banner (only paths the form has no field for), the banner takes it.
+    if (!this.focusFirstError() && unplaced.length > 0) this.focusAfterRender(this.failureBanner);
   }
 
   /** The draft for the page's URL: the team, or an empty one for a new team. */
@@ -380,7 +393,9 @@ export class TeamEdit {
     const first = FIELDS.find((field) => (field === 'grants' ? grantsWrong : errors[field]));
     if (first === undefined) return false;
     if (!this.destroyed()) {
-      if (first === 'grants') this.editor()?.focusProblem();
+      // After the render: the API's messages reach the editor with it, and focusProblem reads what it shows.
+      if (first === 'grants')
+        afterNextRender(() => this.editor()?.focusProblem(), { injector: this.injector });
       else {
         // The members' message goes to the filter: the first checkbox may be one the filter hides.
         this.focusAfterRender(

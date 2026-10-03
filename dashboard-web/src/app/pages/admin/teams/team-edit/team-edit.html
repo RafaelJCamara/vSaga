@@ -9,7 +9,10 @@
   </div>
 
   @if (failure(); as problem) {
-    <div id="team-failure" class="banner banner--error" role="alert">{{ problem.message }}</div>
+    <!-- tabindex -1: the focus goes here when a failure appears, since the banner may be far above the button that was used. -->
+    <div #failureBanner id="team-failure" tabindex="-1" class="banner banner--error" role="alert">
+      {{ problem.message }}
+    </div>
   }
   <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
   <div role="status">
@@ -85,7 +88,8 @@
         <span class="muted" role="status">{{ shown() }}</span>
       </div>
       <span id="team-members-selected" class="field-hint">{{ selected() }}</span>
-      <div class="member-list">
+      <!-- Enter on a checkbox would submit the whole form, and a team is replaced as a whole. -->
+      <div class="member-list" (keydown.enter)="$event.preventDefault()">
         @for (user of visible(); track user.id) {
           <label class="member">
             <input
@@ -94,8 +98,11 @@
               (change)="toggle(user.id, $event)"
             />
             <span
-              >{{ user.username }} <span class="muted">{{ user.displayName }}</span></span
-            >
+              >{{ user.username }} <span class="muted">{{ user.displayName }}</span>
+              @if (!user.isEnabled) {
+                &ngsp;<span class="chip chip--muted">Disabled</span>
+              }
+            </span>
           </label>
         }
         @for (id of unknownMembers(); track id) {
@@ -110,10 +117,12 @@
             >
           </label>
         }
-        @if (store.users().length === 0) {
-          <p class="muted">There are no users yet.</p>
-        } @else if (visible().length === 0) {
-          <p class="muted">No user matches “{{ filter().trim() }}”.</p>
+        @if (unknownMembers().length === 0) {
+          @if (store.users().length === 0) {
+            <p class="muted">There are no users yet.</p>
+          } @else if (visible().length === 0) {
+            <p class="muted">No user matches “{{ filter().trim() }}”.</p>
+          }
         }
       </div>
       @if (errors().memberIds; as message) {
@@ -141,8 +150,18 @@
       <app-access-summary [access]="access()" perspective="team" [origins]="origins()" />
     </section>
 
+    @if (!creating()) {
+      <p id="team-save-hint" class="field-hint">
+        Saving replaces the team's members and access with what is shown here.
+      </p>
+    }
     <div class="actions">
-      <button type="submit" class="btn" [disabled]="working()">
+      <button
+        type="submit"
+        class="btn"
+        [disabled]="working()"
+        [attr.aria-describedby]="creating() ? null : 'team-save-hint'"
+      >
         {{ busy() ? 'Saving…' : creating() ? 'Create team' : 'Save' }}
       </button>
       <!-- Not "Cancel" on a team that exists: the delete's own question has a Cancel, and two would be ambiguous. -->
