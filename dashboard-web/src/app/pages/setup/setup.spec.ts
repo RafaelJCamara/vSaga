@@ -50,6 +50,9 @@ describe('Setup', () => {
   const submitButton = () => el().querySelector<HTMLButtonElement>('button[type="submit"]');
   const failureBanner = () => el().querySelector<HTMLElement>('.banner--error');
   const focused = () => document.activeElement;
+  /** Whether a button says it is unavailable (aria-disabled): it stays focusable, so the keyboard keeps its place. */
+  const unavailable = (el: HTMLElement | null | undefined) =>
+    el?.getAttribute('aria-disabled') === 'true';
 
   function type(id: string, value: string): void {
     const field = input(id);
@@ -294,7 +297,7 @@ describe('Setup', () => {
       fill();
 
       await submit();
-      expect(submitButton()?.disabled).toBe(true);
+      expect(unavailable(submitButton())).toBe(true);
       expect(submitButton()?.textContent).toContain('Creating');
       submitButton()!
         .closest('form')!
@@ -305,6 +308,26 @@ describe('Setup', () => {
       finish();
       await settle();
       expect(navigate).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the cursor on the button while the administrator is created: the button is not disabled, so the keyboard keeps its place', async () => {
+      await create();
+      let finish!: () => void;
+      auth.setup.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+      fill();
+      // jsdom does not move the focus on a click: put it where a keyboard user has it.
+      submitButton()!.focus();
+      expect(focused()).toBe(submitButton());
+
+      await submit();
+
+      expect(auth.setup).toHaveBeenCalledTimes(1);
+      expect(submitButton()?.disabled).toBe(false);
+      expect(unavailable(submitButton())).toBe(true);
+      expect(focused()).toBe(submitButton());
+
+      finish();
+      await settle();
     });
 
     it('keeps the form on the page while the administrator is created, though the session reads closed by then', async () => {
@@ -425,7 +448,7 @@ describe('Setup', () => {
       expect(failureBanner()).toBeNull();
       expect(input('password').value).toBe('a long enough password');
       expect(input('username').value).toBe('admin');
-      expect(submitButton()?.disabled).toBe(false);
+      expect(unavailable(submitButton())).toBe(false);
       expect(navigate).not.toHaveBeenCalled();
     });
 
@@ -700,20 +723,29 @@ describe('Setup', () => {
       expect(el().querySelector('#setup-code')).not.toBeNull();
     });
 
-    it('is disabled while it checks', async () => {
+    it('says it is busy while it checks, looks once however often it is pressed, and keeps the cursor on the button', async () => {
       await create(CLOSED);
       let finish!: () => void;
       auth.refresh.mockReturnValue(new Promise((resolve) => (finish = () => resolve('anonymous'))));
 
       const check = el().querySelector<HTMLButtonElement>('button.btn')!;
+      // jsdom does not move the focus on a click: put it where a keyboard user has it.
+      check.focus();
       check.click();
       fixture.detectChanges();
-      expect(check.disabled).toBe(true);
+      expect(unavailable(check)).toBe(true);
+      expect(check.disabled).toBe(false);
       expect(check.textContent).toContain('Checking');
+      expect(focused()).toBe(check);
+
+      check.click();
+      fixture.detectChanges();
+      expect(auth.refresh).toHaveBeenCalledTimes(1);
 
       finish();
       await settle();
-      expect(check.disabled).toBe(false);
+      expect(unavailable(check)).toBe(false);
+      expect(focused()).toBe(check);
     });
   });
 });

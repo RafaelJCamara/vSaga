@@ -1,8 +1,15 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  Injector,
+  afterNextRender,
+  inject,
+} from '@angular/core';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { Routes, provideRouter } from '@angular/router';
+import { Router, RouterLink, Routes, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { adminData, answerLoad, answerReload } from '../../../testing/admin';
 import { AdminStore } from '../admin.store';
@@ -288,5 +295,233 @@ describe('AdminShell', () => {
       await settle();
       expect(page()).not.toBeNull();
     });
+  });
+});
+
+// Where the keyboard focus is after a navigation inside the area. jsdom's click() does not move the focus: the
+// specs put it where a user's would be with focus(), and look at document.activeElement after.
+@Component({
+  selector: 'app-list-stub',
+  imports: [RouterLink],
+  template: `<h2>Users</h2>
+    <a id="open" routerLink="/admin/users/u1">alice</a>`,
+  changeDetection: ChangeDetectionStrategy.Eager,
+})
+class ListStub {}
+
+@Component({
+  selector: 'app-edit-stub',
+  imports: [RouterLink],
+  template: `<h2>alice</h2>
+    <button id="act" type="button">Delete</button>
+    <h3>Not the page heading</h3>`,
+  changeDetection: ChangeDetectionStrategy.Eager,
+})
+class EditStub {}
+
+@Component({
+  selector: 'app-focusing-stub',
+  template: `<h2>Mine</h2>
+    <input id="mine" />`,
+  changeDetection: ChangeDetectionStrategy.Eager,
+})
+class FocusingStub {
+  constructor() {
+    const host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+    afterNextRender(() => host.querySelector<HTMLInputElement>('#mine')?.focus(), {
+      injector: inject(Injector),
+    });
+  }
+}
+
+@Component({
+  selector: 'app-headless-stub',
+  template: '<p>This page has no heading.</p>',
+  changeDetection: ChangeDetectionStrategy.Eager,
+})
+class HeadlessStub {}
+
+const FOCUS_ROUTES: Routes = [
+  {
+    path: 'admin',
+    children: [
+      {
+        path: '',
+        component: AdminShell,
+        providers: [AdminStore],
+        children: [
+          {
+            path: 'users',
+            children: [
+              { path: '', component: ListStub },
+              { path: ':id', component: EditStub },
+            ],
+          },
+          { path: 'teams', component: HeadlessStub },
+          { path: 'focusing', component: FocusingStub },
+        ],
+      },
+    ],
+  },
+  { path: 'outside', component: HeadlessStub },
+  { path: 'outside-too', component: HeadlessStub },
+];
+
+describe('AdminShell: the focus after a navigation inside the area', () => {
+  let http: HttpTestingController;
+  let harness: RouterTestingHarness;
+
+  beforeEach(async () => {
+    TestBed.configureTestingModule({
+      providers: [provideRouter(FOCUS_ROUTES), provideHttpClient(), provideHttpClientTesting()],
+    });
+    http = TestBed.inject(HttpTestingController);
+    harness = await RouterTestingHarness.create();
+  });
+
+  afterEach(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    http.verify();
+  });
+
+  const el = () => harness.routeNativeElement as HTMLElement;
+  const focused = () => document.activeElement;
+  const heading = () => el().querySelector<HTMLElement>('router-outlet + * h2');
+  const tab = (label: string) =>
+    Array.from(el().querySelectorAll<HTMLAnchorElement>('nav[aria-label="Administration"] a')).find(
+      (a) => a.textContent?.trim() === label,
+    )!;
+  const settle = async () => {
+    await new Promise((resolve) => setTimeout(resolve));
+    harness.detectChanges();
+    await harness.fixture.whenStable();
+    await new Promise((resolve) => setTimeout(resolve));
+    harness.detectChanges();
+  };
+
+  async function open(url: string): Promise<void> {
+    await harness.navigateByUrl(url);
+    answerLoad(http);
+    await settle();
+  }
+
+  it('does not take the focus when the area is opened: nothing was followed from it', async () => {
+    await open('/admin/users');
+
+    expect(focused()).toBe(document.body);
+    expect(heading()?.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('puts it on the heading of the page that has arrived when the link that was followed went with the page', async () => {
+    await open('/admin/users');
+    const link = el().querySelector<HTMLAnchorElement>('#open')!;
+    link.focus();
+    expect(focused()).toBe(link);
+
+    link.click();
+    await settle();
+
+    expect(heading()?.textContent).toBe('alice');
+    expect(focused()).toBe(heading());
+    // Focusable by script only: it is not a stop of the Tab key.
+    expect(heading()?.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('does the same when a page is left by a navigation of its own (a create or a delete that returns to the list)', async () => {
+    await open('/admin/users/u1');
+    const act = el().querySelector<HTMLButtonElement>('#act')!;
+    act.focus();
+    expect(focused()).toBe(act);
+
+    await TestBed.inject(Router).navigateByUrl('/admin/users');
+    await settle();
+
+    expect(heading()?.textContent).toBe('Users');
+    expect(focused()).toBe(heading());
+  });
+
+  it('puts it on the h2, the heading of the page, not on a heading below it', async () => {
+    await open('/admin/users');
+    el().querySelector<HTMLAnchorElement>('#open')!.focus();
+    el().querySelector<HTMLAnchorElement>('#open')!.click();
+    await settle();
+
+    expect(focused()?.tagName).toBe('H2');
+    expect(el().querySelector('h3')?.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('does not take the focus from a tab link that still has it', async () => {
+    await open('/admin/users/u1');
+    const users = tab('Users');
+    users.focus();
+
+    users.click();
+    await settle();
+
+    expect(heading()?.textContent).toBe('Users');
+    expect(focused()).toBe(users);
+  });
+
+  it('does not take the focus from what the page that arrived has focused itself', async () => {
+    await open('/admin/users');
+    el().querySelector<HTMLAnchorElement>('#open')!.focus();
+
+    await TestBed.inject(Router).navigateByUrl('/admin/focusing');
+    await settle();
+
+    expect(focused()).toBe(el().querySelector('#mine'));
+  });
+
+  it('leaves the focus alone, and breaks nothing, on a page with no heading', async () => {
+    await open('/admin/users');
+    el().querySelector<HTMLAnchorElement>('#open')!.focus();
+
+    await TestBed.inject(Router).navigateByUrl('/admin/teams');
+    await settle();
+
+    expect(el().querySelector('h2')).toBeNull();
+    expect(focused()).toBe(document.body);
+  });
+
+  it('does it for every navigation, not only the first', async () => {
+    await open('/admin/users');
+    const router = TestBed.inject(Router);
+
+    for (const [url, text] of [
+      ['/admin/users/u1', 'alice'],
+      ['/admin/users', 'Users'],
+      ['/admin/users/u2', 'alice'],
+    ]) {
+      el().querySelector<HTMLElement>('#open, #act')?.focus();
+      await router.navigateByUrl(url);
+      await settle();
+      expect(heading()?.textContent, url).toBe(text);
+      expect(focused(), url).toBe(heading());
+    }
+  });
+
+  it('leaves nothing subscribed to the router each time the area is left, and raises nothing when navigation goes on outside it', async () => {
+    const router = TestBed.inject(Router);
+    const observers = () => (router.events as unknown as { observers: unknown[] }).observers.length;
+    const errors: unknown[] = [];
+    const onError = (event: ErrorEvent) => errors.push(event);
+    window.addEventListener('error', onError);
+
+    // The router and the test harness keep something for themselves after a first visit: what must not grow is
+    // what the area adds, so a second visit leaves as many observers behind as the first.
+    await open('/admin/users');
+    expect(observers()).toBeGreaterThan(1);
+    await router.navigateByUrl('/outside');
+    await settle();
+    const afterFirst = observers();
+    await open('/admin/users');
+    await router.navigateByUrl('/outside-too');
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve));
+    window.removeEventListener('error', onError);
+
+    expect(observers()).toBe(afterFirst);
+    expect(errors).toEqual([]);
+    expect(focused()).toBe(document.body);
   });
 });

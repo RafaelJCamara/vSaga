@@ -145,6 +145,7 @@ export class Setup {
 
   /** Looks at the session again, for a setup that has been opened (or closed for good) meanwhile. */
   async checkAgain(): Promise<void> {
+    if (this.checking()) return;
     this.checking.set(true);
     this.checkMessage.set(null);
     await this.auth.refresh();

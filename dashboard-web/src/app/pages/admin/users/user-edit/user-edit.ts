@@ -92,6 +92,10 @@ export class UserEdit {
   private readonly newPasswordField = viewChild<ElementRef<HTMLInputElement>>('newPasswordField');
   private readonly resetConfirmationField =
     viewChild<ElementRef<HTMLInputElement>>('resetConfirmationField');
+  /** The banners of a failure, above the form and in the account section: they can sit far above the button that
+   *  was used, so focus goes to one when it appears. */
+  private readonly failureBanner = viewChild<ElementRef<HTMLElement>>('failureBanner');
+  private readonly actionBanner = viewChild<ElementRef<HTMLElement>>('actionBanner');
   /** The link of the "no longer exists" notice: focus goes there when it replaces the form. */
   private readonly goneLink = viewChild<ElementRef<HTMLAnchorElement>>('goneLink');
 
@@ -467,7 +471,9 @@ export class UserEdit {
         this.resetServerErrors.set(placed);
         if (unplaced.length > 0)
           this.actionFailure.set({ ...failure, kind: 'failed', message: unplaced.join(' ') });
-        else this.focusAfterRender(this.newPasswordField);
+        // The field the API named takes the focus; with only paths the form has no field for, the banner does.
+        if (placed['newPassword'] !== undefined) this.focusAfterRender(this.newPasswordField);
+        else if (unplaced.length > 0) this.focusAfterRender(this.actionBanner);
       } else this.refusedAction(failure);
       return;
     }
@@ -516,6 +522,9 @@ export class UserEdit {
       if (failure.kind === 'conflict' && failure.code === 'username_taken') {
         this.usernameTaken.set(true);
         this.focusAfterRender(this.usernameField);
+      } else {
+        // A rule (last_administrator), a lost permission, the network: the banner takes the focus.
+        this.focusAfterRender(this.failureBanner);
       }
       return;
     }
@@ -524,13 +533,18 @@ export class UserEdit {
     // Messages for request paths this form has no field for are not lost: they join the banner.
     if (unplaced.length > 0)
       this.failure.set({ ...failure, kind: 'failed', message: unplaced.join(' ') });
-    this.focusFirstError();
+    // With nothing to focus but the banner (only paths the form has no field for), the banner takes it.
+    if (!this.focusFirstError() && unplaced.length > 0) this.focusAfterRender(this.failureBanner);
   }
 
   /** Shows a refusal of Reset, Unlock or Delete in the account section. */
   private refusedAction(failure: AdminFailure): void {
-    if (failure.kind === 'gone') this.gone.set(true);
-    else this.actionFailure.set(failure);
+    if (failure.kind === 'gone') {
+      this.gone.set(true);
+      return;
+    }
+    this.actionFailure.set(failure);
+    this.focusAfterRender(this.actionBanner);
   }
 
   /** The draft for the page's URL: the user, or an empty one for a new user. */

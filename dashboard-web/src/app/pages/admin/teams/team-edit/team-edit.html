@@ -165,7 +165,7 @@
       <button
         type="submit"
         class="btn"
-        [disabled]="working()"
+        [attr.aria-disabled]="working() ? 'true' : null"
         [attr.aria-describedby]="creating() ? null : 'team-save-hint'"
       >
         {{ busy() ? 'Saving…' : creating() ? 'Create team' : 'Save' }}

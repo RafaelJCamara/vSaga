@@ -19,7 +19,10 @@
   }
 
   @if (failure(); as problem) {
-    <div id="role-failure" class="banner banner--error" role="alert">{{ problem.message }}</div>
+    <!-- tabindex -1: the focus goes here when a failure appears (a rule, a lost permission), since the banner sits above the button that was used. -->
+    <div #failureBanner id="role-failure" tabindex="-1" class="banner banner--error" role="alert">
+      {{ problem.message }}
+    </div>
   }
   <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
   <div role="status">
@@ -130,7 +133,12 @@
         }
         <a class="btn btn--quiet" routerLink="/admin/roles">Back to the roles</a>
       } @else {
-        <button type="submit" class="btn" [disabled]="busy() || deleting()">
+        <!-- aria-disabled, not disabled: the button keeps the focus it holds while the request runs (save() refuses meanwhile). -->
+        <button
+          type="submit"
+          class="btn"
+          [attr.aria-disabled]="busy() || deleting() ? 'true' : null"
+        >
           {{ busy() ? 'Saving…' : creating() ? 'Create role' : 'Save' }}
         </button>
         <!-- Not "Cancel" on a role that exists: the delete's own question has a Cancel, and two would be ambiguous. -->

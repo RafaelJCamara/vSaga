@@ -374,7 +374,7 @@ describe('TeamEdit', () => {
         type(name(), 'Payments');
 
         await save();
-        expect(submit().disabled).toBe(true);
+        expect(unavailable(submit())).toBe(true);
         expect(submit().textContent?.trim()).toBe('Saving…');
         el()
           .querySelector('form.card')!
@@ -408,7 +408,7 @@ describe('TeamEdit', () => {
         await reloaded();
 
         expect(navigate).toHaveBeenCalledWith('/admin/teams');
-        expect(submit().disabled).toBe(true);
+        expect(unavailable(submit())).toBe(true);
         expect(submit().textContent?.trim()).toBe('Saving…');
       });
     });
@@ -744,7 +744,7 @@ describe('TeamEdit', () => {
         expect(name().value).toBe('Second');
         expect(box('Bob').checked).toBe(true);
         expect(banner('.banner--success')).toBeNull();
-        expect(submit().disabled).toBe(false);
+        expect(unavailable(submit())).toBe(false);
       });
 
       it('is replaced by what the API stored when nothing was typed meanwhile', async () => {
@@ -1590,7 +1590,7 @@ describe('TeamEdit', () => {
       expect(focused()).toBe(name());
       expect(name().value).toBe('Payments');
       expect(url()).toBe('/admin/teams/new');
-      expect(submit().disabled).toBe(false);
+      expect(unavailable(submit())).toBe(false);
     });
 
     it('ends the mark on the name when it is changed', async () => {
@@ -1629,7 +1629,7 @@ describe('TeamEdit', () => {
       expect(name().value).toBe('Admins renamed');
       expect(grantGroups()).toHaveLength(0);
       expect(banner('.banner--success')).toBeNull();
-      expect(submit().disabled).toBe(false);
+      expect(unavailable(submit())).toBe(false);
     });
 
     it('keeps the draft for a last-administrator refusal when the administrator is taken out of the team', async () => {
@@ -1694,7 +1694,7 @@ describe('TeamEdit', () => {
       expect(name().value).toBe('Changed');
       expect(box('Bob').checked).toBe(true);
       expect(name().getAttribute('aria-invalid')).toBeNull();
-      expect(submit().disabled).toBe(false);
+      expect(unavailable(submit())).toBe(false);
     });
   });
 
@@ -1965,7 +1965,7 @@ describe('TeamEdit', () => {
       button('Yes, delete')!.click();
       await settle();
 
-      expect(submit().disabled).toBe(true);
+      expect(unavailable(submit())).toBe(true);
       el()
         .querySelector('form.card')!
         .dispatchEvent(new Event('submit', { cancelable: true }));
@@ -2001,5 +2001,40 @@ describe('TeamEdit', () => {
       regions.filter((r) => r.children.length === 0 && r.textContent?.trim() === ''),
     ).toHaveLength(2);
     expect(count()).toBe('4 users');
+  });
+
+  // jsdom's click() does not move the focus: the spec puts it on the button with focus() and looks at it after.
+  describe('where the keyboard focus is', () => {
+    it('stays on Save while the request runs and after the answer, and the button is not natively disabled', async () => {
+      await open('/admin/teams/t-pay');
+      submit().focus();
+      expect(focused()).toBe(submit());
+
+      await save();
+
+      expect(unavailable(submit())).toBe(true);
+      // A natively disabled button loses the focus it holds: this one must stay focusable.
+      expect(submit().disabled).toBe(false);
+      expect(focused()).toBe(submit());
+      write('PUT', '/api/admin/teams/t-pay').flush(PAYMENTS);
+      await reloaded(teams(PAYMENTS, OPERATIONS));
+
+      expect(focused()).toBe(submit());
+    });
+
+    it('refuses what Save is asked while it runs, whichever way it is asked', async () => {
+      await open('/admin/teams/t-pay');
+      submit().focus();
+      await save();
+
+      submit().click();
+      el()
+        .querySelector('form.card')!
+        .dispatchEvent(new Event('submit', { cancelable: true }));
+      await settle();
+
+      write('PUT', '/api/admin/teams/t-pay').flush(PAYMENTS);
+      await reloaded(teams(PAYMENTS, OPERATIONS));
+    });
   });
 });

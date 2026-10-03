@@ -20,7 +20,10 @@
   </div>
 
   @if (failure(); as problem) {
-    <div id="user-failure" class="banner banner--error" role="alert">{{ problem.message }}</div>
+    <!-- tabindex -1: the focus goes here when a failure appears (a rule, a lost permission), since the banner sits above the button that was used. -->
+    <div #failureBanner id="user-failure" tabindex="-1" class="banner banner--error" role="alert">
+      {{ problem.message }}
+    </div>
   }
   <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
   <div role="status">
@@ -160,7 +163,7 @@
             name="isEnabled"
             aria-describedby="user-enabled-hint"
             [checked]="isEnabled()"
-            [disabled]="own() || working()"
+            [disabled]="own()"
             (change)="setEnabled($event)"
           />
           Enabled
@@ -242,7 +245,8 @@
     </section>
 
     <div class="actions">
-      <button type="submit" class="btn" [disabled]="working()">
+      <!-- aria-disabled, not disabled: the button keeps the focus it holds while the request runs (save() refuses meanwhile). -->
+      <button type="submit" class="btn" [attr.aria-disabled]="working() ? 'true' : null">
         {{ busy() ? 'Saving…' : creating() ? 'Create user' : 'Save' }}
       </button>
       <!-- Not "Cancel" on a user that exists: the delete's own question has a Cancel, and two would be ambiguous. -->
@@ -257,7 +261,13 @@
       <h3 id="user-account-title" class="sub-title">Account</h3>
 
       @if (actionFailure(); as problem) {
-        <div id="user-action-failure" class="banner banner--error" role="alert">
+        <div
+          #actionBanner
+          id="user-action-failure"
+          tabindex="-1"
+          class="banner banner--error"
+          role="alert"
+        >
           {{ problem.message }}
         </div>
       }
@@ -285,7 +295,12 @@
               <app-local-time [value]="until" format="datetime" />
             }
           </span>
-          <button type="button" class="btn" [disabled]="working()" (click)="unlock()">
+          <button
+            type="button"
+            class="btn"
+            [attr.aria-disabled]="working() ? 'true' : null"
+            (click)="unlock()"
+          >
             Unlock
           </button>
         }
@@ -299,6 +314,7 @@
           ngNoForm
           novalidate
           (submit)="$event.preventDefault(); reset()"
+          (keydown.escape)="toggleReset()"
         >
           @if (own()) {
             <p class="field-hint">
@@ -371,7 +387,7 @@
             </label>
           </div>
           <div class="actions">
-            <button type="submit" class="btn" [disabled]="working()">
+            <button type="submit" class="btn" [attr.aria-disabled]="working() ? 'true' : null">
               {{ resetting() ? 'Setting…' : 'Set password' }}
             </button>
             <button type="button" class="btn btn--quiet" (click)="toggleReset()">

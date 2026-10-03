@@ -114,7 +114,8 @@
       </div>
 
       <div class="actions">
-        <button type="submit" class="btn" [disabled]="busy()">
+        <!-- aria-disabled, not disabled: the button keeps the focus it holds while the request runs (submit() refuses meanwhile). -->
+        <button type="submit" class="btn" [attr.aria-disabled]="busy() ? 'true' : null">
           {{ busy() ? 'Changing…' : 'Change password' }}
         </button>
       </div>

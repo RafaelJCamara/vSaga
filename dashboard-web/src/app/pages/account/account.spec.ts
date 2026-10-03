@@ -48,6 +48,9 @@ describe('Account', () => {
   const submitButton = () => el().querySelector<HTMLButtonElement>('button[type="submit"]');
   const failureBanner = () => el().querySelector<HTMLElement>('.banner--error');
   const focused = () => document.activeElement;
+  /** Whether a button says it is unavailable (aria-disabled): it stays focusable, so the keyboard keeps its place. */
+  const unavailable = (el: HTMLElement | null | undefined) =>
+    el?.getAttribute('aria-disabled') === 'true';
 
   function type(id: string, value: string): void {
     const field = input(id);
@@ -390,7 +393,7 @@ describe('Account', () => {
       fill();
 
       await submit();
-      expect(submitButton()?.disabled).toBe(true);
+      expect(unavailable(submitButton())).toBe(true);
       expect(submitButton()?.textContent).toContain('Changing');
       submitButton()!
         .closest('form')!
@@ -401,6 +404,28 @@ describe('Account', () => {
       finish();
       await settle();
       expect(navigate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('where the keyboard cursor is', () => {
+    it('stays on the button while the password is changed: the button is not disabled, so the keyboard keeps its place', async () => {
+      await create();
+      let finish!: () => void;
+      auth.changePassword.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+      fill();
+      // jsdom does not move the focus on a click: put it where a keyboard user has it.
+      submitButton()!.focus();
+      expect(focused()).toBe(submitButton());
+
+      await submit();
+
+      expect(auth.changePassword).toHaveBeenCalledTimes(1);
+      expect(submitButton()?.disabled).toBe(false);
+      expect(unavailable(submitButton())).toBe(true);
+      expect(focused()).toBe(submitButton());
+
+      finish();
+      await settle();
     });
   });
 
@@ -426,7 +451,7 @@ describe('Account', () => {
       // Nothing else needs typing again.
       expect(input('new').value).toBe('a brand new password');
       expect(input('confirmation').value).toBe('a brand new password');
-      expect(submitButton()?.disabled).toBe(false);
+      expect(unavailable(submitButton())).toBe(false);
       expect(navigate).not.toHaveBeenCalled();
     });
 

@@ -99,7 +99,7 @@ code, .mono {
   color: var(--text-muted);
 }
 
-.btn:hover:not(:disabled),
+.btn:hover:not(:disabled):not([aria-disabled='true']),
 .btn[aria-pressed='true'],
 .btn[aria-expanded='true'] {
   border-color: var(--accent);
@@ -111,7 +111,10 @@ code, .mono {
   background: var(--accent-soft);
 }
 
-.btn:disabled {
+/* `aria-disabled` is the disabled look of a button that must keep the keyboard focus it holds while it is busy
+   (a native `disabled` button drops it): the page refuses the action itself. */
+.btn:disabled,
+.btn[aria-disabled='true'] {
   opacity: 0.5;
   cursor: default;
 }
@@ -128,7 +131,7 @@ code, .mono {
   color: #fff;
 }
 
-.btn--danger:hover:not(:disabled) {
+.btn--danger:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--status-failed);
   color: #fff;
   filter: brightness(1.1);

@@ -56,6 +56,9 @@ describe('Login', () => {
   const submitButton = () => el().querySelector<HTMLButtonElement>('button[type="submit"]');
   const banner = (selector = '.banner') => el().querySelector<HTMLElement>(selector);
   const focused = () => document.activeElement;
+  /** Whether a button says it is unavailable (aria-disabled): it stays focusable, so the keyboard keeps its place. */
+  const unavailable = (el: HTMLElement | null | undefined) =>
+    el?.getAttribute('aria-disabled') === 'true';
 
   function type(input: HTMLInputElement | null, value: string): void {
     input!.value = value;
@@ -133,7 +136,7 @@ describe('Login', () => {
 
       expect(navigate.mock.calls.map(([url]) => url)).toEqual(['/gone/for/good', '/sagas']);
       expect(fixture.componentInstance.password()).toBe('');
-      expect(submitButton()?.disabled).toBe(false);
+      expect(unavailable(submitButton())).toBe(false);
     });
 
     it('goes to the saga list when the navigation to the return URL was cancelled', async () => {
@@ -230,7 +233,7 @@ describe('Login', () => {
       type(password(), 'correct horse');
       submitButton()!.click();
       await settle();
-      expect(submitButton()?.disabled).toBe(true);
+      expect(unavailable(submitButton())).toBe(true);
       expect(submitButton()?.textContent).toContain('Signing in');
       submitButton()!
         .closest('form')!
@@ -243,7 +246,29 @@ describe('Login', () => {
       await settle();
 
       expect(navigate).toHaveBeenCalledTimes(1);
+      expect(unavailable(submitButton())).toBe(false);
+    });
+
+    it('keeps the cursor on the button while it signs in: the button is not disabled, so the keyboard keeps its place', async () => {
+      await create();
+      let finish!: () => void;
+      auth.login.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+      type(username(), 'alice');
+      type(password(), 'correct horse');
+      // jsdom does not move the focus on a click: put it where a keyboard user has it.
+      submitButton()!.focus();
+      expect(focused()).toBe(submitButton());
+
+      submitButton()!.click();
+      await settle();
+
+      expect(auth.login).toHaveBeenCalledTimes(1);
       expect(submitButton()?.disabled).toBe(false);
+      expect(unavailable(submitButton())).toBe(true);
+      expect(focused()).toBe(submitButton());
+
+      finish();
+      await settle();
     });
 
     it('does not reload the page for a submit: the form is handled here', async () => {
@@ -305,7 +330,7 @@ describe('Login', () => {
       expect(focused()).toBe(password());
       expect(navigate).not.toHaveBeenCalled();
       // The button is back, so the next attempt can be made.
-      expect(submitButton()?.disabled).toBe(false);
+      expect(unavailable(submitButton())).toBe(false);
     });
 
     it('clears the failure when the next attempt starts', async () => {

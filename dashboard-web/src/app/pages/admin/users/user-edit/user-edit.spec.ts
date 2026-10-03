@@ -348,7 +348,7 @@ describe('UserEdit', () => {
         await fixtureDraft();
 
         await save();
-        expect(submit().disabled).toBe(true);
+        expect(unavailable(submit())).toBe(true);
         expect(submit().textContent?.trim()).toBe('Saving…');
         el()
           .querySelector('form.card')!
@@ -650,7 +650,7 @@ describe('UserEdit', () => {
         expect(alert.textContent).toContain('About what was sent, which you have changed since.');
         expect(focused()).toBe(displayName());
         expect(displayName().value).toBe('Changed meanwhile');
-        expect(submit().disabled).toBe(false);
+        expect(unavailable(submit())).toBe(false);
       });
 
       it('does not put a message about a grant on another grant when a grant was removed while the request ran', async () => {
@@ -780,7 +780,7 @@ describe('UserEdit', () => {
         expect(focused()).toBe(username());
         expect(username().value).toBe('alice');
         expect(url()).toBe('/admin/users/new');
-        expect(submit().disabled).toBe(false);
+        expect(unavailable(submit())).toBe(false);
       });
 
       it('ends the mark on the username when it is changed', async () => {
@@ -829,7 +829,7 @@ describe('UserEdit', () => {
         await reloaded();
 
         expect(navigate).toHaveBeenCalledWith('/admin/users');
-        expect(submit().disabled).toBe(true);
+        expect(unavailable(submit())).toBe(true);
         expect(submit().textContent?.trim()).toBe('Saving…');
         expect(password().value).toBe('');
         expect(confirmation().value).toBe('');
@@ -1114,7 +1114,7 @@ describe('UserEdit', () => {
         expect(displayName().value).toBe('Changed');
         expect(enabled().checked).toBe(false);
         expect(banner('.banner--success')).toBeNull();
-        expect(submit().disabled).toBe(false);
+        expect(unavailable(submit())).toBe(false);
       });
 
       it('keeps the draft for a last-administrator refusal when the last all-types administrator grant is removed', async () => {
@@ -1190,7 +1190,7 @@ describe('UserEdit', () => {
         expect(displayName().value).toBe('Second');
         expect(grantBox(0, 'PaymentSaga').checked).toBe(true);
         expect(banner('.banner--success')).toBeNull();
-        expect(submit().disabled).toBe(false);
+        expect(unavailable(submit())).toBe(false);
       });
 
       it('is replaced by what the API stored when nothing was typed meanwhile', async () => {
@@ -1758,7 +1758,7 @@ describe('UserEdit', () => {
       await filledReset();
 
       await setIt();
-      expect(setPassword().disabled).toBe(true);
+      expect(unavailable(setPassword())).toBe(true);
       expect(setPassword().textContent?.trim()).toBe('Setting…');
       resetForm()!.dispatchEvent(new Event('submit', { cancelable: true }));
       await settle();
@@ -1809,7 +1809,7 @@ describe('UserEdit', () => {
         expect(el().querySelector('#user-action-failure')?.getAttribute('role')).toBe('alert');
         expect(resetForm()).not.toBeNull();
         expect(newPassword().value).toBe(resetPasswordRequest.newPassword);
-        expect(setPassword().disabled).toBe(false);
+        expect(unavailable(setPassword())).toBe(false);
       },
     );
 
@@ -1922,7 +1922,7 @@ describe('UserEdit', () => {
       button('Unlock')!.click();
       await settle();
 
-      expect((button('Unlock') as HTMLButtonElement).disabled).toBe(true);
+      expect(unavailable(button('Unlock'))).toBe(true);
       // The attribute is one guard; the page's own is that nothing starts while something runs.
       const page = harness.routeDebugElement!.componentInstance as unknown as {
         unlock(): Promise<void>;
@@ -1947,7 +1947,7 @@ describe('UserEdit', () => {
 
       expect(el().querySelector('#user-action-failure')?.textContent).toContain(text);
       expect(button('Unlock')).toBeDefined();
-      expect((button('Unlock') as HTMLButtonElement).disabled).toBe(false);
+      expect(unavailable(button('Unlock'))).toBe(false);
     });
   });
 
@@ -2086,7 +2086,7 @@ describe('UserEdit', () => {
       button('Yes, delete')!.click();
       await settle();
 
-      expect(submit().disabled).toBe(true);
+      expect(unavailable(submit())).toBe(true);
       el()
         .querySelector('form.card')!
         .dispatchEvent(new Event('submit', { cancelable: true }));
@@ -2120,13 +2120,13 @@ describe('UserEdit', () => {
       el().querySelector<HTMLButtonElement>('#user-reset button[type="submit"]')!.click();
       await settle();
 
-      expect(submit().disabled).toBe(true);
+      expect(unavailable(submit())).toBe(true);
       await save();
       http.expectNone((r) => r.method === 'PUT');
 
       write('POST', '/api/admin/users/u-alice/password').flush(ALICE);
       await reloaded();
-      expect(submit().disabled).toBe(false);
+      expect(unavailable(submit())).toBe(false);
     });
 
     it('does not unlock while a save runs', async () => {
@@ -2136,7 +2136,7 @@ describe('UserEdit', () => {
       );
       await save();
 
-      expect((button('Unlock') as HTMLButtonElement).disabled).toBe(true);
+      expect(unavailable(button('Unlock'))).toBe(true);
       const page = harness.routeDebugElement!.componentInstance as unknown as {
         unlock(): Promise<void>;
       };
@@ -2145,6 +2145,324 @@ describe('UserEdit', () => {
 
       write('PUT', '/api/admin/users/u-alice').flush(ALICE);
       await reloaded();
+    });
+  });
+
+  // jsdom's click() does not move the focus: every spec here puts it somewhere with focus() and looks at it after.
+  describe('where the keyboard focus is', () => {
+    const banners = () => el().querySelector<HTMLElement>('#user-failure');
+    const actionBanner = () => el().querySelector<HTMLElement>('#user-action-failure');
+
+    describe('on the buttons that start a request', () => {
+      it('stays on Save while the request runs and after the answer, and the button is not natively disabled', async () => {
+        await open('/admin/users/u-alice');
+        submit().focus();
+        expect(focused()).toBe(submit());
+
+        await save();
+
+        expect(unavailable(submit())).toBe(true);
+        // A natively disabled button loses the focus it holds: this one must stay focusable.
+        expect(submit().disabled).toBe(false);
+        expect(focused()).toBe(submit());
+        write('PUT', '/api/admin/users/u-alice').flush(ALICE);
+        await reloaded();
+
+        expect(focused()).toBe(submit());
+        expect(banner('.banner--success')?.textContent).toContain('Saved.');
+        expect(unavailable(submit())).toBe(false);
+      });
+
+      it('stays on the field Enter was pressed in, when Save is made by the keyboard from a field', async () => {
+        await open('/admin/users/u-alice');
+        displayName().focus();
+
+        await save();
+        write('PUT', '/api/admin/users/u-alice').flush(ALICE);
+        await reloaded();
+
+        expect(focused()).toBe(displayName());
+      });
+
+      it('refuses what Save is asked while it runs, whichever way it is asked', async () => {
+        await open('/admin/users/u-alice');
+        submit().focus();
+        await save();
+
+        // The button is still there to be clicked and pressed: the page says no.
+        submit().click();
+        el()
+          .querySelector('form.card')!
+          .dispatchEvent(new Event('submit', { cancelable: true }));
+        await settle();
+
+        write('PUT', '/api/admin/users/u-alice').flush(ALICE);
+        await reloaded();
+      });
+
+      it('stays on Unlock while it runs, and a click on it then asks nothing', async () => {
+        await open(
+          '/admin/users/u-alice',
+          adminData({ users: [ADMIN, adminUser({ ...ALICE, lockedUntilUtc: FUTURE })] }),
+        );
+        button('Unlock')!.focus();
+
+        button('Unlock')!.click();
+        await settle();
+
+        expect(unavailable(button('Unlock'))).toBe(true);
+        expect((button('Unlock') as HTMLButtonElement).disabled).toBe(false);
+        expect(focused()).toBe(button('Unlock'));
+        button('Unlock')!.click();
+        await settle();
+        write('POST', '/api/admin/users/u-alice/unlock').flush(ALICE);
+        await reloaded();
+      });
+
+      it('stays on Set password while the reset runs', async () => {
+        await open('/admin/users/u-alice');
+        button('Reset password')!.click();
+        await settle();
+        type(field('user-new-password'), 'a long enough password');
+        type(field('user-new-confirmation'), 'a long enough password');
+        const set = el().querySelector<HTMLButtonElement>('#user-reset button[type="submit"]')!;
+        set.focus();
+
+        set.click();
+        await settle();
+
+        expect(unavailable(set)).toBe(true);
+        expect(set.disabled).toBe(false);
+        expect(focused()).toBe(set);
+        write('POST', '/api/admin/users/u-alice/password').flush(ALICE);
+        await reloaded();
+      });
+
+      it('keeps Enabled usable while a save runs: its checkbox is not what the request waits for, and Enter in it must not drop the focus', async () => {
+        await open('/admin/users/u-alice');
+        enabled().focus();
+
+        await save();
+
+        expect(enabled().disabled).toBe(false);
+        expect(focused()).toBe(enabled());
+        write('PUT', '/api/admin/users/u-alice').flush(ALICE);
+        await reloaded();
+      });
+    });
+
+    describe('after a refusal', () => {
+      async function ownAdministratorRemoved(): Promise<void> {
+        await open('/admin/users/u-admin');
+        await removeGrant(0);
+        submit().focus();
+        await save();
+      }
+
+      it('goes to the banner for a last-administrator refusal of a save, which can sit far above the button', async () => {
+        await ownAdministratorRemoved();
+
+        refuse(
+          write('PUT', '/api/admin/users/u-admin'),
+          409,
+          problem('last_administrator', LAST_ADMIN),
+        );
+        await reloaded();
+
+        expect(banners()?.textContent).toContain(LAST_ADMIN);
+        expect(banners()?.getAttribute('tabindex')).toBe('-1');
+        expect(focused()).toBe(banners());
+        // The draft is kept, and the form can be used again from where it is.
+        expect(grantGroups()).toHaveLength(0);
+      });
+
+      it.each([
+        [403, 'You no longer have permission to manage access.'],
+        [500, 'HTTP 500'],
+      ])('goes to the banner for a %i of a save', async (status, text) => {
+        await open('/admin/users/u-alice');
+        submit().focus();
+        await save();
+
+        refuse(write('PUT', '/api/admin/users/u-alice'), status, problem('x', 'words'));
+        await settle();
+
+        expect(banners()?.textContent).toContain(text);
+        expect(focused()).toBe(banners());
+      });
+
+      it('goes to the banner when the API names only paths the form has no field for', async () => {
+        await open('/admin/users/u-alice');
+        submit().focus();
+        await save();
+
+        refuse(
+          write('PUT', '/api/admin/users/u-alice'),
+          400,
+          problem('validation', 'x', { mustChangePassword: ['Not a flag.'] }),
+        );
+        await settle();
+
+        expect(banners()?.textContent).toContain('Not a flag.');
+        expect(focused()).toBe(banners());
+      });
+
+      it('keeps the focus on a field the API names, and on the username for a taken one, not the banner', async () => {
+        await open('/admin/users/new');
+        type(username(), 'alice');
+        type(displayName(), 'Alice');
+        type(password(), 'a long enough password');
+        type(confirmation(), 'a long enough password');
+        submit().focus();
+        await save();
+
+        refuse(
+          write('POST', '/api/admin/users'),
+          409,
+          problem('username_taken', "A user named 'alice' already exists."),
+        );
+        await reloaded();
+
+        expect(focused()).toBe(username());
+      });
+
+      it('goes to the banner of the account section for a refused delete, and for a refused unlock', async () => {
+        await open('/admin/users/u-alice');
+        button('Delete user')!.click();
+        await settle();
+        button('Yes, delete')!.click();
+        await settle();
+
+        refuse(
+          write('DELETE', '/api/admin/users/u-alice'),
+          409,
+          problem('last_administrator', LAST_ADMIN),
+        );
+        await reloaded();
+
+        expect(actionBanner()?.textContent).toContain(LAST_ADMIN);
+        expect(actionBanner()?.getAttribute('tabindex')).toBe('-1');
+        expect(focused()).toBe(actionBanner());
+      });
+
+      it('goes to the banner of the account section for a refused unlock', async () => {
+        await open(
+          '/admin/users/u-alice',
+          adminData({ users: [ADMIN, adminUser({ ...ALICE, lockedUntilUtc: FUTURE })] }),
+        );
+        button('Unlock')!.focus();
+        button('Unlock')!.click();
+        await settle();
+
+        refuse(write('POST', '/api/admin/users/u-alice/unlock'), 500, problem('x', 'words'));
+        await settle();
+
+        expect(actionBanner()?.textContent).toContain('HTTP 500');
+        expect(focused()).toBe(actionBanner());
+      });
+
+      it('goes to the banner of the account section for a refused reset that names no field of the form', async () => {
+        await open('/admin/users/u-alice');
+        button('Reset password')!.click();
+        await settle();
+        type(field('user-new-password'), 'a long enough password');
+        type(field('user-new-confirmation'), 'a long enough password');
+        el().querySelector<HTMLButtonElement>('#user-reset button[type="submit"]')!.click();
+        await settle();
+        field('user-new-confirmation').focus();
+
+        refuse(
+          write('POST', '/api/admin/users/u-alice/password'),
+          400,
+          problem('validation', 'x', { mustChangePassword: ['Not a flag.'] }),
+        );
+        await settle();
+
+        expect(actionBanner()?.textContent).toContain('Not a flag.');
+        expect(focused()).toBe(actionBanner());
+      });
+
+      it('goes to the banner of the account section for a 500 of a reset, and the form stays open', async () => {
+        await open('/admin/users/u-alice');
+        button('Reset password')!.click();
+        await settle();
+        type(field('user-new-password'), 'a long enough password');
+        type(field('user-new-confirmation'), 'a long enough password');
+        el().querySelector<HTMLButtonElement>('#user-reset button[type="submit"]')!.click();
+        await settle();
+
+        refuse(write('POST', '/api/admin/users/u-alice/password'), 500, problem('x', 'words'));
+        await settle();
+
+        expect(focused()).toBe(actionBanner());
+        expect(el().querySelector('#user-reset')).not.toBeNull();
+      });
+    });
+
+    describe('in the Reset password panel', () => {
+      const escape = (target: HTMLElement) =>
+        target.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+
+      it('closes on Escape from any field of it, forgets what was typed, and returns the focus to Reset password', async () => {
+        await open('/admin/users/u-alice');
+        button('Reset password')!.click();
+        await settle();
+        type(field('user-new-password'), 'half typed');
+        field('user-new-confirmation').focus();
+
+        escape(field('user-new-confirmation'));
+        await settle();
+
+        expect(el().querySelector('#user-reset')).toBeNull();
+        expect(focused()).toBe(button('Reset password'));
+        expect(button('Reset password')!.getAttribute('aria-expanded')).toBe('false');
+        button('Reset password')!.click();
+        await settle();
+        expect(field('user-new-password').value).toBe('');
+      });
+
+      it('closes on Escape from the new password the form opened on', async () => {
+        await open('/admin/users/u-alice');
+        button('Reset password')!.click();
+        await settle();
+        expect(focused()).toBe(field('user-new-password'));
+
+        escape(field('user-new-password'));
+        await settle();
+
+        expect(el().querySelector('#user-reset')).toBeNull();
+        expect(focused()).toBe(button('Reset password'));
+      });
+
+      it('does nothing on Escape while the password is being set', async () => {
+        await open('/admin/users/u-alice');
+        button('Reset password')!.click();
+        await settle();
+        type(field('user-new-password'), 'a long enough password');
+        type(field('user-new-confirmation'), 'a long enough password');
+        el().querySelector<HTMLButtonElement>('#user-reset button[type="submit"]')!.click();
+        await settle();
+
+        escape(field('user-new-password'));
+        await settle();
+
+        expect(el().querySelector('#user-reset')).not.toBeNull();
+        write('POST', '/api/admin/users/u-alice/password').flush(ALICE);
+        await reloaded();
+      });
+
+      it('leaves an Escape in the rest of the page alone', async () => {
+        await open('/admin/users/u-alice');
+        button('Reset password')!.click();
+        await settle();
+
+        escape(displayName());
+        await settle();
+
+        expect(el().querySelector('#user-reset')).not.toBeNull();
+      });
     });
   });
 

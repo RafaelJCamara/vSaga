@@ -66,6 +66,8 @@ export class RoleEdit {
     viewChild<ElementRef<HTMLTextAreaElement>>('descriptionField');
   /** The first permission checkbox (the template marks every one; the first is returned). */
   private readonly firstPermission = viewChild<ElementRef<HTMLInputElement>>('firstPermission');
+  /** The failure banner: it sits above the button that was used, so focus goes there when it appears. */
+  private readonly failureBanner = viewChild<ElementRef<HTMLElement>>('failureBanner');
   /** The link of the "no longer exists" notice: focus goes there when it replaces the form. */
   private readonly goneLink = viewChild<ElementRef<HTMLAnchorElement>>('goneLink');
 
@@ -270,6 +272,9 @@ export class RoleEdit {
             injector: this.injector,
           });
         }
+      } else {
+        // A rule (last_administrator, role_in_use), a lost permission, the network: the banner takes the focus.
+        this.focusBanner();
       }
       return;
     }
@@ -278,7 +283,13 @@ export class RoleEdit {
     // Messages for request paths this form has no field for are not lost: they join the banner.
     if (unplaced.length > 0)
       this.failure.set({ ...failure, kind: 'failed', message: unplaced.join(' ') });
-    this.focusFirstError();
+    // With nothing to focus but the banner (only paths the form has no field for), the banner takes it.
+    if (!this.focusFirstError() && unplaced.length > 0) this.focusBanner();
+  }
+
+  private focusBanner(): void {
+    if (this.destroyed()) return;
+    afterNextRender(() => this.failureBanner()?.nativeElement.focus(), { injector: this.injector });
   }
 
   /** The draft for the page's URL: the role itself, or for a new role the one it starts from, or nothing. */

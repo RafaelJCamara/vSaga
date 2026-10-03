@@ -311,7 +311,7 @@ describe('RoleEdit', () => {
 
         await save();
         const submit = el().querySelector<HTMLButtonElement>('button[type="submit"]')!;
-        expect(submit.disabled).toBe(true);
+        expect(unavailable(submit)).toBe(true);
         expect(submit.textContent?.trim()).toBe('Saving…');
         el()
           .querySelector('form')!
@@ -430,9 +430,7 @@ describe('RoleEdit', () => {
         expect(checked()).toEqual(['sagas.view', 'sagas.retry']);
         expect(url()).toBe('/admin/roles/new');
         // The form is usable again.
-        expect(el().querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(
-          false,
-        );
+        expect(unavailable(el().querySelector<HTMLElement>('button[type="submit"]')!)).toBe(false);
       });
 
       it.each([
@@ -594,9 +592,7 @@ describe('RoleEdit', () => {
         expect(checked()).toEqual(['sagas.view', 'sagas.retry', 'access.manage']);
         expect(banner('.banner--success')).toBeNull();
         // Saving again is possible.
-        expect(el().querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(
-          false,
-        );
+        expect(unavailable(el().querySelector<HTMLElement>('button[type="submit"]')!)).toBe(false);
       });
 
       it('says "This no longer exists" when the API answers 404', async () => {
@@ -931,7 +927,7 @@ describe('RoleEdit', () => {
       expect(nameInput().value).toBe('Support desk 2');
       expect(checked()).toEqual(['sagas.view', 'sagas.data', 'sagas.retry']);
       expect(banner('.banner--success')).toBeNull();
-      expect(el().querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(false);
+      expect(unavailable(el().querySelector<HTMLElement>('button[type=\"submit\"]')!)).toBe(false);
     });
 
     it('is replaced by what the API stored when nothing was typed meanwhile', async () => {
@@ -975,7 +971,7 @@ describe('RoleEdit', () => {
       button('Yes, delete')!.click();
       await settle();
 
-      expect(submit().disabled).toBe(true);
+      expect(unavailable(submit())).toBe(true);
       el()
         .querySelector('form')!
         .dispatchEvent(new Event('submit', { cancelable: true }));
@@ -1025,7 +1021,7 @@ describe('RoleEdit', () => {
 
       expect(navigate).toHaveBeenCalledWith('/admin/roles');
       const submit = el().querySelector<HTMLButtonElement>('button[type="submit"]')!;
-      expect(submit.disabled).toBe(true);
+      expect(unavailable(submit)).toBe(true);
       expect(submit.textContent?.trim()).toBe('Saving…');
     });
 
@@ -1248,6 +1244,135 @@ describe('RoleEdit', () => {
       await open(`/admin/roles/${SUPPORT.id}`);
 
       expect(askAbleDelete().hasAttribute('aria-describedby')).toBe(false);
+    });
+  });
+
+  // jsdom's click() does not move the focus: every spec here puts it somewhere with focus() and looks at it after.
+  describe('where the keyboard focus is', () => {
+    const saveButton = () => el().querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const failureBanner = () => el().querySelector<HTMLElement>('#role-failure');
+
+    it('stays on Save while the request runs and after the answer, and the button is not natively disabled', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      saveButton().focus();
+      expect(focused()).toBe(saveButton());
+
+      await save();
+
+      expect(unavailable(saveButton())).toBe(true);
+      // A natively disabled button loses the focus it holds: this one must stay focusable.
+      expect(saveButton().disabled).toBe(false);
+      expect(focused()).toBe(saveButton());
+      write('PUT', `/api/admin/roles/${SUPPORT.id}`).flush(SUPPORT);
+      await reloaded();
+
+      expect(focused()).toBe(saveButton());
+      expect(banner('.banner--success')?.textContent).toContain('Saved.');
+    });
+
+    it('stays on Save while a role is being created, and Save then asks nothing of the page', async () => {
+      await open('/admin/roles/new');
+      type(nameInput(), 'Support');
+      tick('sagas.view');
+      saveButton().focus();
+
+      await save();
+      saveButton().click();
+      el()
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { cancelable: true }));
+      await settle();
+
+      expect(focused()).toBe(saveButton());
+      // One request, not three: expectOne fails when there are more.
+      write('POST', '/api/admin/roles').flush(role());
+      await reloaded();
+    });
+
+    it('goes to the banner for a last-administrator refusal of a save, which sits far above the button', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      tick('access.manage');
+      saveButton().focus();
+      await save();
+
+      refuse(
+        write('PUT', `/api/admin/roles/${SUPPORT.id}`),
+        409,
+        problem('last_administrator', LAST_ADMIN),
+      );
+      await reloaded();
+
+      expect(failureBanner()?.textContent).toContain(LAST_ADMIN);
+      expect(failureBanner()?.getAttribute('tabindex')).toBe('-1');
+      expect(focused()).toBe(failureBanner());
+      // The draft is kept.
+      expect(checked()).toEqual(['sagas.view', 'sagas.retry', 'access.manage']);
+    });
+
+    it.each([
+      [403, 'You no longer have permission to manage access.'],
+      [500, 'HTTP 500'],
+    ])('goes to the banner for a %i of a save', async (status, text) => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      saveButton().focus();
+      await save();
+
+      refuse(write('PUT', `/api/admin/roles/${SUPPORT.id}`), status, problem('x', 'words'));
+      await settle();
+
+      expect(failureBanner()?.textContent).toContain(text);
+      expect(focused()).toBe(failureBanner());
+    });
+
+    it('goes to the banner for a refused delete, the role being in use after all', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      button('Delete role')!.click();
+      await settle();
+      button('Yes, delete')!.click();
+      await settle();
+
+      refuse(
+        write('DELETE', `/api/admin/roles/${SUPPORT.id}`),
+        409,
+        problem('role_in_use', "The role 'Support' is still granted to a user or a team."),
+      );
+      await reloaded(adminData({ teams: [team({ grants: [grant(SUPPORT.id, ['OrderSaga'])] })] }));
+
+      expect(failureBanner()?.textContent).toContain('still granted');
+      expect(focused()).toBe(failureBanner());
+    });
+
+    it('goes to the banner when the API names only paths the form has no field for', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      saveButton().focus();
+      await save();
+
+      refuse(
+        write('PUT', `/api/admin/roles/${SUPPORT.id}`),
+        400,
+        problem('validation', 'x', { 'grants[0].roleId': ['No role has this id.'] }),
+      );
+      await settle();
+
+      expect(failureBanner()?.textContent).toContain('No role has this id.');
+      expect(focused()).toBe(failureBanner());
+    });
+
+    it('goes to the field the API names, and to the name for a taken one, not the banner', async () => {
+      await open('/admin/roles/new');
+      type(nameInput(), 'Operator');
+      tick('sagas.view');
+      saveButton().focus();
+      await save();
+
+      refuse(
+        write('POST', '/api/admin/roles'),
+        409,
+        problem('name_taken', "A role named 'Operator' already exists."),
+      );
+      await reloaded();
+
+      expect(focused()).toBe(nameInput());
     });
   });
 });
