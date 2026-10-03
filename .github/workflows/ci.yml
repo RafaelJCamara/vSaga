@@ -215,27 +215,34 @@ jobs:
 
           fail() { echo "::error::$*"; exit 1; }
 
-          health=$(curl -sS "$api/health")
+          health=$(curl -sS "$api/health") || fail "GET $api/health failed"
           jq -e '[.checks[] | select(.name == "identity")] | length == 1 and all(.status == "healthy")' <<<"$health" >/dev/null \
             || fail "the identity health check is not healthy: $health"
           echo "GET /health -> identity healthy"
 
-          # The identity file must sit on the mounted volume, or every user and session key is lost with
-          # the container.
+          # The identity file must sit on a named volume mounted on dashboard-api, or every user and session
+          # key is lost with the container.
           rendered=$(docker compose config --format json)
           identity_path=$(jq -er '.services["dashboard-api"].environment.Dashboard__Identity__Sqlite__Path' <<<"$rendered") \
             || fail "docker compose config sets no Dashboard__Identity__Sqlite__Path on dashboard-api"
           jq -e --arg path "$identity_path" '
-            [.services["dashboard-api"].volumes[] | select(.type == "volume") | .target]
+            [.services["dashboard-api"].volumes[] | select(.type == "volume" and (.source // "") != "") | .target]
             | any(. as $target | $path | startswith($target + "/"))' <<<"$rendered" >/dev/null \
             || fail "$identity_path is not under a volume mounted on dashboard-api: $(jq -c '.services["dashboard-api"].volumes' <<<"$rendered")"
           echo "$identity_path lies on a mounted volume"
 
+          # The seeded administrator, read from the compose file so the check follows it.
+          admin_user=$(jq -er '.services["dashboard-api"].environment.Dashboard__Admin__Username' <<<"$rendered") \
+            || fail "docker compose config sets no Dashboard__Admin__Username on dashboard-api"
+          admin_password=$(jq -er '.services["dashboard-api"].environment.Dashboard__Admin__Password' <<<"$rendered") \
+            || fail "docker compose config sets no Dashboard__Admin__Password on dashboard-api"
+
           jar=$(mktemp)
           xsrf_token() { awk '$6 == "XSRF-TOKEN" { print $7 }' "$jar" | tail -n1; }
-          # post_json <path> <body>: an unsafe request with the antiforgery header, as the SPA sends it.
+          # post_json <path> <body>: an unsafe request with the antiforgery header, as the SPA sends it. A
+          # refusal fails the command and leaves the problem document on stdout for the message.
           post_json() {
-            curl -sS -f -b "$jar" -c "$jar" -X POST -H "X-XSRF-TOKEN: $(xsrf_token)" \
+            curl -sS --fail-with-body -b "$jar" -c "$jar" -X POST -H "X-XSRF-TOKEN: $(xsrf_token)" \
               -H 'Content-Type: application/json' -d "$2" "$ui$1"
           }
           origin_status() {
@@ -246,21 +253,22 @@ jobs:
           [[ $anonymous == 401 ]] || fail "GET /api/sagas without credentials answered $anonymous, expected 401"
           echo "GET /api/sagas without credentials -> 401"
 
-          session=$(curl -sS -f -c "$jar" "$ui/api/auth/session")
+          session=$(curl -sS --fail-with-body -c "$jar" "$ui/api/auth/session") || fail "GET /api/auth/session failed: $session"
           jq -e '.authenticated == false' <<<"$session" >/dev/null || fail "an anonymous session probe answered: $session"
           [[ -n $(xsrf_token) ]] || fail "the session probe set no XSRF-TOKEN cookie"
           echo "GET /api/auth/session -> anonymous, XSRF-TOKEN cookie set"
 
-          login=$(post_json /api/auth/login '{"username":"admin","password":"dev-local-only-change-me"}') \
-            || fail "POST /api/auth/login with the seeded administrator was refused"
-          jq -e '.authenticated == true and .user.username == "admin"' <<<"$login" >/dev/null || fail "the login answered: $login"
-          echo "POST /api/auth/login -> signed in as admin"
+          login=$(post_json /api/auth/login "$(jq -n --arg user "$admin_user" --arg password "$admin_password" '{username: $user, password: $password}')") \
+            || fail "POST /api/auth/login with the seeded administrator was refused: $login"
+          jq -e --arg user "$admin_user" '.authenticated == true and .user.username == $user' <<<"$login" >/dev/null || fail "the login answered: $login"
+          echo "POST /api/auth/login -> signed in as $admin_user"
 
           sagas=$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" "$ui/api/sagas")
           [[ $sagas == 200 ]] || fail "GET /api/sagas with the session cookie answered $sagas, expected 200"
           echo "GET /api/sagas with the session cookie -> 200"
 
-          own=$(curl -sS -f -b "$jar" -X POST -H "Origin: $ui" "$negotiate")
+          own=$(curl -sS --fail-with-body -b "$jar" -X POST -H "Origin: $ui" "$negotiate") \
+            || fail "the hub negotiation from $ui was refused: $own"
           jq -e '.connectionToken | type == "string"' <<<"$own" >/dev/null || fail "the hub negotiation from $ui returned no connectionToken: $own"
           echo "POST /hubs/saga/negotiate with Origin $ui -> connectionToken"
 
