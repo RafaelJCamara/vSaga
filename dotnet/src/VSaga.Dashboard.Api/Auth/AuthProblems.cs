@@ -7,12 +7,13 @@ namespace VSaga.Dashboard.Api.Auth;
 /// <summary>
 /// The problem bodies every authentication and authorization failure answers with, whichever scheme handled
 /// the request: a cookie that is missing, expired or revoked and an API key that is missing or wrong get the
-/// same 401, so the response cannot be used to probe which credential was close, and every body points at
-/// the documentation.
+/// same 401, so the response cannot be used to probe which credential was close. The `unauthenticated` 401 and
+/// every 403 point at the documentation; a failed sign-in (<c>invalid_credentials</c>) and the 400 problems
+/// do not.
 /// </summary>
 public static class AuthProblems
 {
-    /// <summary>The sentence every 401 and 403 body ends with.</summary>
+    /// <summary>The sentence the `unauthenticated` 401 and every 403 `detail` ends with.</summary>
     public const string DocumentationPointer = "See docs/dashboard.md#authentication.";
 
     public const string UnauthenticatedCode = "unauthenticated";
