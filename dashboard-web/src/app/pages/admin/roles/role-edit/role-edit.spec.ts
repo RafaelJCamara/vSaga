@@ -8,6 +8,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { Router, Routes, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
+import { vi } from 'vitest';
 import {
   AdminData,
   BUILT_IN_ROLES,
@@ -99,6 +100,9 @@ describe('RoleEdit', () => {
       (b) => b.textContent?.trim() === text,
     );
   const focused = () => document.activeElement;
+  const askAbleDelete = () => button('Delete role') as HTMLButtonElement;
+  /** Whether a button says it is unavailable (aria-disabled, as the confirm button does: it stays focusable). */
+  const unavailable = (el: HTMLElement | undefined) => el?.getAttribute('aria-disabled') === 'true';
 
   function type(field: HTMLInputElement | HTMLTextAreaElement, value: string): void {
     field.value = value;
@@ -123,6 +127,13 @@ describe('RoleEdit', () => {
     const req = http.expectOne(path);
     expect(req.request.method).toBe(method);
     return req;
+  }
+
+  /** Answers the three reads that follow a change, once the store has asked for them. */
+  async function reloaded(data: AdminData = adminData()): Promise<void> {
+    await settle();
+    answerReload(http, data);
+    await settle();
   }
 
   const refuse = (req: TestRequest, status: number, body: object | null) =>
@@ -316,9 +327,15 @@ describe('RoleEdit', () => {
 
       it('goes back to the list for Cancel, with nothing sent', async () => {
         await open('/admin/roles/new');
+        type(nameInput(), 'Support');
 
         const cancel = button('Cancel') as HTMLAnchorElement;
         expect(cancel.getAttribute('href')).toBe('/admin/roles');
+        cancel.click();
+        await settle();
+
+        expect(url()).toBe('/admin/roles');
+        http.expectNone((r) => r.method !== 'GET');
       });
     });
 
@@ -404,7 +421,7 @@ describe('RoleEdit', () => {
             "A role named 'Support' already exists; names are compared ignoring case.",
           ),
         );
-        await settle();
+        await reloaded();
 
         expect(banner('.banner--error[role="alert"]')?.textContent).toContain(
           "A role named 'Support' already exists",
@@ -511,7 +528,8 @@ describe('RoleEdit', () => {
         expect(url()).toBe(`/admin/roles/${SUPPORT.id}`);
         expect(nameInput().value).toBe('Support desk');
         expect(el().querySelector('h2')?.textContent).toBe('Support desk');
-        expect(banner('.banner--success[role="status"]')?.textContent).toContain('Saved.');
+        expect(banner('.banner--success')?.textContent).toContain('Saved.');
+        expect(banner('.banner--success')?.closest('[role="status"]')).not.toBeNull();
       });
 
       it.each([
@@ -565,7 +583,7 @@ describe('RoleEdit', () => {
           409,
           problem('last_administrator', LAST_ADMIN),
         );
-        await settle();
+        await reloaded();
 
         const alert = banner('.banner--error[role="alert"]')!;
         expect(alert.textContent).toContain(LAST_ADMIN);
@@ -640,8 +658,8 @@ describe('RoleEdit', () => {
           adminData({ teams: [team({ grants: [grant(SUPPORT.id, ['OrderSaga'])] })] }),
         );
 
-        const remove = button('Delete role') as HTMLButtonElement;
-        expect(remove.disabled).toBe(true);
+        const remove = askAbleDelete();
+        expect(unavailable(remove)).toBe(true);
         expect(
           el().querySelector('.danger .field-hint')?.textContent?.replace(/\s+/g, ' '),
         ).toContain('Used by 1 grant:');
@@ -669,7 +687,7 @@ describe('RoleEdit', () => {
           `/admin/roles/${SUPPORT.id}`,
           adminData({ teams: [team({ grants: [grant(SUPPORT.id)] })] }),
         );
-        expect((button('Delete role') as HTMLButtonElement).disabled).toBe(true);
+        expect(unavailable(button('Delete role'))).toBe(true);
 
         const saving = store.saveTeam('t', {
           name: 'T',
@@ -683,7 +701,7 @@ describe('RoleEdit', () => {
         await saving;
         await settle();
 
-        expect((button('Delete role') as HTMLButtonElement).disabled).toBe(false);
+        expect(unavailable(button('Delete role'))).toBe(false);
         expect(el().querySelector('.danger .field-hint')).toBeNull();
       });
 
@@ -699,15 +717,19 @@ describe('RoleEdit', () => {
           409,
           problem('role_in_use', "The role 'Support' is still granted to a user or a team."),
         );
-        await settle();
+        // What the API refused for is a fact the page should show: the store reads the lists again.
+        await reloaded(
+          adminData({ teams: [team({ grants: [grant(SUPPORT.id, ['OrderSaga'])] })] }),
+        );
 
         expect(banner('.banner--error[role="alert"]')?.textContent).toContain(
           "The role 'Support' is still granted",
         );
         expect(url()).toBe(`/admin/roles/${SUPPORT.id}`);
         expect(nameInput().value).toBe('Support');
-        // Delete can be asked again: the work is over.
-        expect(button('Delete role')?.getAttribute('aria-disabled')).toBeNull();
+        // The count and the Delete button follow: it is now unavailable, and says why.
+        expect(unavailable(button('Delete role'))).toBe(true);
+        expect(el().querySelector('.danger .field-hint')?.textContent).toContain('Used by 1 grant');
       });
 
       it('says a lost permission for a 403', async () => {
@@ -835,6 +857,397 @@ describe('RoleEdit', () => {
       expect(nameInput().value).toBe('Second');
       expect(checked()).toEqual(['sagas.data']);
       expect(el().querySelector('h2')?.textContent).toBe('Second');
+    });
+
+    it('starts from the other role when ?from= changes on the same page, and from nothing when it goes', async () => {
+      await open(
+        '/admin/roles/new?from=a',
+        adminData({
+          roles: [
+            ...BUILT_IN_ROLES,
+            role({ id: 'a', name: 'Alpha', permissions: ['sagas.view'] }),
+            role({ id: 'b', name: 'Beta', permissions: ['sagas.data', 'sagas.retry'] }),
+          ],
+        }),
+      );
+      expect(nameInput().value).toBe('Alpha copy');
+      const page = harness.routeDebugElement!.componentInstance;
+
+      await harness.navigateByUrl('/admin/roles/new?from=b');
+      await settle();
+      expect(harness.routeDebugElement!.componentInstance).toBe(page);
+      expect(nameInput().value).toBe('Beta copy');
+      expect(checked()).toEqual(['sagas.data', 'sagas.retry']);
+
+      await harness.navigateByUrl('/admin/roles/new');
+      await settle();
+      expect(nameInput().value).toBe('');
+      expect(checked()).toEqual([]);
+    });
+
+    it('does not apply the answer to a save to the role the page shows by then', async () => {
+      const data = adminData({
+        roles: [
+          ...BUILT_IN_ROLES,
+          SUPPORT,
+          role({ id: 'two', name: 'Second', permissions: ['sagas.data'] }),
+        ],
+      });
+      await open(`/admin/roles/${SUPPORT.id}`, data);
+      await save();
+      const put = write('PUT', `/api/admin/roles/${SUPPORT.id}`);
+
+      await harness.navigateByUrl('/admin/roles/two');
+      await settle();
+      put.flush(SUPPORT);
+      await reloaded(data);
+
+      expect(nameInput().value).toBe('Second');
+      expect(banner('.banner--success')).toBeNull();
+    });
+  });
+
+  describe('what is typed while a request runs', () => {
+    it.each([
+      ['while the save is on its way', 'put'],
+      ['while the lists are read again after it', 'reload'],
+    ] as const)('is not overwritten by the answer to a save, %s', async (_when, moment) => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      type(nameInput(), 'Support desk');
+      await save();
+      const put = write('PUT', `/api/admin/roles/${SUPPORT.id}`);
+      const typeMore = () => {
+        type(nameInput(), 'Support desk 2');
+        tick('sagas.data');
+      };
+      if (moment === 'put') typeMore();
+      put.flush(role({ name: 'Support desk' }));
+      await settle();
+      if (moment === 'reload') typeMore();
+      answerReload(http, adminData({ roles: [...BUILT_IN_ROLES, role({ name: 'Support desk' })] }));
+      await settle();
+
+      // The user's draft stands, and is not announced as saved: it is not what the API stored.
+      expect(nameInput().value).toBe('Support desk 2');
+      expect(checked()).toEqual(['sagas.view', 'sagas.data', 'sagas.retry']);
+      expect(banner('.banner--success')).toBeNull();
+      expect(el().querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(false);
+    });
+
+    it('is replaced by what the API stored when nothing was typed meanwhile', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      type(nameInput(), '  Support desk ');
+      await save();
+      write('PUT', `/api/admin/roles/${SUPPORT.id}`).flush(role({ name: 'Support desk' }));
+      await reloaded(adminData({ roles: [...BUILT_IN_ROLES, role({ name: 'Support desk' })] }));
+
+      expect(nameInput().value).toBe('Support desk');
+      expect(banner('.banner--success')).not.toBeNull();
+    });
+  });
+
+  describe('Save and Delete exclude each other', () => {
+    const submit = () => el().querySelector<HTMLButtonElement>('button[type="submit"]')!;
+
+    it('does not ask about deleting while a save runs, and the question that is open lapses', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      askAbleDelete().click();
+      await settle();
+      expect(el().querySelector('.confirm-prompt')).not.toBeNull();
+
+      await save();
+
+      expect(el().querySelector('.confirm-prompt')).toBeNull();
+      expect(unavailable(button('Delete role'))).toBe(true);
+      button('Delete role')!.click();
+      await settle();
+      expect(el().querySelector('.confirm-prompt')).toBeNull();
+
+      write('PUT', `/api/admin/roles/${SUPPORT.id}`).flush(SUPPORT);
+      await reloaded();
+      expect(unavailable(button('Delete role'))).toBe(false);
+    });
+
+    it('does not save while a delete runs', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      button('Delete role')!.click();
+      await settle();
+      button('Yes, delete')!.click();
+      await settle();
+
+      expect(submit().disabled).toBe(true);
+      el()
+        .querySelector('form')!
+        .dispatchEvent(new Event('submit', { cancelable: true }));
+      await settle();
+      http.expectNone((r) => r.method === 'PUT');
+
+      write('DELETE', `/api/admin/roles/${SUPPORT.id}`).flush(null, {
+        status: 204,
+        statusText: 'No Content',
+      });
+      await reloaded(adminData({ roles: BUILT_IN_ROLES }));
+    });
+
+    it('does not delete while a save runs, even if the delete had been confirmed before it', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      await save();
+
+      // A delete asked for by other means than the buttons is refused all the same.
+      const page = harness.routeDebugElement!.componentInstance as unknown as {
+        remove(): Promise<void>;
+      };
+      await page.remove();
+
+      http.expectNone((r) => r.method === 'DELETE');
+      write('PUT', `/api/admin/roles/${SUPPORT.id}`).flush(SUPPORT);
+      await reloaded();
+    });
+  });
+
+  describe('leaving after a create or a delete', () => {
+    /** A navigation that has not finished: what the page shows meanwhile is what the user sees. */
+    function holdNavigation() {
+      return vi
+        .spyOn(TestBed.inject(Router), 'navigateByUrl')
+        .mockImplementation(() => new Promise<boolean>(() => undefined));
+    }
+
+    it('keeps the form busy until the page has gone, so it cannot be used twice', async () => {
+      await open('/admin/roles/new');
+      type(nameInput(), 'Support');
+      tick('sagas.view');
+      const navigate = holdNavigation();
+
+      await save();
+      write('POST', '/api/admin/roles').flush(role());
+      await reloaded();
+
+      expect(navigate).toHaveBeenCalledWith('/admin/roles');
+      const submit = el().querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      expect(submit.disabled).toBe(true);
+      expect(submit.textContent?.trim()).toBe('Saving…');
+    });
+
+    it('does not turn into "This no longer exists" between the reload and the navigation of a delete', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      const navigate = holdNavigation();
+
+      button('Delete role')!.click();
+      await settle();
+      button('Yes, delete')!.click();
+      await settle();
+      write('DELETE', `/api/admin/roles/${SUPPORT.id}`).flush(null, {
+        status: 204,
+        statusText: 'No Content',
+      });
+      // The lists no longer hold the role: the page is still the page of a role that is being deleted.
+      await reloaded(adminData({ roles: BUILT_IN_ROLES }));
+
+      expect(navigate).toHaveBeenCalledWith('/admin/roles');
+      expect(banner('.banner--warning')).toBeNull();
+      expect(el().querySelector('form')).not.toBeNull();
+      expect(el().querySelector('h2')?.textContent).toBe('Support');
+    });
+  });
+
+  describe('a duplicate name', () => {
+    async function taken(): Promise<void> {
+      await open('/admin/roles/new');
+      type(nameInput(), 'Operator');
+      tick('sagas.view');
+      await save();
+      refuse(
+        write('POST', '/api/admin/roles'),
+        409,
+        problem('name_taken', "A role named 'Operator' already exists."),
+      );
+      await reloaded();
+    }
+
+    it('marks the name field as the one to change, tied to the banner that says why, and focuses it', async () => {
+      await taken();
+
+      const banner = el().querySelector('#role-failure');
+      expect(banner?.textContent).toContain("A role named 'Operator' already exists.");
+      expect(banner?.getAttribute('role')).toBe('alert');
+      expect(nameInput().getAttribute('aria-invalid')).toBe('true');
+      expect(nameInput().getAttribute('aria-describedby')).toBe('role-failure');
+      expect(focused()).toBe(nameInput());
+    });
+
+    it('ends the mark when the name is changed, and does not mark the name for any other conflict', async () => {
+      await taken();
+
+      type(nameInput(), 'Operator 2');
+
+      expect(nameInput().getAttribute('aria-invalid')).toBeNull();
+      expect(nameInput().getAttribute('aria-describedby')).toBeNull();
+    });
+
+    it('leaves the name alone when the conflict is about something else', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      await save();
+      refuse(
+        write('PUT', `/api/admin/roles/${SUPPORT.id}`),
+        409,
+        problem('last_administrator', LAST_ADMIN),
+      );
+      await reloaded();
+
+      expect(nameInput().getAttribute('aria-invalid')).toBeNull();
+      expect(nameInput().getAttribute('aria-describedby')).toBeNull();
+    });
+  });
+
+  describe('when the page is replaced by "This no longer exists"', () => {
+    it('moves focus to the way back, after a 404 on save', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      nameInput().focus();
+      await save();
+
+      refuse(write('PUT', `/api/admin/roles/${SUPPORT.id}`), 404, { title: 'Not found' });
+      await reloaded(adminData({ roles: BUILT_IN_ROLES }));
+
+      expect(focused()).toBe(el().querySelector('.banner--warning a'));
+    });
+
+    it('says so for a 404 on Delete, too, and focuses the way back', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+
+      button('Delete role')!.click();
+      await settle();
+      button('Yes, delete')!.click();
+      await settle();
+      refuse(write('DELETE', `/api/admin/roles/${SUPPORT.id}`), 404, { title: 'Not found' });
+      await reloaded(adminData({ roles: BUILT_IN_ROLES }));
+
+      expect(banner('.banner--warning[role="alert"]')?.textContent).toContain(
+        'This no longer exists',
+      );
+      expect(el().querySelector('form')).toBeNull();
+      expect(focused()).toBe(el().querySelector('.banner--warning a'));
+      expect(url()).toBe(`/admin/roles/${SUPPORT.id}`);
+    });
+
+    it('moves focus there when the role is deleted by someone else while the page is open', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      nameInput().focus();
+
+      const reading = store.saveTeam('t', {
+        name: 'T',
+        description: '',
+        memberIds: [],
+        grants: [],
+      });
+      write('PUT', '/api/admin/teams/t').flush(team());
+      await reloaded(adminData({ roles: BUILT_IN_ROLES }));
+      await reading;
+
+      expect(focused()).toBe(el().querySelector('.banner--warning a'));
+    });
+  });
+
+  describe('a permission the catalogue does not list', () => {
+    const WITH_EXPORT = (isBuiltIn = false) =>
+      adminData({
+        roles: [
+          ...BUILT_IN_ROLES,
+          role({ isBuiltIn, permissions: ['sagas.view', 'sagas.export'] }),
+        ],
+      });
+    const unknownBox = () => box('sagas.export');
+
+    it('is shown after the catalogue, checked and labelled with its key, so nothing is dropped unseen', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`, WITH_EXPORT());
+
+      expect(boxes().map((b) => b.value)).toEqual([
+        ...PERMISSIONS.map((p) => p.key),
+        'sagas.export',
+      ]);
+      expect(checked()).toEqual(['sagas.view', 'sagas.export']);
+      const entry = unknownBox().closest('.permission')!;
+      expect(entry.querySelector('code')?.textContent).toBe('sagas.export');
+      expect(entry.textContent).toContain("Not in this API's permission catalogue");
+    });
+
+    it('is sent with the rest, in the draft order after the catalogue ones, and the API says if it refuses', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`, WITH_EXPORT());
+      tick('sagas.retry');
+
+      await save();
+      const put = write('PUT', `/api/admin/roles/${SUPPORT.id}`);
+      expect(put.request.body.permissions).toEqual(['sagas.view', 'sagas.retry', 'sagas.export']);
+      refuse(
+        put,
+        400,
+        problem('validation', 'The request is not valid.', {
+          'permissions[2]': ["'sagas.export' is not a permission."],
+        }),
+      );
+      await settle();
+
+      expect(message('permissions')).toBe("'sagas.export' is not a permission.");
+    });
+
+    it('can be unticked, and is then not sent', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`, WITH_EXPORT());
+
+      tick('sagas.export', false);
+      await settle();
+      expect(checked()).toEqual(['sagas.view']);
+
+      await save();
+      const put = write('PUT', `/api/admin/roles/${SUPPORT.id}`);
+      expect(put.request.body.permissions).toEqual(['sagas.view']);
+      put.flush(role({ permissions: ['sagas.view'] }));
+      await reloaded();
+    });
+
+    it('is shown on a built-in role too, which cannot be changed', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`, WITH_EXPORT(true));
+
+      expect(unknownBox().checked).toBe(true);
+      expect(unknownBox().disabled).toBe(true);
+    });
+  });
+
+  describe('the live region of Saved', () => {
+    it('is there from the start, and the text is put into it', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+      const region = el().querySelector('form')!.previousElementSibling as HTMLElement;
+      expect(region.getAttribute('role')).toBe('status');
+      expect(region.textContent?.trim()).toBe('');
+
+      await save();
+      write('PUT', `/api/admin/roles/${SUPPORT.id}`).flush(SUPPORT);
+      await reloaded();
+
+      expect(el().querySelector('form')!.previousElementSibling).toBe(region);
+      expect(region.textContent).toContain('Saved.');
+    });
+  });
+
+  describe('the reason Delete is unavailable', () => {
+    it('describes the button, which stays on the tab order', async () => {
+      await open(
+        `/admin/roles/${SUPPORT.id}`,
+        adminData({ teams: [team({ grants: [grant(SUPPORT.id)] })] }),
+      );
+
+      const remove = askAbleDelete();
+      const hint = el().querySelector('#role-delete-hint')!;
+      expect(hint.textContent).toContain('Used by 1 grant');
+      expect(remove.getAttribute('aria-describedby')).toBe('role-delete-hint');
+      expect(remove.disabled).toBe(false);
+      remove.focus();
+      expect(focused()).toBe(remove);
+    });
+
+    it('describes nothing when Delete is available', async () => {
+      await open(`/admin/roles/${SUPPORT.id}`);
+
+      expect(askAbleDelete().hasAttribute('aria-describedby')).toBe(false);
     });
   });
 });

@@ -1,7 +1,9 @@
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import {
   ActivatedRouteSnapshot,
   GuardResult,
+  Navigation,
   PartialMatchRouteSnapshot,
   Route,
   Router,
@@ -266,6 +268,18 @@ describe('auth guards', () => {
 
       expect(url(await runAdmin('admin', 'users', '42'))).toBe(
         '/login?returnUrl=%2Fadmin%2Fusers%2F42',
+      );
+    });
+
+    it('returns to the whole address that was asked for, query string included, when a navigation is under way', async () => {
+      configure(ANONYMOUS);
+      // What the router knows while it matches: the segments carry no query string, the navigation does.
+      vi.spyOn(router, 'currentNavigation').mockReturnValue({
+        extractedUrl: router.parseUrl('/admin/roles/new?from=abc#top'),
+      } as Navigation);
+
+      expect(url(await runAdmin('admin', 'roles', 'new'))).toBe(
+        '/login?returnUrl=%2Fadmin%2Froles%2Fnew%3Ffrom%3Dabc%23top',
       );
     });
 

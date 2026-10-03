@@ -4,6 +4,12 @@ import { problemOf } from './http-error';
 /** What a page says when the API answers 403 to an administration call: the session lost `access.manage`. */
 export const ACCESS_LOST = 'You no longer have permission to manage access.';
 
+/** What a page says when the API answers 401: the session ended (the interceptor is already taking the user to sign in). */
+export const SESSION_ENDED = 'Your session has ended. Sign in again.';
+
+/** What a page says when the API answers 403 `password_change_required`: not a missing permission, a password to change first. */
+export const MUST_CHANGE_PASSWORD = 'You must change your password before you can manage access.';
+
 /** What a page says when the user, team or role it works on is gone (404): someone deleted it meanwhile. */
 export const GONE = 'This no longer exists. It may have been deleted by someone else.';
 
@@ -26,6 +32,8 @@ export type AdminFailureKind =
 
 export interface AdminFailure {
   kind: AdminFailureKind;
+  /** The API's problem `code` (`name_taken`, `role_in_use`, ...), or null when it sent none. */
+  code: string | null;
   /** The sentence for the banner. For `validation` it is the server's general text, not a field's. */
   message: string;
   /** The API's `errors` with camelCase keys; empty unless the failure is `validation`. */
@@ -38,26 +46,41 @@ export interface AdminFailure {
  */
 export function adminFailure(err: unknown, fallback: string): AdminFailure {
   const problem = problemOf(err, '');
+  const { code } = problem;
   switch (problem.status) {
+    case 401:
+      return { kind: 'failed', code, message: SESSION_ENDED, fieldErrors: {} };
     case 403:
-      return { kind: 'forbidden', message: ACCESS_LOST, fieldErrors: {} };
+      // A user who must change the password is not short of a permission: the API says which it is.
+      return {
+        kind: 'forbidden',
+        code,
+        message: code === 'password_change_required' ? MUST_CHANGE_PASSWORD : ACCESS_LOST,
+        fieldErrors: {},
+      };
     case 404:
-      return { kind: 'gone', message: GONE, fieldErrors: {} };
+      return { kind: 'gone', code, message: GONE, fieldErrors: {} };
     case 409:
-      return problem.code === 'last_administrator'
+      return code === 'last_administrator'
         ? {
             kind: 'last_administrator',
+            code,
             message: `${problem.message} ${LAST_ADMINISTRATOR_ADVICE}`.trim(),
             fieldErrors: {},
           }
-        : { kind: 'conflict', message: problem.message || fallback, fieldErrors: {} };
+        : { kind: 'conflict', code, message: problem.message || fallback, fieldErrors: {} };
     case 400:
       if (Object.keys(problem.fieldErrors).length > 0) {
-        return { kind: 'validation', message: problem.message, fieldErrors: problem.fieldErrors };
+        return {
+          kind: 'validation',
+          code,
+          message: problem.message,
+          fieldErrors: problem.fieldErrors,
+        };
       }
       break;
   }
-  return { kind: 'failed', message: failureText(err, fallback), fieldErrors: {} };
+  return { kind: 'failed', code, message: failureText(err, fallback), fieldErrors: {} };
 }
 
 /** The API's messages of a form, split by where they go. */

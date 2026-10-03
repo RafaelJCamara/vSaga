@@ -6,20 +6,33 @@
   <a routerLink="/admin/roles" routerLinkActive="active" ariaCurrentWhenActive="page">Roles</a>
 </nav>
 
+<!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
+<div role="status">
+  @if (!store.loaded() && !store.loadError()) {
+    <p class="empty">Loading…</p>
+  }
+</div>
+
 @if (store.loaded()) {
   @if (store.loadError(); as message) {
     <!-- A change was made, but the lists could not be read back: what the pages show may be out of date. -->
     <div class="banner banner--warning" role="alert">
       {{ message }}
-      <button type="button" class="btn" (click)="retry()">Try again</button>
+      @if (store.loadErrorKind() === 'forbidden') {
+        <a class="btn" routerLink="/sagas">Back to the sagas</a>
+      } @else {
+        <button type="button" class="btn" (click)="refresh()">Try again</button>
+      }
     </div>
   }
   <router-outlet />
 } @else if (store.loadError(); as message) {
   <div class="banner banner--error" role="alert">
     {{ message }}
-    <button type="button" class="btn" (click)="retry()">Try again</button>
+    @if (store.loadErrorKind() === 'forbidden') {
+      <a class="btn" routerLink="/sagas">Back to the sagas</a>
+    } @else {
+      <button type="button" class="btn" (click)="retry()">Try again</button>
+    }
   </div>
-} @else {
-  <p class="empty" role="status">Loading…</p>
 }

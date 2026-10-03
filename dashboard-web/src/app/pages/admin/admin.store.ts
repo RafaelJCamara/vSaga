@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { Observable, catchError, firstValueFrom, forkJoin, of, throwError } from 'rxjs';
+import { Observable, TimeoutError, catchError, firstValueFrom, forkJoin, of, timeout } from 'rxjs';
 import { SagaApiService } from '../../services/saga-api.service';
-import { adminFailure } from '../../util/admin-failure';
+import { AdminFailure, AdminFailureKind, adminFailure } from '../../util/admin-failure';
 import { problemOf } from '../../util/http-error';
 import { AdminApiService } from './admin-api.service';
 import {
@@ -16,6 +16,12 @@ import {
   UpdateUser,
 } from './admin.model';
 
+/** How long a read of the area may take before it counts as failed: a hung API shows the error row with
+ *  "Try again" instead of "Loading…" for good. */
+export const READ_TIMEOUT_MS = 30000;
+
+const TIMED_OUT = 'The dashboard API did not answer in time. Try again.';
+
 /**
  * What the administration pages share: the users, teams and roles, the permission catalogue and the saga
  * types, loaded once for the shell and kept current by the pages' own changes.
@@ -23,16 +29,20 @@ import {
  * Provided by the admin shell's route, not by the root: the data lives while the area is open and is dropped
  * with `clear()` when the shell is left (a route's injector outlives its component, so nothing else would).
  *
- * - `load()` reads everything and never rejects: it sets `loaded`, or `loadError` with the sentence to show.
- *   A 403 on the saga types is no failure: the endpoint lists only the types the caller may view, and an
- *   access manager need not hold `sagas.view`, so the list is empty and the grants editor takes type names
- *   typed in.
+ * - `load()` reads everything and never rejects: it sets `loaded`, or `loadError` (and `loadErrorKind`) with
+ *   the sentence to show; a read that does not answer in `READ_TIMEOUT_MS` fails like any other. The saga
+ *   types are a convenience (the grants editor offers them, and takes type names typed in), so no error on
+ *   them fails the load: a manager who cannot view sagas gets a 403 for them, and the saga reader being down
+ *   must not lock the manager out of users, teams and roles.
  * - Every change (`saveUser`, `deleteRole`, ...) awaits the API, then reloads the users, teams and roles, so
  *   what the pages show is what the server stores (a deleted role, the teams a user is now in, the
  *   grants it holds in its own order). It resolves with the API's answer after the reload, and rejects with
- *   the API's `HttpErrorResponse` (read it with `adminFailure`), reloading nothing, except that a 404 reloads
- *   too, so a list stops showing what is gone. A reload that fails does not fail the change that was made: it
- *   sets `loadError` and the lists keep what they had.
+ *   the API's `HttpErrorResponse` (read it with `adminFailure`). A 404 or a 409 also reads the lists again
+ *   (without making the rejection wait for it): what the page worked on is gone, or the rule that refused it
+ *   (`role_in_use`, a taken name) is a fact the lists should show; any other refusal changed nothing. A reload
+ *   that fails does not fail the change that was made: it sets `loadError` and the lists keep what they had.
+ * - `refresh()` reads the lists again and nothing else: `loaded` stays true, so the pages (and what is typed in
+ *   them) stay where they are. It is what the shell's "Try again" runs after a reload failed.
  */
 @Injectable()
 export class AdminStore {
@@ -45,7 +55,7 @@ export class AdminStore {
   private readonly permissionsState = signal<PermissionInfo[]>([]);
   private readonly sagaTypesState = signal<string[]>([]);
   private readonly loadedState = signal(false);
-  private readonly loadErrorState = signal<string | null>(null);
+  private readonly loadFailure = signal<AdminFailure | null>(null);
   /** Counts the reads started; an answer to one that is not the latest is dropped, whenever it arrives. */
   private generation = 0;
   /** False until `load()` and again after `clear()`: a change still in flight when the shell is left must
@@ -62,7 +72,12 @@ export class AdminStore {
   /** True once everything has been read; false again while `load()` runs. */
   readonly loaded = this.loadedState.asReadonly();
   /** The sentence for the latest read that failed; null after one that succeeded. */
-  readonly loadError = this.loadErrorState.asReadonly();
+  readonly loadError = computed(() => this.loadFailure()?.message ?? null);
+  /** What kind of failure `loadError` is: `forbidden` means asking again cannot help (the session no longer
+   *  holds `access.manage`). Null when there is no error. */
+  readonly loadErrorKind = computed<AdminFailureKind | null>(
+    () => this.loadFailure()?.kind ?? null,
+  );
 
   /** How many grants (of users and of teams) name each role, by role id: the roles list shows it, and a
    *  role that is granted anywhere cannot be deleted (409 `role_in_use`). A role nobody holds has no entry. */
@@ -79,7 +94,7 @@ export class AdminStore {
     const generation = ++this.generation;
     this.open = true;
     this.loadedState.set(false);
-    this.loadErrorState.set(null);
+    this.loadFailure.set(null);
     try {
       const everything = await firstValueFrom(
         forkJoin({
@@ -87,14 +102,8 @@ export class AdminStore {
           users: this.api.listUsers(),
           teams: this.api.listTeams(),
           roles: this.api.listRoles(),
-          sagaTypes: this.sagas
-            .getSagaTypes()
-            .pipe(
-              catchError((err: unknown) =>
-                problemOf(err, '').status === 403 ? of([]) : throwError(() => err),
-              ),
-            ),
-        }),
+          sagaTypes: this.sagas.getSagaTypes().pipe(catchError(() => of([]))),
+        }).pipe(timeout(READ_TIMEOUT_MS)),
       );
       if (generation !== this.generation) return;
       this.permissionsState.set(everything.permissions);
@@ -107,10 +116,14 @@ export class AdminStore {
       this.loadedState.set(true);
     } catch (err) {
       if (generation !== this.generation) return;
-      this.loadErrorState.set(
-        adminFailure(err, 'The administration data could not be loaded.').message,
-      );
+      this.loadFailure.set(readFailure(err, 'The administration data could not be loaded.'));
     }
+  }
+
+  /** Reads the users, teams and roles again, leaving `loaded` as it is; a failure is `loadError`. Never
+   *  rejects. While nothing has been read yet it is a full `load()`. */
+  refresh(): Promise<void> {
+    return this.reload();
   }
 
   /** Forgets everything and drops reads still in flight: the shell was left. */
@@ -123,7 +136,7 @@ export class AdminStore {
     this.permissionsState.set([]);
     this.sagaTypesState.set([]);
     this.loadedState.set(false);
-    this.loadErrorState.set(null);
+    this.loadFailure.set(null);
   }
 
   /** Creates the user (`id` null) or updates one. */
@@ -173,7 +186,9 @@ export class AdminStore {
     try {
       answer = await firstValueFrom(call);
     } catch (err) {
-      if (problemOf(err, '').status === 404) await this.reload();
+      const status = problemOf(err, '').status;
+      // Not awaited: the page that made the change shows the refusal at once, and the lists catch up.
+      if (status === 404 || status === 409) void this.reload();
       throw err;
     }
     await this.reload();
@@ -183,6 +198,12 @@ export class AdminStore {
   /** Reads the users, teams and roles again. Never rejects. */
   private async reload(): Promise<void> {
     if (!this.open) return;
+    // A read of the lists alone would supersede the full one that is running (a change that was in flight when
+    // the shell was left and entered again), and `loaded` would never become true: read everything instead.
+    if (!this.loadedState()) {
+      await this.load();
+      return;
+    }
     const generation = ++this.generation;
     try {
       const lists = await firstValueFrom(
@@ -190,18 +211,29 @@ export class AdminStore {
           users: this.api.listUsers(),
           teams: this.api.listTeams(),
           roles: this.api.listRoles(),
-        }),
+        }).pipe(timeout(READ_TIMEOUT_MS)),
       );
       if (generation !== this.generation) return;
       this.usersState.set(lists.users);
       this.teamsState.set(lists.teams);
       this.rolesState.set(lists.roles);
-      this.loadErrorState.set(null);
+      this.loadFailure.set(null);
     } catch (err) {
       if (generation !== this.generation) return;
-      this.loadErrorState.set(adminFailure(err, 'The lists could not be refreshed.').message);
+      this.loadFailure.set(readFailure(err, 'The lists could not be refreshed.'));
     }
   }
+}
+
+/**
+ * A failed read as the shell shows it. A 404 is not "this no longer exists" here (nothing the shell shows is
+ * gone: the endpoint is), and a timeout is not the network being down.
+ */
+function readFailure(err: unknown, fallback: string): AdminFailure {
+  if (err instanceof TimeoutError)
+    return { kind: 'failed', code: null, message: TIMED_OUT, fieldErrors: {} };
+  const failure = adminFailure(err, fallback);
+  return failure.kind === 'gone' ? { ...failure, kind: 'failed', message: fallback } : failure;
 }
 
 /** Ordinal order, as the API compares saga types (`localeCompare` would fold case and accents). */

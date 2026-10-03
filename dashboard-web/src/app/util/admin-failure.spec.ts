@@ -3,6 +3,8 @@ import {
   ACCESS_LOST,
   GONE,
   LAST_ADMINISTRATOR_ADVICE,
+  MUST_CHANGE_PASSWORD,
+  SESSION_ENDED,
   adminFailure,
   placeFieldErrors,
 } from './admin-failure';
@@ -38,6 +40,7 @@ describe('adminFailure', () => {
 
     expect(failure).toEqual({
       kind: 'failed',
+      code: 'validation',
       message: 'Unknown member: teamIds.',
       fieldErrors: {},
     });
@@ -69,7 +72,12 @@ describe('adminFailure', () => {
     (code) => {
       const failure = adminFailure(httpError(409, problem(code, `Detail of ${code}.`)), FALLBACK);
 
-      expect(failure).toEqual({ kind: 'conflict', message: `Detail of ${code}.`, fieldErrors: {} });
+      expect(failure).toEqual({
+        kind: 'conflict',
+        code,
+        message: `Detail of ${code}.`,
+        fieldErrors: {},
+      });
     },
   );
 
@@ -81,6 +89,7 @@ describe('adminFailure', () => {
     for (const body of [null, { title: 'Not found', detail: 'No role has this id.' }]) {
       expect(adminFailure(httpError(404, body), FALLBACK)).toEqual({
         kind: 'gone',
+        code: null,
         message: GONE,
         fieldErrors: {},
       });
@@ -94,8 +103,53 @@ describe('adminFailure', () => {
       FALLBACK,
     );
 
-    expect(failure).toEqual({ kind: 'forbidden', message: ACCESS_LOST, fieldErrors: {} });
+    expect(failure).toEqual({
+      kind: 'forbidden',
+      code: 'forbidden',
+      message: ACCESS_LOST,
+      fieldErrors: {},
+    });
     expect(ACCESS_LOST).toBe('You no longer have permission to manage access.');
+  });
+
+  it('does not call a password that must be changed a lost permission', () => {
+    const failure = adminFailure(
+      httpError(
+        403,
+        problem('password_change_required', 'Change your password before using the dashboard.'),
+      ),
+      FALLBACK,
+    );
+
+    expect(failure).toEqual({
+      kind: 'forbidden',
+      code: 'password_change_required',
+      message: MUST_CHANGE_PASSWORD,
+      fieldErrors: {},
+    });
+    expect(MUST_CHANGE_PASSWORD).not.toContain('no longer');
+  });
+
+  it('says the session ended for a 401, whatever the server said', () => {
+    const failure = adminFailure(
+      httpError(401, problem('unauthenticated', 'Sign in at /login, or send the key')),
+      FALLBACK,
+    );
+
+    expect(failure).toEqual({
+      kind: 'failed',
+      code: 'unauthenticated',
+      message: SESSION_ENDED,
+      fieldErrors: {},
+    });
+    expect(SESSION_ENDED).toBe('Your session has ended. Sign in again.');
+  });
+
+  it('carries the code of the problem, so a page can tell a taken name from any other conflict', () => {
+    expect(adminFailure(httpError(409, problem('name_taken', 'x')), FALLBACK).code).toBe(
+      'name_taken',
+    );
+    expect(adminFailure(httpError(500), FALLBACK).code).toBeNull();
   });
 
   it('says the network and the server in the words of the sign-in pages', () => {

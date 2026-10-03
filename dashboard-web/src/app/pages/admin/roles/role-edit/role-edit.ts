@@ -38,7 +38,12 @@ const MAX_DESCRIPTION = 256;
  * being typed. The form is built like the sign-in pages' (see `Login`): `ngNoForm`, `ngModel` bound to
  * signals, and the checks made here. Failures are shown as `adminFailure` sorts them: a field's messages
  * under the field, a rule (`role_in_use`, `last_administrator`, a duplicate name) in a banner that keeps the
- * draft, a 404 as "This no longer exists", a 403 as the lost permission.
+ * draft (a duplicate name also marks the name field), a 404 as "This no longer exists", a 403 as the lost
+ * permission.
+ *
+ * Save and Delete exclude each other, and the draft belongs to the user: what is typed while a request runs
+ * is never overwritten by its answer (`revision` counts the changes of the draft, and an answer re-seeds it
+ * only when none was made since the request was sent).
  */
 @Component({
   selector: 'app-role-edit',
@@ -61,15 +66,20 @@ export class RoleEdit {
     viewChild<ElementRef<HTMLTextAreaElement>>('descriptionField');
   /** The first permission checkbox (the template marks every one; the first is returned). */
   private readonly firstPermission = viewChild<ElementRef<HTMLInputElement>>('firstPermission');
+  /** The link of the "no longer exists" notice: focus goes there when it replaces the form. */
+  private readonly goneLink = viewChild<ElementRef<HTMLAnchorElement>>('goneLink');
 
   /** The role in the URL; null on the page for a new one. */
   private readonly id = computed(() => this.params().get('id'));
   /** The role a new one starts from (`?from=<id>`); null when there is none. */
   private readonly from = computed(() => this.query().get('from'));
+  /** The role a delete is running for. The store reads the lists again before the delete returns, and the role
+   *  is not in them any more: until the page has left, it must not turn into "This no longer exists". */
+  private readonly pending = signal<Role | null>(null);
   /** The role the page edits; null for a new role, and for an id the store does not know (it is gone). */
   protected readonly role = computed<Role | null>(() => {
     const id = this.id();
-    return id === null ? null : (this.store.roles().find((r) => r.id === id) ?? null);
+    return id === null ? null : (this.store.roles().find((r) => r.id === id) ?? this.pending());
   });
   protected readonly creating = computed(() => this.id() === null);
   /** A built-in role cannot be changed or deleted: the form only shows it. */
@@ -83,6 +93,14 @@ export class RoleEdit {
   readonly name = signal('');
   readonly description = signal('');
   private readonly permissions = signal<readonly string[]>([]);
+  /** Counts the changes of the draft (typing, ticking, seeding): see the class comment. */
+  private revision = 0;
+  /** The permissions the role holds that the catalogue does not list (an API older or newer than the role): they
+   *  are shown, so that nothing is dropped unseen, and sent as they are; the API says if it refuses them. */
+  protected readonly unknownPermissions = computed(() => {
+    const known = new Set(this.store.permissions().map((p) => p.key));
+    return this.permissions().filter((key) => !known.has(key));
+  });
 
   readonly busy = signal(false);
   readonly deleting = signal(false);
@@ -94,6 +112,8 @@ export class RoleEdit {
   private readonly serverErrors = signal<Record<string, string[]>>({});
   /** A failure that no field explains: a rule, the network, a 403 and the like. */
   readonly failure = signal<AdminFailure | null>(null);
+  /** The API refused the name as taken (`name_taken`): the name field is the one to change. */
+  protected readonly nameTaken = signal(false);
   /** The API answered 404: the role was deleted meanwhile. */
   private readonly gone = signal(false);
   protected readonly notFound = computed(
@@ -132,6 +152,12 @@ export class RoleEdit {
       const from = this.from();
       untracked(() => this.seed(id, from));
     });
+    // The notice replaces the form, and the focus was in it: it goes to the way out, not to the page's top.
+    effect(() => {
+      if (this.notFound()) {
+        afterNextRender(() => this.goneLink()?.nativeElement.focus(), { injector: this.injector });
+      }
+    });
   }
 
   protected has(key: string): boolean {
@@ -151,7 +177,9 @@ export class RoleEdit {
    * draft is no longer the one that was saved.
    */
   protected edited(field: Field): void {
+    this.revision++;
     this.saved.set(false);
+    if (field === 'name') this.nameTaken.set(false);
     if (!(field in this.serverErrors())) return;
     this.serverErrors.update((errors) =>
       Object.fromEntries(Object.entries(errors).filter(([key]) => key !== field)),
@@ -159,24 +187,27 @@ export class RoleEdit {
   }
 
   protected async save(): Promise<void> {
-    if (this.busy() || this.readOnly()) return;
+    if (this.busy() || this.deleting() || this.readOnly()) return;
     this.submitted.set(true);
     this.serverErrors.set({});
     this.failure.set(null);
+    this.nameTaken.set(false);
     this.saved.set(false);
     if (this.focusFirstError()) return;
 
-    // In the catalogue's order, whatever order the boxes were ticked in.
+    // The catalogue's permissions in its order, whatever order the boxes were ticked in, then any it does not list.
     const held = this.permissions();
+    const catalogue = this.store.permissions().map((p) => p.key);
     const body: SaveRole = {
       name: this.name().trim(),
       description: this.description().trim(),
-      permissions: this.store
-        .permissions()
-        .map((p) => p.key)
-        .filter((key) => held.includes(key)),
+      permissions: [
+        ...catalogue.filter((key) => held.includes(key)),
+        ...held.filter((key) => !catalogue.includes(key)),
+      ],
     };
     const creating = this.creating();
+    const revision = this.revision;
     this.busy.set(true);
     let role: Role;
     try {
@@ -186,11 +217,16 @@ export class RoleEdit {
       this.busy.set(false);
       return;
     }
-    this.busy.set(false);
     if (this.destroyed()) return;
     if (creating) {
+      // Busy until the page has left: the form must not be usable again in between.
       await leaveTo(this.router, '/admin/roles', () => !this.destroyed());
-    } else {
+      if (!this.destroyed()) this.busy.set(false);
+      return;
+    }
+    this.busy.set(false);
+    // What was typed while the request ran is the user's: the answer re-seeds the draft only if it is still the one that was sent.
+    if (revision === this.revision) {
       this.load(role);
       this.saved.set(true);
     }
@@ -198,19 +234,25 @@ export class RoleEdit {
 
   protected async remove(): Promise<void> {
     const role = this.role();
-    if (role === null || this.deleting()) return;
+    if (role === null || this.deleting() || this.busy()) return;
+    this.pending.set(role);
     this.deleting.set(true);
     this.failure.set(null);
+    this.nameTaken.set(false);
     this.saved.set(false);
     try {
       await this.store.deleteRole(role.id);
     } catch (err) {
-      this.refused(adminFailure(err, 'The role could not be deleted. Try again.'));
+      this.pending.set(null);
       this.deleting.set(false);
+      this.refused(adminFailure(err, 'The role could not be deleted. Try again.'));
       return;
     }
-    this.deleting.set(false);
     await leaveTo(this.router, '/admin/roles', () => !this.destroyed());
+    if (!this.destroyed()) {
+      this.pending.set(null);
+      this.deleting.set(false);
+    }
   }
 
   /** Shows a refusal where it belongs. The draft is never touched: the user fixes it or tries again. */
@@ -221,6 +263,14 @@ export class RoleEdit {
     }
     if (failure.kind !== 'validation') {
       this.failure.set(failure);
+      if (failure.kind === 'conflict' && failure.code === 'name_taken') {
+        this.nameTaken.set(true);
+        if (!this.destroyed()) {
+          afterNextRender(() => this.nameField()?.nativeElement.focus(), {
+            injector: this.injector,
+          });
+        }
+      }
       return;
     }
     const { placed, unplaced } = placeFieldErrors(failure.fieldErrors, FIELDS);
@@ -247,12 +297,14 @@ export class RoleEdit {
 
   /** Puts `role` (or an empty draft) in the form and clears what the last attempt left. */
   private load(role: Pick<Role, 'name' | 'description' | 'permissions'> | null): void {
+    this.revision++;
     this.name.set(role?.name ?? '');
     this.description.set(role?.description ?? '');
     this.permissions.set(role ? [...role.permissions] : []);
     this.submitted.set(false);
     this.serverErrors.set({});
     this.failure.set(null);
+    this.nameTaken.set(false);
     this.saved.set(false);
   }
 

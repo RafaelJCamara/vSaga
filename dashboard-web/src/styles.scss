@@ -205,6 +205,12 @@ code, .mono {
   opacity: 0.6;
 }
 
+/* A textarea is set in the browser's monospace font unless it inherits the page's. */
+textarea.input {
+  font-family: inherit;
+  resize: vertical;
+}
+
 .field-hint,
 .field-error {
   font-size: 0.82rem;
@@ -224,6 +230,12 @@ code, .mono {
   align-items: baseline;
   gap: 0.75rem;
   margin-bottom: 1rem;
+}
+
+/* The heading of a section of a page: the roles list, a role. The account page's cards set their own. */
+.section-title {
+  margin: 0;
+  font-size: 1.1rem;
 }
 
 /* The title of a page that is a card or a stack of cards: sign-in, setup, account. */

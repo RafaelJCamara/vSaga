@@ -427,6 +427,8 @@ describe('routes', () => {
     it.each([
       ['/admin', '/login?returnUrl=%2Fadmin'],
       ['/admin/roles/abc', '/login?returnUrl=%2Fadmin%2Froles%2Fabc'],
+      // The query string is part of where the visitor was going: a role to duplicate, say.
+      ['/admin/roles/new?from=abc', '/login?returnUrl=%2Fadmin%2Froles%2Fnew%3Ffrom%3Dabc'],
     ])('sends an anonymous visitor from %s to sign in, and back', async (from, settled) => {
       await visit(from, ANONYMOUS);
 
@@ -451,6 +453,12 @@ describe('routes', () => {
 
       expect(url()).toBe('/admin/roles');
       expect(loads['admin']).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns to an address with a query string as it was, through the sign-in', async () => {
+      await visit('/login?returnUrl=%2Fadmin%2Froles%2Fnew%3Ffrom%3Dabc', MANAGER);
+
+      expect(url()).toBe('/admin/roles/new?from=abc');
     });
   });
 

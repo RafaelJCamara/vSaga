@@ -32,7 +32,9 @@ import {
 /**
  * The service against the golden fixtures in `src/app/testing/contracts/admin/`, the same files the .NET
  * endpoint tests assert (`AdminApi.cs` in `VSaga.Dashboard.Api.Tests`). A request fixture is the body the API
- * accepts: what the service sends must equal it, deeply. A response fixture is what the API answers: it must
+ * accepts: what the service puts on the wire must equal it, deeply. The service passes a body through as it is, so
+ * this pins the models and the routes; that the pages build such bodies is asserted by their own specs
+ * (`role-edit.spec.ts` builds `role.request.json` from a form). A response fixture is what the API answers: it must
  * parse into the models, which the compiler checks (the assignments below) and the key lists confirm in
  * both directions (a model with a member the API never sends, or without one it does, fails).
  *
@@ -147,7 +149,7 @@ describe('AdminApiService', () => {
   }
 
   describe('the request fixtures', () => {
-    it('create user sends exactly create-user.request.json', () => {
+    it('create user puts create-user.request.json on the wire unchanged', () => {
       const typed: CreateUser = createUserRequest;
       const { sent } = exchange(service.createUser(typed), 'POST', `${BASE}/users`, userResponse);
 
@@ -155,7 +157,7 @@ describe('AdminApiService', () => {
       expect(keysOf(createUserRequest)).toEqual(modelKeys(CREATE_USER_KEYS));
     });
 
-    it('update user sends exactly update-user.request.json, with no teamIds and no enabled', () => {
+    it('update user puts update-user.request.json on the wire unchanged, with neither teamIds nor enabled', () => {
       const typed: UpdateUser = updateUserRequest;
       const { sent } = exchange(
         service.updateUser(ID, typed),
@@ -166,10 +168,12 @@ describe('AdminApiService', () => {
 
       expect(sent).toEqual(updateUserRequest);
       expect(keysOf(updateUserRequest)).toEqual(modelKeys(UPDATE_USER_KEYS));
+      // Membership is written through the team, and the member is isEnabled: the API refuses both of these.
       expect(Object.keys(sent as object)).not.toContain('teamIds');
+      expect(Object.keys(sent as object)).not.toContain('enabled');
     });
 
-    it('reset password sends exactly reset-password.request.json', () => {
+    it('reset password puts reset-password.request.json on the wire unchanged', () => {
       const typed: ResetPassword = resetPasswordRequest;
       const { sent } = exchange(
         service.resetPassword(ID, typed),
@@ -182,7 +186,7 @@ describe('AdminApiService', () => {
       expect(keysOf(resetPasswordRequest)).toEqual(modelKeys(RESET_PASSWORD_KEYS));
     });
 
-    it('create and update team send exactly team.request.json', () => {
+    it('create and update team put team.request.json on the wire unchanged', () => {
       const typed: SaveTeam = teamRequest;
       const created = exchange(service.createTeam(typed), 'POST', `${BASE}/teams`, teamResponse);
       const updated = exchange(
@@ -197,7 +201,7 @@ describe('AdminApiService', () => {
       expect(keysOf(teamRequest)).toEqual(modelKeys(SAVE_TEAM_KEYS));
     });
 
-    it('create and update role send exactly role.request.json', () => {
+    it('create and update role put role.request.json on the wire unchanged', () => {
       const typed: SaveRole = roleRequest;
       const created = exchange(service.createRole(typed), 'POST', `${BASE}/roles`, roleResponse);
       const updated = exchange(
@@ -213,7 +217,12 @@ describe('AdminApiService', () => {
     });
 
     it('every grant in a request names exactly the members of a grant', () => {
-      for (const grant of [...createUserRequest.grants, ...teamRequest.grants]) {
+      const grants = [
+        ...createUserRequest.grants,
+        ...updateUserRequest.grants,
+        ...teamRequest.grants,
+      ];
+      for (const grant of grants) {
         expect(keysOf(grant)).toEqual(modelKeys(GRANT_KEYS));
       }
     });

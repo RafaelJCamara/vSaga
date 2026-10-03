@@ -93,14 +93,19 @@ export const setupGuard: CanActivateFn = async () => {
 
 /**
  * The administration area, as a `canMatch` guard so that its chunk loads only for a user who may use it.
- * The session redirects of `authGuard` come first, with the return URL built from the segments being
- * matched; then `access.manage` for every saga type, or the saga list.
+ * The session redirects of `authGuard` come first, with the return URL of the address being navigated to
+ * (the segments being matched when there is no navigation); then `access.manage` for every saga type, or the saga list.
  */
 export const adminGuard: CanMatchFn = async (_route, segments) => {
   const auth = inject(AuthService);
   const router = inject(Router);
+  // The navigation under way knows the whole address, query string included (`/admin/roles/new?from=<id>`),
+  // which the segments do not; a call outside a navigation has only the segments.
+  const target = router.currentNavigation()?.extractedUrl;
+  const url = target
+    ? router.serializeUrl(target)
+    : `/${segments.map((segment) => segment.toString()).join('/')}`;
   if (mustAsk(auth)) await auth.refresh();
-  const url = `/${segments.map((segment) => segment.toString()).join('/')}`;
   return (
     redirectFor(auth, router, url) ??
     (auth.canManageAccess() ? true : router.createUrlTree([HOME_URL]))

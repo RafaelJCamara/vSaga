@@ -1,7 +1,7 @@
 @if (notFound()) {
   <div class="banner banner--warning" role="alert">
     This no longer exists. It may have been deleted by someone else.
-    <a routerLink="/admin/roles">Back to the roles</a>
+    <a #goneLink routerLink="/admin/roles">Back to the roles</a>
   </div>
 } @else {
   <div class="page-header">
@@ -19,11 +19,14 @@
   }
 
   @if (failure(); as problem) {
-    <div class="banner banner--error" role="alert">{{ problem.message }}</div>
+    <div id="role-failure" class="banner banner--error" role="alert">{{ problem.message }}</div>
   }
-  @if (saved()) {
-    <div class="banner banner--success" role="status">Saved.</div>
-  }
+  <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
+  <div role="status">
+    @if (saved()) {
+      <div class="banner banner--success">Saved.</div>
+    }
+  </div>
 
   <form class="card" method="post" ngNoForm novalidate (submit)="$event.preventDefault(); save()">
     <div class="field">
@@ -40,8 +43,10 @@
         aria-required="true"
         [(ngModel)]="name"
         (ngModelChange)="edited('name')"
-        [attr.aria-invalid]="errors().name ? 'true' : null"
-        [attr.aria-describedby]="errors().name ? 'role-name-error' : null"
+        [attr.aria-invalid]="errors().name || nameTaken() ? 'true' : null"
+        [attr.aria-describedby]="
+          errors().name ? 'role-name-error' : nameTaken() ? 'role-failure' : null
+        "
       />
       @if (errors().name; as message) {
         <span id="role-name-error" class="field-error">{{ message }}</span>
@@ -91,6 +96,26 @@
           </span>
         </label>
       }
+      @for (key of unknownPermissions(); track key) {
+        <label class="permission">
+          <input
+            type="checkbox"
+            [value]="key"
+            checked
+            [disabled]="readOnly()"
+            (change)="toggle(key, $event)"
+          />
+          <span class="permission-text">
+            <span class="permission-name"
+              ><code>{{ key }}</code></span
+            >
+            <span class="field-hint"
+              >Not in this API's permission catalogue. The role keeps it until you untick it, and
+              the API refuses to save a role that holds it.</span
+            >
+          </span>
+        </label>
+      }
       @if (errors().permissions; as message) {
         <span id="role-permissions-error" class="field-error">{{ message }}</span>
       }
@@ -105,7 +130,7 @@
         }
         <a class="btn btn--quiet" routerLink="/admin/roles">Back to the roles</a>
       } @else {
-        <button type="submit" class="btn" [disabled]="busy()">
+        <button type="submit" class="btn" [disabled]="busy() || deleting()">
           {{ busy() ? 'Saving…' : creating() ? 'Create role' : 'Save' }}
         </button>
         <!-- Not "Cancel" on a role that exists: the delete's own question has a Cancel, and two would be ambiguous. -->
@@ -122,12 +147,13 @@
             label="Delete role"
             [prompt]="'Delete the role ' + custom.name + '? This cannot be undone.'"
             confirmLabel="Yes, delete"
-            [busy]="deleting()"
+            [busy]="deleting() || busy()"
             [disabled]="usedBy() > 0"
+            [describedBy]="usedBy() > 0 ? 'role-delete-hint' : null"
             (confirmed)="remove()"
           />
           @if (usedBy() > 0) {
-            <span class="field-hint">
+            <span id="role-delete-hint" class="field-hint">
               Used by {{ usedBy() }} {{ usedBy() === 1 ? 'grant' : 'grants' }}: remove them from the
               users and teams that hold it to delete the role.
             </span>

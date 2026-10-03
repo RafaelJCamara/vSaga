@@ -14,8 +14,13 @@
   font-weight: 600;
 }
 
-/* aria-disabled, not disabled: see the component comment. */
-button[aria-disabled='true'] {
+/* aria-disabled, not disabled: see the component comment. It looks as `.btn:disabled` does, and does not
+   light up under the pointer. */
+button.btn[aria-disabled='true'] {
   opacity: 0.5;
   cursor: default;
+}
+
+button.btn[aria-disabled='true']:hover {
+  filter: none;
 }

@@ -8,12 +8,14 @@ import { ConfirmButton } from './confirm-button';
   imports: [ConfirmButton],
   template: `
     <button id="before" type="button">before</button>
+    <span id="why">Used by 2 grants.</span>
     <app-confirm-button
       label="Delete role"
       [prompt]="prompt()"
       confirmLabel="Yes, delete"
       [busy]="busy()"
       [disabled]="disabled()"
+      [describedBy]="describedBy()"
       (confirmed)="confirmed.set(confirmed() + 1)"
     />
   `,
@@ -23,6 +25,7 @@ class Host {
   readonly prompt = signal('Delete the role Support?');
   readonly busy = signal(false);
   readonly disabled = signal(false);
+  readonly describedBy = signal<string | null>(null);
   readonly confirmed = signal(0);
 }
 
@@ -90,18 +93,21 @@ describe('ConfirmButton', () => {
 
   it('gives every instance a question of its own', async () => {
     const second = TestBed.createComponent(ConfirmButton);
-    second.componentRef.setInput('label', 'Delete');
-    second.componentRef.setInput('prompt', 'Sure?');
-    second.componentRef.setInput('confirmLabel', 'Yes');
     document.body.appendChild(second.nativeElement);
-    second.detectChanges();
-    second.nativeElement.querySelector('button').click();
-    second.detectChanges();
-    await open();
+    try {
+      second.componentRef.setInput('label', 'Delete');
+      second.componentRef.setInput('prompt', 'Sure?');
+      second.componentRef.setInput('confirmLabel', 'Yes');
+      second.detectChanges();
+      second.nativeElement.querySelector('button').click();
+      second.detectChanges();
+      await open();
 
-    const ids = [prompt()!.id, second.nativeElement.querySelector('.confirm-prompt').id];
-    expect(new Set(ids).size).toBe(2);
-    second.nativeElement.remove();
+      const ids = [prompt()!.id, second.nativeElement.querySelector('.confirm-prompt').id];
+      expect(new Set(ids).size).toBe(2);
+    } finally {
+      second.nativeElement.remove();
+    }
   });
 
   describe('the keyboard', () => {
@@ -157,12 +163,28 @@ describe('ConfirmButton', () => {
       expect(behind).toHaveBeenCalledTimes(1);
     });
 
-    it('is reachable and operable with the keyboard alone: Tab order is the question, yes, Cancel', async () => {
+    it('leaves Enter and Space to the browser: every control is a native button that nothing swallows', async () => {
+      const swallowed = (target: Element, name: string) => {
+        const event = key(target, name === 'Space' ? ' ' : name);
+        return event.defaultPrevented;
+      };
+      // jsdom does not turn a key into a click as a browser does for a native button, so what can be
+      // asserted is the cause: the controls are `button`s in document order, and no handler cancels
+      // Enter or Space on them (which would stop that activation).
+      expect(ask().tagName).toBe('BUTTON');
+      expect(swallowed(ask(), 'Enter')).toBe(false);
+      expect(swallowed(ask(), 'Space')).toBe(false);
+
       await open();
 
-      // The buttons are plain buttons in document order: nothing has a tabindex that would reorder them.
+      expect(buttons().every((b) => b.tagName === 'BUTTON' && b.type === 'button')).toBe(true);
+      // Tab order is the question's own order: nothing has a tabindex that would reorder it.
       expect(buttons().map((b) => b.getAttribute('tabindex'))).toEqual([null, null]);
       expect(labels()).toEqual(['Yes, delete', 'Cancel']);
+      for (const button of buttons()) {
+        expect(swallowed(button, 'Enter')).toBe(false);
+        expect(swallowed(button, 'Space')).toBe(false);
+      }
     });
   });
 
@@ -188,6 +210,17 @@ describe('ConfirmButton', () => {
 
       expect(host.confirmed()).toBe(1);
       expect(labels()).toEqual(['Delete role']);
+    });
+
+    it('emits once for a second click that comes before the view has caught up', async () => {
+      await open();
+      const yes = find('Yes, delete');
+
+      yes.click();
+      yes.click();
+      await render();
+
+      expect(host.confirmed()).toBe(1);
     });
 
     it('asks again for the next one: a confirmation is not remembered', async () => {
@@ -246,18 +279,59 @@ describe('ConfirmButton', () => {
       await open();
       expect(prompt()).not.toBeNull();
     });
+
+    it('closes a question that is open (something else is working), with focus on the first button', async () => {
+      ask().focus();
+      await open();
+      expect(focused()).toBe(find('Cancel'));
+
+      host.busy.set(true);
+      await render();
+
+      expect(prompt()).toBeNull();
+      expect(focused()).toBe(ask());
+      expect(host.confirmed()).toBe(0);
+    });
+
+    it('does not take focus from where the user moved it when it closes the question', async () => {
+      await open();
+      document.getElementById('before')!.focus();
+
+      host.busy.set(true);
+      await render();
+
+      expect(prompt()).toBeNull();
+      expect(focused()).toBe(document.getElementById('before'));
+    });
   });
 
   describe('disabled', () => {
-    it('disables the button and asks nothing', async () => {
+    it('says so and asks nothing, but stays on the tab order so that it can say why', async () => {
       host.disabled.set(true);
       await render();
 
-      expect(ask().disabled).toBe(true);
+      expect(ask().getAttribute('aria-disabled')).toBe('true');
+      // A native `disabled` button cannot be focused, and then nothing can say why it is unavailable.
+      expect(ask().disabled).toBe(false);
+      ask().focus();
+      expect(focused()).toBe(ask());
       ask().click();
       await render();
       expect(prompt()).toBeNull();
       expect(host.confirmed()).toBe(0);
+    });
+
+    it('is described by the element the page names, and by none otherwise', async () => {
+      expect(ask().getAttribute('aria-describedby')).toBeNull();
+
+      host.disabled.set(true);
+      host.describedBy.set('why');
+      await render();
+
+      expect(ask().getAttribute('aria-describedby')).toBe('why');
+      host.describedBy.set(null);
+      await render();
+      expect(ask().hasAttribute('aria-describedby')).toBe(false);
     });
 
     it('closes a question that is open, and does not bring it back when the button is enabled again', async () => {
@@ -272,6 +346,16 @@ describe('ConfirmButton', () => {
       await render();
       expect(prompt()).toBeNull();
       expect(labels()).toEqual(['Delete role']);
+    });
+
+    it('gives the focus a home when it closes the question that had it: the first button', async () => {
+      await open();
+      expect(focused()).toBe(find('Cancel'));
+
+      host.disabled.set(true);
+      await render();
+
+      expect(focused()).toBe(ask());
     });
   });
 

@@ -1,6 +1,11 @@
 import { provideHttpClient } from '@angular/common/http';
-import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import {
+  HttpTestingController,
+  TestRequest,
+  provideHttpClientTesting,
+} from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import {
   ADMINISTRATOR_ID,
   AdminData,
@@ -16,7 +21,7 @@ import {
 } from '../../testing/admin';
 import { adminFailure } from '../../util/admin-failure';
 import { SaveRole } from './admin.model';
-import { AdminStore } from './admin.store';
+import { AdminStore, READ_TIMEOUT_MS } from './admin.store';
 
 /** What `fn` rejected with, or undefined when it did not reject. */
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -41,6 +46,18 @@ function refuse(http: HttpTestingController, url: string, status: number): void 
 function failEverything(http: HttpTestingController): void {
   for (const req of http.match(() => true))
     if (!req.cancelled) req.error(new ProgressEvent('error'));
+}
+
+/** Answers every open read of the store (the full set or the lists alone) with `data`. */
+function answer(requests: TestRequest[], data: AdminData): void {
+  const bodies: Record<string, object> = {
+    '/api/admin/permissions': data.permissions,
+    '/api/admin/users': data.users,
+    '/api/admin/teams': data.teams,
+    '/api/admin/roles': data.roles,
+    '/api/saga-types': data.sagaTypes,
+  };
+  for (const req of requests) if (!req.cancelled) req.flush(bodies[req.request.url]);
 }
 
 /** Lets the promise chains of the store run: a read starts only after the answer to the change has been seen. */
@@ -139,17 +156,108 @@ describe('AdminStore', () => {
       expect(store.loadError()).toBe('You no longer have permission to manage access.');
     });
 
-    it('fails on a saga types error that is not a 403', async () => {
+    it.each([
+      ['a server error', 500],
+      ['the service being unavailable', 503],
+      ['no answer at all', 0],
+    ])('is not failed by any error on the saga types: %s', async (_what, status) => {
       const done = store.load();
-      http.expectOne('/api/admin/permissions').flush([]);
-      http.expectOne('/api/admin/users').flush([]);
-      http.expectOne('/api/admin/teams').flush([]);
-      http.expectOne('/api/admin/roles').flush([]);
-      http.expectOne('/api/saga-types').flush(null, { status: 500, statusText: 'Boom' });
+      const data = adminData();
+      http.expectOne('/api/admin/permissions').flush(data.permissions);
+      http.expectOne('/api/admin/users').flush(data.users);
+      http.expectOne('/api/admin/teams').flush(data.teams);
+      http.expectOne('/api/admin/roles').flush(data.roles);
+      const types = http.expectOne('/api/saga-types');
+      if (status === 0) types.error(new ProgressEvent('error'));
+      else types.flush(null, { status, statusText: 'Refused' });
       await done;
 
-      expect(store.loaded()).toBe(false);
-      expect(store.loadError()).not.toBeNull();
+      // The saga reader being down must not lock the manager out of users, teams and roles.
+      expect(store.loaded()).toBe(true);
+      expect(store.loadError()).toBeNull();
+      expect(store.sagaTypes()).toEqual([]);
+      expect(store.roles()).toEqual(data.roles);
+    });
+
+    it('does not say "This no longer exists" for a 404 on a read: the endpoint is what is missing', async () => {
+      const done = store.load();
+      refuse(http, '/api/admin/users', 404);
+      await done;
+
+      expect(store.loadError()).toBe('The administration data could not be loaded.');
+      expect(store.loadErrorKind()).toBe('failed');
+    });
+
+    it('says which kind of error it is, so the shell can tell one that asking again cannot mend', async () => {
+      expect(store.loadErrorKind()).toBeNull();
+
+      const done = store.load();
+      refuse(http, '/api/admin/users', 403);
+      await done;
+
+      expect(store.loadErrorKind()).toBe('forbidden');
+      store.clear();
+      expect(store.loadErrorKind()).toBeNull();
+    });
+
+    it('says the session ended for a 401', async () => {
+      const done = store.load();
+      refuse(http, '/api/admin/users', 401);
+      await done;
+
+      expect(store.loadError()).toBe('Your session has ended. Sign in again.');
+    });
+
+    describe('when the API does not answer', () => {
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      it('fails with a sentence after the timeout, not before, instead of loading for good', async () => {
+        const done = store.load();
+
+        await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1);
+        expect(store.loadError()).toBeNull();
+        expect(store.loaded()).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await done;
+
+        expect(store.loaded()).toBe(false);
+        expect(store.loadError()).toBe('The dashboard API did not answer in time. Try again.');
+        expect(store.loadErrorKind()).toBe('failed');
+        // The reads that never answered are given up, not left open.
+        expect(http.match(() => true).every((req) => req.cancelled)).toBe(true);
+      });
+
+      it('can be asked again after the timeout', async () => {
+        const first = store.load();
+        await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+        await first;
+        http.match(() => true);
+
+        const again = store.load();
+        answerLoad(http);
+        await again;
+
+        expect(store.loaded()).toBe(true);
+        expect(store.loadError()).toBeNull();
+      });
+
+      it('applies to a refresh too: the lists stay, with the sentence', async () => {
+        const done = store.load();
+        answerLoad(http);
+        await done;
+        const before = store.users();
+
+        const refreshing = store.refresh();
+        await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+        await refreshing;
+        http.match(() => true);
+
+        expect(store.loaded()).toBe(true);
+        expect(store.users()).toEqual(before);
+        expect(store.loadError()).toBe('The dashboard API did not answer in time. Try again.');
+      });
     });
 
     it('never rejects', async () => {
@@ -193,6 +301,74 @@ describe('AdminStore', () => {
 
       expect(store.users().map((u) => u.username)).toEqual(['new']);
       expect(store.loaded()).toBe(true);
+    });
+  });
+
+  describe('refresh', () => {
+    it('reads the users, teams and roles again and nothing else, and leaves loaded true', async () => {
+      await loaded();
+
+      const refreshing = store.refresh();
+      expect(store.loaded()).toBe(true);
+      answerReload(http, adminData({ users: [], teams: [] }));
+      await refreshing;
+
+      expect(store.loaded()).toBe(true);
+      expect(store.users()).toEqual([]);
+      http.expectNone('/api/admin/permissions');
+      http.expectNone('/api/saga-types');
+    });
+
+    it('clears a reload error when it succeeds', async () => {
+      await loaded();
+      const failing = store.refresh();
+      failEverything(http);
+      await failing;
+      expect(store.loadError()).not.toBeNull();
+
+      const again = store.refresh();
+      answerReload(http);
+      await again;
+
+      expect(store.loadError()).toBeNull();
+      expect(store.loaded()).toBe(true);
+    });
+
+    it('keeps the lists and sets the error when it fails, and says a lost permission as such', async () => {
+      await loaded();
+      const before = store.roles();
+
+      const refreshing = store.refresh();
+      refuse(http, '/api/admin/users', 403);
+      await refreshing;
+
+      expect(store.roles()).toEqual(before);
+      expect(store.loaded()).toBe(true);
+      expect(store.loadError()).toBe('You no longer have permission to manage access.');
+      expect(store.loadErrorKind()).toBe('forbidden');
+    });
+
+    it('is a full read while nothing has been read yet, so loaded can become true', async () => {
+      const first = store.load();
+      failEverything(http);
+      await first;
+      expect(store.loaded()).toBe(false);
+
+      const refreshing = store.refresh();
+      answerLoad(http);
+      await refreshing;
+
+      expect(store.loaded()).toBe(true);
+    });
+
+    it('does nothing in a store that was cleared', async () => {
+      await loaded();
+      store.clear();
+
+      await store.refresh();
+
+      http.expectNone(() => true);
+      expect(store.loaded()).toBe(false);
     });
   });
 
@@ -392,37 +568,75 @@ describe('AdminStore', () => {
       await done;
     });
 
-    it('rejects with the API error and reads nothing when the API refuses', async () => {
-      await loaded();
+    it.each([
+      ['a validation error', 400],
+      ['a server error', 500],
+      ['a lost permission', 403],
+    ])(
+      'rejects with the API error and reads nothing for %s: nothing changed',
+      async (_what, status) => {
+        await loaded();
 
+        const saving = rejection(store.saveRole('7', NEW_ROLE));
+        http
+          .expectOne('/api/admin/roles/7')
+          .flush({ code: 'x', detail: 'Refused.' }, { status, statusText: 'Refused' });
+
+        expect(await saving).toBeDefined();
+        await turn();
+        http.expectNone('/api/admin/users');
+        http.expectNone('/api/admin/roles');
+      },
+    );
+
+    it.each([
+      ['a 404, so a list stops showing what is gone', 404, 'gone'],
+      [
+        'a 409, so the lists show the fact that refused it (a role in use, a taken name)',
+        409,
+        'conflict',
+      ],
+    ] as const)(
+      'rejects at once and reads the lists again after %s',
+      async (_what, status, kind) => {
+        await loaded();
+
+        const saving = rejection(store.deleteRole('7'));
+        http
+          .expectOne('/api/admin/roles/7')
+          .flush(
+            { code: 'role_in_use', detail: 'Still granted.' },
+            { status, statusText: 'Refused' },
+          );
+        // The refusal is not held up by the read: the page shows it at once.
+        const err = await saving;
+        expect(adminFailure(err, 'x').kind).toBe(kind);
+
+        const changed = adminData({ users: [adminData().users[0]] });
+        answerReload(http, changed);
+        await turn();
+        expect(store.users().map((u) => u.id)).toEqual(['u-admin']);
+      },
+    );
+
+    it('does not leave a full read that is running unanswered for ever when a change finishes meanwhile', async () => {
+      await loaded();
+      // A save is slow; the manager leaves the area and enters it again, which reads everything.
       const saving = store.saveRole('7', NEW_ROLE);
-      http
-        .expectOne('/api/admin/roles/7')
-        .flush(
-          { code: 'role_in_use', detail: 'Still granted.' },
-          { status: 409, statusText: 'Conflict' },
-        );
+      store.clear();
+      const reading = store.load();
+      expect(store.loaded()).toBe(false);
 
-      const err = await rejection(saving);
+      // The save answers while that read is running: it asks for the lists, which must not supersede the full read.
+      http.expectOne('/api/admin/roles/7').flush(role());
       await turn();
-      expect(adminFailure(err, 'x')).toMatchObject({ kind: 'conflict', message: 'Still granted.' });
-      http.expectNone('/api/admin/users');
-      http.expectNone('/api/admin/roles');
-    });
+      const open = http.match(() => true);
+      answer(open, adminData());
+      await Promise.all([saving, reading]);
 
-    it('reads the lists again after a 404, so a list stops showing what is gone, and still rejects', async () => {
-      await loaded();
-
-      const saving = store.deleteUser('u-alice');
-      http
-        .expectOne('/api/admin/users/u-alice')
-        .flush(null, { status: 404, statusText: 'Not Found' });
-      // The reload starts once the rejection has been seen; give the promise chain its turn.
-      await turn();
-      answerReload(http, adminData({ users: [adminData().users[0]] }));
-
-      expect(adminFailure(await rejection(saving), 'x').kind).toBe('gone');
-      expect(store.users().map((u) => u.id)).toEqual(['u-admin']);
+      expect(store.loaded()).toBe(true);
+      expect(store.loadError()).toBeNull();
+      expect(store.roles()).toEqual(adminData().roles);
     });
 
     it('is not failed by a reload that fails: the change was made', async () => {

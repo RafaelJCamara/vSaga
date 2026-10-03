@@ -3,17 +3,6 @@
   max-width: 40rem;
 }
 
-.section-title {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-/* A textarea does not inherit the page's font; the other controls already look like it. */
-textarea.input {
-  font-family: inherit;
-  resize: vertical;
-}
-
 .permissions {
   display: flex;
   flex-direction: column;

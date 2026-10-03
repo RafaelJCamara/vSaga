@@ -4,13 +4,13 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { Routes, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { adminData, answerLoad } from '../../../testing/admin';
+import { adminData, answerLoad, answerReload } from '../../../testing/admin';
 import { AdminStore } from '../admin.store';
 import { AdminShell } from './admin-shell';
 
 @Component({
   selector: 'app-page-stub',
-  template: '<p id="page">a page</p>',
+  template: '<p id="page">a page</p><input id="draft" />',
   changeDetection: ChangeDetectionStrategy.Eager,
 })
 class PageStub {}
@@ -99,7 +99,7 @@ describe('AdminShell', () => {
 
     expect(store().loaded()).toBe(true);
     expect(page()).not.toBeNull();
-    expect(el().querySelector('[role="status"]')).toBeNull();
+    expect(el().querySelector('[role="status"]')?.textContent).not.toContain('Loading');
   });
 
   it('marks the tab of the page the manager is on, for the list and for a page below it', async () => {
@@ -171,21 +171,97 @@ describe('AdminShell', () => {
     });
   });
 
-  it('keeps the pages and warns when a later read of the lists fails, with the way to read again', async () => {
-    await open('/admin/users');
-    const saving = store().deleteTeam('t');
-    http.expectOne('/api/admin/teams/t').flush(null, { status: 204, statusText: 'No Content' });
-    await settle();
-    http.expectOne('/api/admin/teams').flush([]);
-    http.expectOne('/api/admin/roles').flush([]);
-    http.expectOne('/api/admin/users').error(new ProgressEvent('error'));
-    await saving;
+  it('announces loading through a live region that is always there, with the text put into it', async () => {
+    await harness.navigateByUrl('/admin/users');
+    const region = el().querySelector('[role="status"]')!;
+    expect(region.textContent).toContain('Loading');
+
+    answerLoad(http);
     await settle();
 
-    expect(page()).not.toBeNull();
-    const warning = el().querySelector('.banner--warning[role="alert"]');
-    expect(warning?.textContent).toContain('Cannot reach');
-    expect(warning?.querySelector('button')?.textContent?.trim()).toBe('Try again');
+    // The same element, emptied: a region inserted together with its text is not reliably announced.
+    expect(el().querySelector('[role="status"]')).toBe(region);
+    expect(region.textContent?.trim()).toBe('');
+  });
+
+  describe('when a later read of the lists fails', () => {
+    /** Opens the area, types into the page, and makes a change whose reload fails. */
+    async function failReload(): Promise<HTMLInputElement> {
+      await open('/admin/users');
+      const draft = el().querySelector<HTMLInputElement>('#draft')!;
+      draft.value = 'half typed';
+      draft.dispatchEvent(new Event('input'));
+      const saving = store().deleteTeam('t');
+      http.expectOne('/api/admin/teams/t').flush(null, { status: 204, statusText: 'No Content' });
+      await settle();
+      http.expectOne('/api/admin/teams').flush([]);
+      http.expectOne('/api/admin/roles').flush([]);
+      http.expectOne('/api/admin/users').error(new ProgressEvent('error'));
+      await saving;
+      await settle();
+      return draft;
+    }
+
+    it('keeps the pages and warns, with the way to read again', async () => {
+      await failReload();
+
+      expect(page()).not.toBeNull();
+      const warning = el().querySelector('.banner--warning[role="alert"]');
+      expect(warning?.textContent).toContain('Cannot reach');
+      expect(warning?.querySelector('button')?.textContent?.trim()).toBe('Try again');
+    });
+
+    it('reads the lists again from the warning without destroying the page or what is typed in it', async () => {
+      const draft = await failReload();
+
+      el().querySelector<HTMLButtonElement>('.banner--warning button')!.click();
+      await settle();
+      // Only the lists are read: not the catalogue, not the saga types, and the pages stay.
+      expect(store().loaded()).toBe(true);
+      expect(page()).not.toBeNull();
+      http.expectNone('/api/admin/permissions');
+      http.expectNone('/api/saga-types');
+      answerReload(http);
+      await settle();
+
+      expect(el().querySelector('.banner--warning')).toBeNull();
+      expect(el().querySelector('#draft')).toBe(draft);
+      expect(draft.value).toBe('half typed');
+    });
+  });
+
+  describe('when the session no longer holds access.manage', () => {
+    const refused = (url: string) =>
+      http
+        .match(() => true)
+        .find((r) => r.request.url === url)!
+        .flush({ code: 'forbidden' }, { status: 403, statusText: 'Forbidden' });
+
+    it('offers the way back to the saga list instead of a Try again that cannot succeed, when a read fails', async () => {
+      await harness.navigateByUrl('/admin/users');
+      refused('/api/admin/users');
+      await settle();
+
+      const alert = el().querySelector('.banner--error[role="alert"]')!;
+      expect(alert.textContent).toContain('You no longer have permission to manage access.');
+      expect(alert.querySelector('button')).toBeNull();
+      expect(alert.querySelector('a')?.getAttribute('href')).toBe('/sagas');
+    });
+
+    it('does the same on the warning after a change', async () => {
+      await open('/admin/users');
+      const saving = store().deleteTeam('t');
+      http.expectOne('/api/admin/teams/t').flush(null, { status: 204, statusText: 'No Content' });
+      await settle();
+      refused('/api/admin/users');
+      await saving;
+      await settle();
+
+      expect(page()).not.toBeNull();
+      const warning = el().querySelector('.banner--warning[role="alert"]')!;
+      expect(warning.querySelector('button')).toBeNull();
+      expect(warning.querySelector('a')?.getAttribute('href')).toBe('/sagas');
+    });
   });
 
   describe('the store', () => {
