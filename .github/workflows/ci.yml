@@ -200,6 +200,74 @@ jobs:
           [[ $status_line == 'HTTP/1.1 101'* ]] || fail "the hub WebSocket upgrade answered '$status_line', expected 101"
           echo "GET /hubs/saga (upgrade) -> $status_line"
 
+      # Sign-in as a browser drives it, again through the UI's origin: the session probe sets the
+      # antiforgery cookie, the login echoes it in X-XSRF-TOKEN (an unsafe request without it is refused),
+      # and the session cookie then opens the API and the hub. The hub is exempt from antiforgery (a
+      # WebSocket upgrade cannot carry the header), so its origin guard is what keeps another page from
+      # riding the cookie: a foreign Origin must be refused and the page's own origin must not.
+      - name: Smoke-test dashboard sign-in, the hub origin guard and identity health
+        shell: bash
+        run: |
+          set -euo pipefail
+          ui=http://localhost:4200
+          api=http://localhost:5080
+          negotiate="$ui/hubs/saga/negotiate?negotiateVersion=1"
+
+          fail() { echo "::error::$*"; exit 1; }
+
+          health=$(curl -sS "$api/health")
+          jq -e '[.checks[] | select(.name == "identity")] | length == 1 and all(.status == "healthy")' <<<"$health" >/dev/null \
+            || fail "the identity health check is not healthy: $health"
+          echo "GET /health -> identity healthy"
+
+          # The identity file must sit on the mounted volume, or every user and session key is lost with
+          # the container.
+          rendered=$(docker compose config --format json)
+          identity_path=$(jq -er '.services["dashboard-api"].environment.Dashboard__Identity__Sqlite__Path' <<<"$rendered") \
+            || fail "docker compose config sets no Dashboard__Identity__Sqlite__Path on dashboard-api"
+          jq -e --arg path "$identity_path" '
+            [.services["dashboard-api"].volumes[] | select(.type == "volume") | .target]
+            | any(. as $target | $path | startswith($target + "/"))' <<<"$rendered" >/dev/null \
+            || fail "$identity_path is not under a volume mounted on dashboard-api: $(jq -c '.services["dashboard-api"].volumes' <<<"$rendered")"
+          echo "$identity_path lies on a mounted volume"
+
+          jar=$(mktemp)
+          xsrf_token() { awk '$6 == "XSRF-TOKEN" { print $7 }' "$jar" | tail -n1; }
+          # post_json <path> <body>: an unsafe request with the antiforgery header, as the SPA sends it.
+          post_json() {
+            curl -sS -f -b "$jar" -c "$jar" -X POST -H "X-XSRF-TOKEN: $(xsrf_token)" \
+              -H 'Content-Type: application/json' -d "$2" "$ui$1"
+          }
+          origin_status() {
+            curl -sS -o /dev/null -w '%{http_code}' -b "$jar" -X POST -H "Origin: $1" "$negotiate"
+          }
+
+          anonymous=$(curl -sS -o /dev/null -w '%{http_code}' "$ui/api/sagas")
+          [[ $anonymous == 401 ]] || fail "GET /api/sagas without credentials answered $anonymous, expected 401"
+          echo "GET /api/sagas without credentials -> 401"
+
+          session=$(curl -sS -f -c "$jar" "$ui/api/auth/session")
+          jq -e '.authenticated == false' <<<"$session" >/dev/null || fail "an anonymous session probe answered: $session"
+          [[ -n $(xsrf_token) ]] || fail "the session probe set no XSRF-TOKEN cookie"
+          echo "GET /api/auth/session -> anonymous, XSRF-TOKEN cookie set"
+
+          login=$(post_json /api/auth/login '{"username":"admin","password":"dev-local-only-change-me"}') \
+            || fail "POST /api/auth/login with the seeded administrator was refused"
+          jq -e '.authenticated == true and .user.username == "admin"' <<<"$login" >/dev/null || fail "the login answered: $login"
+          echo "POST /api/auth/login -> signed in as admin"
+
+          sagas=$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" "$ui/api/sagas")
+          [[ $sagas == 200 ]] || fail "GET /api/sagas with the session cookie answered $sagas, expected 200"
+          echo "GET /api/sagas with the session cookie -> 200"
+
+          own=$(curl -sS -f -b "$jar" -X POST -H "Origin: $ui" "$negotiate")
+          jq -e '.connectionToken | type == "string"' <<<"$own" >/dev/null || fail "the hub negotiation from $ui returned no connectionToken: $own"
+          echo "POST /hubs/saga/negotiate with Origin $ui -> connectionToken"
+
+          foreign=$(origin_status http://localhost:9999)
+          [[ $foreign == 403 ]] || fail "the hub negotiation with Origin http://localhost:9999 answered $foreign, expected 403"
+          echo "POST /hubs/saga/negotiate with Origin http://localhost:9999 -> 403"
+
       - name: Show compose logs
         if: failure()
         run: docker compose logs --no-color
