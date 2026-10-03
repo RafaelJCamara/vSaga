@@ -311,7 +311,6 @@ class ListStub {}
 
 @Component({
   selector: 'app-edit-stub',
-  imports: [RouterLink],
   template: `<h2>alice</h2>
     <button id="act" type="button">Delete</button>
     <h3>Not the page heading</h3>`,
