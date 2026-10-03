@@ -45,7 +45,9 @@ export class SagaHubService implements OnDestroy {
   /** Tells the hub service how to find out whether the sign-in session is still alive. A failed start or
    *  a failed reconnect attempt asks it before retrying again: `false` means no retry can ever succeed,
    *  so the service stops for good (`stopAndReset`). Must answer `true` whenever the session cannot be
-   *  checked (API down, a 5xx), or an API restart would sign the dashboard's live updates off. */
+   *  checked (API down, a 5xx), or an API restart would sign the dashboard's live updates off. Must
+   *  always settle (time-bounded): the start loop waits for the answer before its next attempt, so a
+   *  probe that never answered would silently end the retry. */
   setSessionProbe(probe: () => Promise<boolean>): void {
     this.sessionProbe = probe;
   }
@@ -236,11 +238,11 @@ export class SagaHubService implements OnDestroy {
     if (!this.active || generation !== this.generation) return;
     this.listSubscribed = true;
     // Recorded above unconditionally, so the guard below is safe: if the connection is mid-reconnect
-    // right now, `resubscribeAll()` picks this up as soon as `onreconnected` fires. Without the guard,
-    // invoke() on anything but a live Connected connection rejects, and since every caller here is
-    // fire-and-forget (`void this.hub.subscribeToList()`), that surfaces as an unhandled rejection --
-    // and the indefinite reconnect retry above makes a mid-reconnect mount far more reachable than
-    // signalR's old give-up-after-30s default ever made it.
+    // right now, `resubscribeAll()` rejoins this one as soon as `onreconnected` fires. The guard only
+    // spares a pointless call: invoke() on anything but a live Connected connection would just fail
+    // (the try/catch below swallows that, as it does for a refused or dropped call), and the indefinite
+    // reconnect retry above makes a mid-reconnect mount far more reachable than signalR's old
+    // give-up-after-30s default ever made it.
     const connection = this.connection;
     if (connection?.state === signalR.HubConnectionState.Connected) {
       try {
