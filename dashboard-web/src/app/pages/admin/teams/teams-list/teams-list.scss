@@ -1,0 +1,21 @@
+:host {
+  display: block;
+}
+
+.new-team {
+  margin-left: auto;
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+}
+
+.new-team:hover {
+  text-decoration: none;
+}
+
+.members {
+  white-space: nowrap;
+}
+
+.description {
+  font-size: 0.78rem;
+}

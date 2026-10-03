@@ -2,10 +2,10 @@ import { Routes } from '@angular/router';
 import { AdminShell } from './admin-shell/admin-shell';
 import { AdminStore } from './admin.store';
 
-const placeholder = () =>
-  import('./admin-placeholder/admin-placeholder').then((m) => m.AdminPlaceholder);
 const usersList = () => import('./users/users-list/users-list').then((m) => m.UsersList);
 const userEdit = () => import('./users/user-edit/user-edit').then((m) => m.UserEdit);
+const teamsList = () => import('./teams/teams-list/teams-list').then((m) => m.TeamsList);
+const teamEdit = () => import('./teams/team-edit/team-edit').then((m) => m.TeamEdit);
 const rolesList = () => import('./roles/roles-list/roles-list').then((m) => m.RolesList);
 const roleEdit = () => import('./roles/role-edit/role-edit').then((m) => m.RoleEdit);
 
@@ -34,9 +34,9 @@ export const ADMIN_ROUTES: Routes = [
       {
         path: 'teams',
         children: [
-          { path: '', loadComponent: placeholder, data: { page: 'The team list' } },
-          { path: 'new', loadComponent: placeholder, data: { page: 'The new-team form' } },
-          { path: ':id', loadComponent: placeholder, data: { page: 'The team page' } },
+          { path: '', loadComponent: teamsList },
+          { path: 'new', loadComponent: teamEdit },
+          { path: ':id', loadComponent: teamEdit },
         ],
       },
       {

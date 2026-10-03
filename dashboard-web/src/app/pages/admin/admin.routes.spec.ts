@@ -74,21 +74,12 @@ describe('ADMIN_ROUTES', () => {
     });
 
     it.each([
-      ['/admin/teams', 'The team list'],
-      ['/admin/teams/new', 'The new-team form'],
-      ['/admin/teams/abc', 'The team page'],
-    ])('shows %s as a placeholder that names the page: %s', async (url, name) => {
-      const el = await visit(url);
-
-      expect(el.querySelector('app-admin-placeholder')?.textContent).toContain(
-        `${name} is not available yet.`,
-      );
-    });
-
-    it.each([
       ['/admin/users', 'app-users-list'],
       ['/admin/users/new', 'app-user-edit'],
       ['/admin/users/abc', 'app-user-edit'],
+      ['/admin/teams', 'app-teams-list'],
+      ['/admin/teams/new', 'app-team-edit'],
+      ['/admin/teams/abc', 'app-team-edit'],
       ['/admin/roles', 'app-roles-list'],
       ['/admin/roles/new', 'app-role-edit'],
       ['/admin/roles/abc', 'app-role-edit'],

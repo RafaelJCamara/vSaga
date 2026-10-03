@@ -1,0 +1,49 @@
+<div class="page-header">
+  <h2 class="section-title">Teams</h2>
+  <span class="muted">{{ rows().length }} total</span>
+  <a class="btn new-team" routerLink="/admin/teams/new">New team</a>
+</div>
+
+@if (rows().length === 0) {
+  <p class="empty">There are no teams yet.</p>
+} @else {
+  <table class="data-table">
+    <caption class="sr-only">
+      Teams, how many users are in each and the access it gives them
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Name</th>
+        <th scope="col">Members</th>
+        <th scope="col">Access</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (row of rows(); track row.team.id) {
+        <tr>
+          <td>
+            <a [routerLink]="['/admin/teams', row.team.id]">{{ row.team.name }}</a>
+            @if (row.team.description; as description) {
+              <div class="muted description">{{ description }}</div>
+            }
+          </td>
+          <td class="members">
+            @if (row.team.memberIds.length > 0) {
+              {{ row.team.memberIds.length }}
+              {{ row.team.memberIds.length === 1 ? 'member' : 'members' }}
+            } @else {
+              <span class="muted">No members</span>
+            }
+          </td>
+          <td>
+            @for (phrase of row.access; track phrase) {
+              <div>{{ phrase }}</div>
+            } @empty {
+              <span class="muted">No access</span>
+            }
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+}

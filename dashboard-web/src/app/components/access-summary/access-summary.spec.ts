@@ -250,4 +250,48 @@ describe('AccessSummary', () => {
       );
     });
   });
+
+  describe('as an administrator sees what a team grants its members (the team page)', () => {
+    const ACCESS: SessionAccess = {
+      permissions: ['sagas.view'],
+      scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.retry'] }],
+    };
+
+    function team(access: SessionAccess | null): HTMLElement {
+      const fixture = TestBed.createComponent(AccessSummary);
+      fixture.componentRef.setInput('access', access);
+      fixture.componentRef.setInput('perspective', 'team');
+      fixture.componentRef.setInput('origins', () => ['team Payments: Viewer']);
+      fixture.detectChanges();
+      return fixture.nativeElement;
+    }
+
+    it('speaks of the team and its members, not of "you" and not of a user', () => {
+      const el = team(ACCESS);
+
+      expect(el.querySelector('caption')?.textContent).toContain('What the team grants');
+      expect(el.textContent).toContain('What members may do');
+      expect(el.textContent).toContain('team Payments: Viewer');
+      expect(el.textContent).not.toContain('you');
+      expect(el.textContent).not.toContain('user');
+    });
+
+    it('says the team would grant nothing', () => {
+      const el = team({ permissions: [], scoped: [] });
+
+      expect(el.textContent).toContain('This team would grant no permissions.');
+      expect(el.querySelector('table')).toBeNull();
+    });
+
+    it('says the saga types that are not listed are not granted by the team', () => {
+      const el = team({
+        permissions: [],
+        scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }],
+      });
+
+      expect(el.querySelector('.field-hint')?.textContent).toBe(
+        'Saga types that are not listed are not granted by this team.',
+      );
+    });
+  });
 });

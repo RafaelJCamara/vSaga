@@ -1,0 +1,170 @@
+@if (notFound()) {
+  <div class="banner banner--warning" role="alert">
+    This no longer exists. It may have been deleted by someone else.
+    <a #goneLink routerLink="/admin/teams">Back to the teams</a>
+  </div>
+} @else {
+  <div class="page-header">
+    <h2 class="section-title">{{ heading() }}</h2>
+  </div>
+
+  @if (failure(); as problem) {
+    <div id="team-failure" class="banner banner--error" role="alert">{{ problem.message }}</div>
+  }
+  <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->
+  <div role="status">
+    @if (saved()) {
+      <div class="banner banner--success">Saved.</div>
+    }
+  </div>
+
+  <form class="card" method="post" ngNoForm novalidate (submit)="$event.preventDefault(); save()">
+    <div class="field">
+      <label class="label" for="team-name">Name</label>
+      <input
+        #nameField
+        id="team-name"
+        name="name"
+        class="input"
+        type="text"
+        autocomplete="off"
+        [attr.maxlength]="nameLimit"
+        aria-required="true"
+        [(ngModel)]="name"
+        (ngModelChange)="edited('name')"
+        [attr.aria-invalid]="errors().name || nameTaken() ? 'true' : null"
+        [attr.aria-describedby]="
+          errors().name ? 'team-name-error' : nameTaken() ? 'team-failure' : null
+        "
+      />
+      @if (errors().name; as message) {
+        <span id="team-name-error" class="field-error">{{ message }}</span>
+      }
+    </div>
+
+    <div class="field">
+      <label class="label" for="team-description">Description</label>
+      <textarea
+        #descriptionField
+        id="team-description"
+        name="description"
+        class="input"
+        rows="3"
+        [attr.maxlength]="descriptionLimit"
+        [(ngModel)]="description"
+        (ngModelChange)="edited('description')"
+        [attr.aria-invalid]="errors().description ? 'true' : null"
+        [attr.aria-describedby]="errors().description ? 'team-description-error' : null"
+      ></textarea>
+      @if (errors().description; as message) {
+        <span id="team-description-error" class="field-error">{{ message }}</span>
+      }
+    </div>
+
+    <fieldset
+      class="members"
+      [attr.aria-describedby]="
+        errors().memberIds ? 'team-members-selected team-members-error' : 'team-members-selected'
+      "
+    >
+      <legend class="label">Members</legend>
+      <div class="member-tools">
+        <label class="sr-only" for="team-members-filter">Filter users</label>
+        <input
+          #filterField
+          id="team-members-filter"
+          class="input filter"
+          type="search"
+          placeholder="Filter by username or name"
+          autocomplete="off"
+          [value]="filter()"
+          (input)="setFilter($event)"
+          (keydown.enter)="$event.preventDefault()"
+        />
+        <!-- A live region that is always there, with the text put into it: it tells a filtering user how many are left. -->
+        <span class="muted" role="status">{{ shown() }}</span>
+      </div>
+      <span id="team-members-selected" class="field-hint">{{ selected() }}</span>
+      <div class="member-list">
+        @for (user of visible(); track user.id) {
+          <label class="member">
+            <input
+              type="checkbox"
+              [checked]="memberSet().has(user.id)"
+              (change)="toggle(user.id, $event)"
+            />
+            <span
+              >{{ user.username }} <span class="muted">{{ user.displayName }}</span></span
+            >
+          </label>
+        }
+        @for (id of unknownMembers(); track id) {
+          <label class="member">
+            <input type="checkbox" checked (change)="toggle(id, $event)" />
+            <span class="unknown"
+              ><code>{{ id }}</code
+              >&ngsp;<span class="muted"
+                >No user has this id any more. The team keeps it until you untick it, and the API
+                refuses to save a team that holds it.</span
+              ></span
+            >
+          </label>
+        }
+        @if (store.users().length === 0) {
+          <p class="muted">There are no users yet.</p>
+        } @else if (visible().length === 0) {
+          <p class="muted">No user matches “{{ filter().trim() }}”.</p>
+        }
+      </div>
+      @if (errors().memberIds; as message) {
+        <span id="team-members-error" class="field-error">{{ message }}</span>
+      }
+    </fieldset>
+
+    <div class="field" role="group" aria-labelledby="team-grants-label">
+      <span id="team-grants-label" class="label">Access of every member</span>
+      <app-grants-editor
+        [grants]="grants()"
+        (grantsChange)="setGrants($event)"
+        [roles]="roles()"
+        [sagaTypes]="sagaTypes()"
+        [errors]="grantErrors()"
+      />
+    </div>
+
+    <section class="preview" aria-labelledby="team-access-title">
+      <h3 id="team-access-title" class="sub-title">What the team gives its members</h3>
+      <p class="field-hint">
+        With the grants above, saved or not. Members hold this on top of their own grants and those
+        of their other teams.
+      </p>
+      <app-access-summary [access]="access()" perspective="team" [origins]="origins()" />
+    </section>
+
+    <div class="actions">
+      <button type="submit" class="btn" [disabled]="working()">
+        {{ busy() ? 'Saving…' : creating() ? 'Create team' : 'Save' }}
+      </button>
+      <!-- Not "Cancel" on a team that exists: the delete's own question has a Cancel, and two would be ambiguous. -->
+      <a class="btn btn--quiet" routerLink="/admin/teams">{{
+        creating() ? 'Cancel' : 'Back to the teams'
+      }}</a>
+    </div>
+
+    @if (team(); as existing) {
+      <div class="actions danger">
+        <app-confirm-button
+          label="Delete team"
+          [prompt]="
+            'Delete the team ' +
+            existing.name +
+            '? Its members lose the access it gives them. This cannot be undone.'
+          "
+          confirmLabel="Yes, delete"
+          [busy]="working()"
+          (confirmed)="remove()"
+        />
+      </div>
+    }
+  </form>
+}
