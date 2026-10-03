@@ -6,6 +6,7 @@ namespace VSaga.Dashboard.Api.Tests;
 /// <summary>
 /// Every <c>/api</c> response, 401s included, is <c>Cache-Control: no-store</c> and
 /// <c>X-Content-Type-Options: nosniff</c>; the API port can be reached without nginx, so the API sets them.
+/// X-Frame-Options is left to nginx: the API never sends it, not even when antiforgery issues tokens.
 /// </summary>
 public sealed class ApiResponseHeadersTests : IAsyncLifetime, IAsyncDisposable
 {
@@ -36,6 +37,20 @@ public sealed class ApiResponseHeadersTests : IAsyncLifetime, IAsyncDisposable
         Assert.Equal(expected, response.StatusCode);
         Assert.True(response.Headers.CacheControl?.NoStore, $"Cache-Control was '{response.Headers.CacheControl}'.");
         Assert.Equal(["nosniff"], response.Headers.GetValues("X-Content-Type-Options"), StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task IssuingAntiforgeryTokens_AddsNoXFrameOptions()
+    {
+        using var client = _factory.CreateClient();
+
+        using var response = await client.GetAsync("/api/auth/session");
+
+        // The session read issues the tokens, which is when antiforgery would add X-Frame-Options: SAMEORIGIN.
+        // Framing is nginx's policy (DENY and frame-ancestors 'none'); a second value from the API conflicts.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(SignInClient.SetCookieHeader(response, AntiforgeryEnforcement.RequestTokenCookieName));
+        Assert.False(response.Headers.Contains("X-Frame-Options"));
     }
 
     [Fact]

@@ -64,6 +64,11 @@ public static partial class AntiforgeryEnforcement
             options.Cookie.SameSite = SameSiteMode.Strict;
             options.Cookie.Path = "/";
             options.Cookie.SecurePolicy = settings.RequireHttps ? CookieSecurePolicy.Always : CookieSecurePolicy.SameAsRequest;
+            // Antiforgery adds X-Frame-Options: SAMEORIGIN whenever it issues tokens. The API answers only JSON,
+            // and framing is the edge's policy: nginx sends X-Frame-Options: DENY and frame-ancestors 'none' on
+            // every response, so a second, conflicting X-Frame-Options would reach the browser, which may then
+            // treat the header as invalid and ignore it.
+            options.SuppressXFrameOptionsHeader = true;
         });
         return services;
     }
