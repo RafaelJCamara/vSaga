@@ -100,6 +100,7 @@ internal sealed class TestHubCallerContext : HubCallerContext
 {
     private readonly RecordingLifetimeFeature? _lifetime;
     private int _aborts;
+    private Exception? _abortFails;
 
     public TestHubCallerContext(string connectionId, ClaimsPrincipal? user = null, bool offersGracefulClose = true)
     {
@@ -130,10 +131,18 @@ internal sealed class TestHubCallerContext : HubCallerContext
     /// <summary>Makes every later close request fail with <paramref name="failure"/>, as a connection that cannot be closed would.</summary>
     public void FailToClose(Exception failure) => (_lifetime ?? throw new InvalidOperationException("This connection offers no graceful close.")).Fails = failure;
 
-    /// <summary>How many times the connection was aborted.</summary>
+    /// <summary>Makes every later abort fail with <paramref name="failure"/> (after it is counted), as a connection that cannot even be aborted would.</summary>
+    public void FailToAbort(Exception failure) => _abortFails = failure;
+
+    /// <summary>How many times the connection was aborted, the attempts that failed included.</summary>
     public int Aborts => Volatile.Read(ref _aborts);
 
-    public override void Abort() => Interlocked.Increment(ref _aborts);
+    public override void Abort()
+    {
+        Interlocked.Increment(ref _aborts);
+        if (_abortFails is { } failure)
+            throw failure;
+    }
 }
 
 /// <summary>Counts <see cref="RequestClose"/>, and throws <see cref="Fails"/> from it when that is set.</summary>

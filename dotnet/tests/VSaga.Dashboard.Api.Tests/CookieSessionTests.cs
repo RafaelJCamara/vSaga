@@ -111,6 +111,39 @@ public sealed class CookieSessionTests : IAsyncLifetime, IAsyncDisposable
         Assert.Equal(expected.Items[DashboardCookieEvents.SignedInAtItem], renewed.Properties.Items[DashboardCookieEvents.SignedInAtItem]);
     }
 
+    /// <summary>
+    /// The cap on the expiry the hub sees (<see cref="TheTicketsExpiry_IsCappedAtTheAbsoluteLifetime"/>) is not the
+    /// cookie's: the handler asks for the renewal and copies the ticket before the events run, so a session near
+    /// its absolute end is still renewed with the whole idle window, which may end after that lifetime. The
+    /// absolute check, not the cookie's expiry, is what ends the session.
+    /// </summary>
+    [Fact]
+    public async Task SlidingRenewalNearTheAbsoluteLifetime_IssuesTheWholeIdleWindow_NotTheCap()
+    {
+        using var client = _factory.CreateClient();
+        var alice = await CreateUserAsync(_factory.Services, "alice", grants: AllTypes(BuiltInRoles.ViewerId));
+        var now = DateTimeOffset.UtcNow;
+        var signedInAt = now.AddHours(-23);
+        var absoluteEnd = signedInAt + DashboardSecuritySettings.Default.SessionAbsoluteTimeout;
+        var expected = new AuthenticationProperties();
+        DashboardCookieEvents.SetSignedInAt(expected, signedInAt);
+
+        // More than half of the 480-minute idle window has passed, so the handler renews the ticket.
+        using var request = Get(
+            "/api/sagas",
+            CookieHeader(_factory.Services, alice, signedInAt, issuedUtc: now.AddMinutes(-300), expiresUtc: now.AddMinutes(180)));
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var renewed = IssuedTicket(_factory.Services, response);
+        Assert.NotNull(renewed);
+        Assert.True(renewed.Properties.IssuedUtc > now.AddMinutes(-1), "The ticket was not renewed.");
+        var idleWindow = DashboardSecuritySettings.Default.SessionIdleTimeout;
+        Assert.Equal(renewed.Properties.IssuedUtc + idleWindow, renewed.Properties.ExpiresUtc);
+        Assert.True(renewed.Properties.ExpiresUtc > absoluteEnd, "The renewed ticket was capped at the absolute lifetime.");
+        Assert.Equal(expected.Items[DashboardCookieEvents.SignedInAtItem], renewed.Properties.Items[DashboardCookieEvents.SignedInAtItem]);
+    }
+
     [Fact]
     public async Task TheAbsoluteLifetime_FollowsTheSetting()
     {

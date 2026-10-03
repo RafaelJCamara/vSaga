@@ -19,14 +19,16 @@ namespace VSaga.Dashboard.Api.Hubs;
 /// and resubscribes, which resolves access afresh, so group membership always follows the current access.
 /// <see cref="HubCallerContext.Abort"/> would not do: it tells the client not to reconnect, and the dashboard
 /// would stay without live updates until the page is reloaded. It is only the fallback for a connection that
-/// offers no such feature.
+/// offers no such feature or whose close failed.
 /// </summary>
 /// <remarks>
 /// A connection is recorded before it can join a group (<see cref="SagaHub.OnConnectedAsync"/> runs before
 /// any invocation), and every subscription reads the store again, so a change committed between the
 /// connect and the record is still caught: either the subscription already sees it, or the close that
-/// follows the commit finds the connection. A connection that cannot be closed is logged and skipped, so one
-/// failure never leaves the other affected connections open.
+/// follows the commit finds the connection. A connection that cannot be closed is logged and aborted instead (its
+/// client then cannot reconnect, but it is not left open on access it lost), and one failure never leaves the
+/// other affected connections open; only a connection that cannot even be aborted stays open, which is logged as
+/// an error.
 /// </remarks>
 public sealed partial class HubConnectionRegistry(ILogger<HubConnectionRegistry> logger) : IAccessChangeObserver
 {
@@ -77,6 +79,7 @@ public sealed partial class HubConnectionRegistry(ILogger<HubConnectionRegistry>
             catch (Exception ex)
             {
                 LogDropFailed(logger, ex, connectionId);
+                AbortAsFallback(registration.Connection, connectionId);
             }
         }
 
@@ -94,6 +97,21 @@ public sealed partial class HubConnectionRegistry(ILogger<HubConnectionRegistry>
             connection.Abort();
     }
 
+    // The connection is already out of the registry, so no later access change would find it again: when it cannot be
+    // closed for reconnect it is aborted, which costs its client the reconnect but never leaves it open on access it
+    // lost. Only when that fails too does it stay open, which is logged as an error.
+    private void AbortAsFallback(HubCallerContext connection, string connectionId)
+    {
+        try
+        {
+            connection.Abort();
+        }
+        catch (Exception ex)
+        {
+            LogAbortFailed(logger, ex, connectionId);
+        }
+    }
+
     private static Guid? UserIdOf(ClaimsPrincipal? principal) =>
         Guid.TryParse(principal?.FindFirst(DashboardClaims.Subject)?.Value, out var userId) ? userId : null;
 
@@ -104,6 +122,10 @@ public sealed partial class HubConnectionRegistry(ILogger<HubConnectionRegistry>
     private static partial void LogDropped(ILogger logger, int count, string reason);
 
     [LoggerMessage(EventId = 7321, EventName = "HubConnectionDropFailed", Level = LogLevel.Warning,
-        Message = "Could not close live hub connection {ConnectionId} after an access change; the other affected connections were still closed")]
+        Message = "Could not close live hub connection {ConnectionId} after an access change; aborting it instead, and the other affected connections are closed all the same")]
     private static partial void LogDropFailed(ILogger logger, Exception exception, string connectionId);
+
+    [LoggerMessage(EventId = 7322, EventName = "HubConnectionAbortFailed", Level = LogLevel.Error,
+        Message = "Could not abort live hub connection {ConnectionId} either, after failing to close it on an access change; it may stay open on the access it had")]
+    private static partial void LogAbortFailed(ILogger logger, Exception exception, string connectionId);
 }

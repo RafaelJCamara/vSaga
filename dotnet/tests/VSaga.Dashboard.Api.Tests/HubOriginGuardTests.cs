@@ -25,6 +25,7 @@ public sealed class HubOriginGuardTests : IAsyncLifetime, IAsyncDisposable
     private const string Negotiate = "/hubs/saga/negotiate?negotiateVersion=1";
     private const string OwnOrigin = "http://localhost";
     private const string AnotherLocalPort = "http://localhost:4300";
+    private const string ConfiguredWebOrigin = "http://localhost:4200";
     private const string GuardCategory = "VSaga.Dashboard.Api.Auth.HubOriginGuard";
     private const int RejectedEventId = 7311;
 
@@ -200,6 +201,33 @@ public sealed class HubOriginGuardTests : IAsyncLifetime, IAsyncDisposable
         var (level, message) = Assert.Single(_logs.Logged(GuardCategory, RejectedEventId));
         Assert.Equal(LogLevel.Warning, level);
         Assert.Contains($"'{AnotherLocalPort}'", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The expected origin is built from the request's <c>Host</c>, which is the caller's as much as the <c>Origin</c>
+    /// is: a long one is cut in the log like the received origin, while <c>Dashboard:WebOrigin</c>, the operator's own,
+    /// is logged whole next to it.
+    /// </summary>
+    [Fact]
+    public async Task ALongHost_IsLoggedCutAt256Characters_NextToTheWholeConfiguredWebOrigin()
+    {
+        await using var host = Host(builder => builder.UseSetting(DashboardEdge.WebOriginKey, ConfiguredWebOrigin));
+        var ownOrigin = "http://" + new string('h', 1024) + ".example";
+        var client = host.Server.CreateWebSocketClient();
+        client.ConfigureRequest = request =>
+        {
+            request.Host = new HostString(ownOrigin["http://".Length..]);
+            request.Headers["Origin"] = AnotherLocalPort;
+            request.Headers[ApiKeyAuthenticationDefaults.HeaderName] = DashboardApiFactory.TestApiKey;
+        };
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.ConnectAsync(new Uri("ws://localhost/hubs/saga"), CancellationToken.None));
+
+        Assert.Contains("403", refused.Message, StringComparison.Ordinal);
+        var (_, message) = Assert.Single(_logs.Logged(GuardCategory, RejectedEventId));
+        Assert.Contains($"expected no Origin or {ownOrigin[..HubOriginGuard.MaxLoggedOriginLength]}\u2026 or {ConfiguredWebOrigin}.", message, StringComparison.Ordinal);
+        Assert.DoesNotContain(ownOrigin[..(HubOriginGuard.MaxLoggedOriginLength + 1)], message, StringComparison.Ordinal);
     }
 
     /// <summary>The guard runs before authentication: a page on another origin learns nothing about the session.</summary>

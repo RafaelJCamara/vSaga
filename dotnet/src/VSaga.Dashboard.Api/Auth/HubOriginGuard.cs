@@ -16,15 +16,15 @@ namespace VSaga.Dashboard.Api.Auth;
 /// <c>Origin</c> equal to the request's own <c>{scheme}://{Host}</c>, the scheme being the one a trusted
 /// proxy forwarded; or equal to <c>Dashboard:WebOrigin</c> when that is set.</item>
 /// <item>Everything else is refused with 403, <c>Origin: null</c> (sandboxed frames, some redirects) and
-/// several <c>Origin</c> headers included, and logged at Warning with the received (cut at
-/// <see cref="MaxLoggedOriginLength"/> characters) and expected values, so an operator whose proxy rewrites the
-/// scheme or host can see why.</item>
+/// several <c>Origin</c> headers included, and logged at Warning with the received and expected values (the
+/// received <c>Origin</c> and the request's own origin, which carries the caller's <c>Host</c>, each cut at
+/// <see cref="MaxLoggedOriginLength"/> characters), so an operator whose proxy rewrites the scheme or host can see why.</item>
 /// </list>
 /// Scheme and host compare ignoring case, as they are defined; the configured origin is already normalised.
 /// </summary>
 internal static partial class HubOriginGuard
 {
-    /// <summary>How much of a refused request's <c>Origin</c> is logged; a longer value is cut and ends in an ellipsis.</summary>
+    /// <summary>How much of a caller-supplied value (the <c>Origin</c>, the <c>Host</c> inside the own origin) a refusal logs; a longer value is cut and ends in an ellipsis.</summary>
     internal const int MaxLoggedOriginLength = 256;
 
     /// <summary>The guard middleware; call it after <c>UseDashboardEdge</c> (so the forwarded scheme applies) and before authentication.</summary>
@@ -63,12 +63,14 @@ internal static partial class HubOriginGuard
             return;
         }
 
-        LogRejected(logger, context.Request.Path, Shortened(origins.ToString()), webOrigin is null ? ownOrigin : $"{ownOrigin} or {webOrigin}");
+        var expected = webOrigin is null ? Shortened(ownOrigin) : $"{Shortened(ownOrigin)} or {webOrigin}";
+        LogRejected(logger, context.Request.Path, Shortened(origins.ToString()), expected);
         await AuthProblems.ForeignHubOrigin().ExecuteAsync(context);
     }
 
-    // The received value is the caller's, up to the header size limit and with no authentication behind it:
-    // a Warning per request must not be able to carry kilobytes of it.
+    // The received Origin is the caller's, and so is the Host the own origin is built from: each up to the header
+    // size limit and with no authentication behind it, so a Warning per request must not be able to carry kilobytes
+    // of either. The configured Dashboard:WebOrigin is the operator's and stays whole.
     private static string Shortened(string received) =>
         received.Length <= MaxLoggedOriginLength ? received : string.Concat(received.AsSpan(0, MaxLoggedOriginLength), "…");
 

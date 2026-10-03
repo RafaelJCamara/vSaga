@@ -89,7 +89,10 @@ public sealed partial class DashboardCookieEvents(
     /// SignalR reads the ticket's <c>ExpiresUtc</c> when a hub connection opens and closes the socket then
     /// (<c>CloseOnAuthenticationExpiration</c>). That is the sliding idle expiry, so left alone an open socket
     /// would outlive the absolute lifetime by up to the idle timeout. This caps the expiry on this request's view
-    /// of the ticket only: the cookie's own renewal works from a copy of the ticket taken before this event.
+    /// of the ticket only: the cookie's own renewal works from a copy of the ticket taken before this event
+    /// (the handler checks for renewal, and clones the ticket for it, before it calls <c>ValidatePrincipal</c>), provided
+    /// <c>ValidatePrincipal</c> never sets <c>ShouldRenew</c>. The renewed cookie therefore keeps its full sliding
+    /// expiry, which may end after the absolute lifetime: the check in <c>ValidatePrincipal</c> is what ends the session.
     /// </summary>
     private static void CapExpiryAtAbsoluteLifetime(AuthenticationProperties properties, DateTimeOffset absoluteEnd)
     {

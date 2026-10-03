@@ -873,7 +873,9 @@ correlation id, and the username on a retry entry; ADR 0006 lists this.
   (`Dashboard:Session:IdleTimeoutMinutes`, 480), non-persistent, name from
   `Dashboard:Session:CookieName` (default `vsaga.session`; compose sets `vsaga.session.<project>`). The
   sign-in time is a ticket property that survives renewal; `ValidatePrincipal` rejects a ticket older
-  than `Dashboard:Session:AbsoluteTimeoutHours` (24) and one whose security stamp no longer matches.
+  than `Dashboard:Session:AbsoluteTimeoutHours` (24) and one whose security stamp no longer matches. It
+  also caps the expiry of the ticket as the hub sees it (not the cookie's own, which still renews) at the
+  sign-in time plus that lifetime, so a hub socket closes by then (§8.6).
 - `Dashboard:Session:RequireHttps=true` sets `CookieSecurePolicy.Always`, the `__Host-` cookie prefix
   and HSTS, and fails composition unless trusted proxies are configured. `docs/dashboard.md` states that
   TLS is required for anything beyond localhost.
@@ -917,7 +919,8 @@ correlation id, and the username on a retry entry; ADR 0006 lists this.
   documents the escape: restart with `Dashboard:Lockout:MaxFailedAttempts=0`.
 - Security stamp (128 random bits) rotates on password change, administrator reset, disable and enable,
   and when a wrong current password on a password change locks the account.
-  The hub connections of the affected user are aborted on every rotation and on sign-out.
+  The hub connections of the affected user are closed on every rotation and on sign-out, with a close
+  message that allows reconnecting (§8.6).
 
 ### 8.5 Enforcement on the saga endpoints
 
@@ -944,10 +947,17 @@ scoped type (types that have not run yet included); none returns false. `Subscri
 with `sagas.view` on that type. Pushes go to all three group kinds. An origin guard applies to endpoints
 carrying the hub marker: no `Origin`, `Origin == {scheme}://{Host}`, or `Origin == Dashboard:WebOrigin`
 when set; `Origin: null` is a mismatch; a rejection logs the received and expected values at Warning.
-`HubConnectionRegistry` records each connection's user; `IAccessChangeObserver` aborts the affected
+`HubConnectionRegistry` records each connection's user; `IAccessChangeObserver` closes the affected
 connections on password change, logout, administrator reset, disable, enable, delete, and grant or team
-changes, and all connections on a role change. `CloseOnAuthenticationExpiration` closes a socket whose
-ticket expired.
+changes, and all connections when a role is changed or deleted (the API key may act as a custom role). A
+connection is closed with `IConnectionLifetimeNotificationFeature.RequestClose()`, the path SignalR takes
+for an expired ticket, which sends the client a close message that allows reconnecting; `Abort()` sends one
+that forbids it, which would stop the SPA's client for good, so it is only the fallback for a connection
+that offers no such feature or whose close failed. The client reconnects, authenticates again (a disabled
+user, or a session whose stamp rotated, gets 401 on negotiate) and resubscribes, which resolves access
+afresh. `CloseOnAuthenticationExpiration` closes a socket whose ticket expired; `ValidatePrincipal` caps the
+expiry of the ticket the hub reads at the sign-in time plus the absolute lifetime (§8.3), so a socket cannot
+outlive the session's absolute lifetime.
 
 ### 8.7 Scoped lists
 
@@ -1161,8 +1171,8 @@ edited.
 | Proxy hides client addresses | Limiter shares one bucket per username | Key includes the username; Warning when forwarded headers arrive from an untrusted peer |
 | TLS in front without a forwarded scheme | Hub never connects; cookies not Secure | `RequireHttps` validates forwarded-header trust at start; the origin guard logs both values |
 | Two stacks in one browser | First unsafe request on the other stack fails once | Per-project session cookie; antiforgery 400 refetches the session and retries once |
-| Session expired or revoked | Redirect to `/login?returnUrl=...` | Hub stops on a dead session; absolute lifetime; stamp check per request |
-| Access changed while connected | Live updates pause, then resume under new access | Connections aborted; the client reconnects and resubscribes |
+| Session expired or revoked | Redirect to `/login?returnUrl=...` | Hub stops on a dead session; absolute lifetime (the hub's ticket expiry is capped at it); stamp check per request |
+| Access changed while connected | Live updates pause, then resume under new access | Connections closed with a close message that allows reconnecting; the client reconnects, authenticates again (401 for a disabled or rotated session) and resubscribes |
 | API down or being recreated | "Reconnecting...", then recovery; no sign-out | nginx re-resolves within 10 s; keys in the store keep sessions |
 | Web image rebuilt under an open tab | One page reload | Missing chunks are 404; reload at most once a minute |
 | A page that works under `ng serve` violates the CSP | Broken page in the container only | CI greps `index.html`; live browser pass with the console open |
@@ -1198,7 +1208,7 @@ rebuilds, runs the named tests, confirms that exactly those fail, and restores.
 | --- | --- | --- | --- |
 | Packaging (C02–C09) | `api-config.spec.ts` (relative URLs); `DashboardEdgeTests`: settings parsing, CORS off by default, configured origin only, forwarded headers from trusted, untrusted and multi-hop peers | register CORS unconditionally; drop `ForwardLimit = 1`; accept a malformed proxy entry | `up -d --build` on base, one transport overlay and mongo: five services healthy; `curl -sI` shows the headers and caching; an encoded-slash route answers the same on 4200 and 5080; WebSocket 101 in the browser with a clean CSP console; recreate `dashboard-api` and watch the UI recover in about 10 s; 4700 shows MongoDB while 4200 shows Postgres; `ng serve` on 4201 beside it; `id` is 1654 in the API and 101 in the web container; `down` returns promptly; logs carry no query strings; ports bound to 127.0.0.1 |
 | Timeline, map, snapshots, retry (C10–C30) | util specs; `saga-transitions.spec.ts` per fold rule (age-based pending, ids before adjacency, `.CallHttp` hops, retry steps, dead-letter step); component specs; detail-page URL, refresh and error cases; `SagaMapBuilderTests`; EF detach tests; `SagaStateSnapshot`, conformance round-trip and the `SagaEntryType` value pin; snapshot ordering, blob equality, golden text, containment, budget, deadline; redaction; notifier strip; reset recorder including the marker cap; §7.7 | snapshot before the persist; snapshot after the drain; no try/catch; no deadline; no budget check; no EF detach; no map filter; no redaction; no notifier strip; reset cap ignores the marker; no target-header check; header not set by the endpoint; fixed precedence instead of recency; conditional reset; no restore | base, chaos, mongo and redis stacks: a Completed `OrderSaga` has one `StatePersisted` per handled message, the last equal to the detail's `dataJson`, none in `/map`; `Orchestrator__MaxStateSnapshotBytes=64` gives markers, `RecordStateSnapshots=false` gives none; measured Redis `MEMORY USAGE` and Mongo `collStats` recorded; retry a technical failure, a business-failed `OrderSaga` and a timed-out `InvoiceFollowUpSaga`: `ManualRetryRequested`, reset snapshot, then `MessageReceived` with a fresh id and payload in the retried saga only, no new entry in `PostShipmentChoreography` and no second `InvoiceDeliverySaga`; browser pass on labelled times, step grouping, jump to map and back, data inspector, At start/At end/Compare, the failed-step marker and the confirmation text |
-| Authentication (C31–C52) | identity store contract and migration tests (no pending model changes); services; `AuthEndpointsTests`; `SetupAndSeedingTests` (setup needs the code, 409 with seed keys, weak seed keeps setup closed, `ResetOnStart`); admin endpoint tests with golden fixtures; `PUT /api/admin/users/{id}` with `isEnabled: false` makes that user's next request answer 401 and aborts their hub connection; every `/api` response, including 401, 403 and 404, carries `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; `SagaAccessEnforcementTests` (scope 403s, redaction of payloads and `errorMessage` on all three paths, API key never `access.manage`, attribution); `ScopedSagaListerTests` (oracle per sort arm, bounds, a single-space grant); `SagaHubAccessTests`; `HubOriginGuardTests` (no Origin, same origin, another localhost port, configured origin, https through a trusted forwarded header); `EndpointProtectionTests` (every unsafe endpoint antiforgery-enforced or the hub; upper-case paths); the documentation pointer in 401 and 403 bodies; absolute lifetime 401; abort after password change; SPA auth, guard, interceptor (antiforgery retry), hub and admin specs | remove the retry policy; remove the origin guard; remove the security-stamp comparison; remove payload and `errorMessage` redaction; remove `JsonUnmappedMemberHandling.Disallow`; let the API key keep `access.manage`; drop the scope filter in the lister; skip the setup-code check; skip the abort on password change | the seeded admin signs in on 4200; session survives `up -d --force-recreate dashboard-api`; a Viewer cannot retry; a scoped user sees and receives pushes only for their types; disabling a user drops the socket; the rendered identity path lies under the mounted `vsaga-dashboard-identity` volume; curl flows for login, antiforgery and the origin guard; two stacks side by side in one browser profile (4200 and 4300, after rendering `-p vsaga-wolverine ... config` to confirm the cookie name); `down`/`up` keeps users; `down -v` re-seeds |
+| Authentication (C31–C52) | identity store contract and migration tests (no pending model changes); services; `AuthEndpointsTests`; `SetupAndSeedingTests` (setup needs the code, 409 with seed keys, weak seed keeps setup closed, `ResetOnStart`); admin endpoint tests with golden fixtures; `PUT /api/admin/users/{id}` with `isEnabled: false` makes that user's next request answer 401 and closes their hub connection with a close message that allows reconnecting; every `/api` response, including 401, 403 and 404, carries `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; `SagaAccessEnforcementTests` (scope 403s, redaction of payloads and `errorMessage` on all three paths, API key never `access.manage`, attribution); `ScopedSagaListerTests` (oracle per sort arm, bounds, a single-space grant); `SagaHubAccessTests`; `HubOriginGuardTests` (no Origin, same origin, another localhost port, configured origin, https through a trusted forwarded header); `EndpointProtectionTests` (every unsafe endpoint antiforgery-enforced or the hub; upper-case paths); the documentation pointer in 401 and 403 bodies; absolute lifetime 401; the hub's ticket expiry capped at it; connection closed for reconnect after password change; SPA auth, guard, interceptor (antiforgery retry), hub and admin specs | remove the retry policy; remove the origin guard; remove the security-stamp comparison; remove payload and `errorMessage` redaction; remove `JsonUnmappedMemberHandling.Disallow`; let the API key keep `access.manage`; drop the scope filter in the lister; skip the setup-code check; skip closing the connection on password change; close with `Abort()` instead of `RequestClose()` | the seeded admin signs in on 4200; session survives `up -d --force-recreate dashboard-api`; a Viewer cannot retry; a scoped user sees and receives pushes only for their types; disabling a user drops the socket; the rendered identity path lies under the mounted `vsaga-dashboard-identity` volume; curl flows for login, antiforgery and the origin guard; two stacks side by side in one browser profile (4200 and 4300, after rendering `-p vsaga-wolverine ... config` to confirm the cookie name); `down`/`up` keeps users; `down -v` re-seeds |
 | Guidance (C53–C58) | `guide-geometry`, `guide.service`, `guide-tours`, `guide-overlay`, `guide-toggle` specs; anchor-contract cases per page | rename `data-tour="list-table"`; delete the `requires` filter; delete the `inert` toggle | in the container: the hint once; each area explains itself once; Escape returns focus; reload does not restart; keyboard only; reduced motion; clean CSP console; a Viewer gets no retry area; the admin tour |
 
 ---
@@ -1251,7 +1261,7 @@ frontend, G guidance and docs; "feasibility 9" is that review's finding on messa
 | C37 | [P6] Identity volume, non-root API image, seeded demo administrator, per-project cookie name; `ApiKeyRole` Operator for now | LIVE |
 | C38 | [B6] Permission checks, redaction, filtered lists, scoped merge, retry attribution | |
 | C39 | [B7] Administration endpoints | |
-| C40 | [B8] Hub access checks, per-type list groups, origin guard, abort on access change | LIVE (curl) |
+| C40 | [B8] Hub access checks, per-type list groups, origin guard, close on access change | LIVE (curl) |
 | C41 | Smoke-test sign-in, the origin guard and identity health in CI | LIVE |
 | C42 | [F1] Promote the remaining shared styles | |
 | C43 | [F2] Hub `stopAndReset`, `resume` and session probe | |

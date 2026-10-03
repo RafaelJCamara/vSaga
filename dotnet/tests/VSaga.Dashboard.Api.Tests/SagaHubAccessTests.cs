@@ -1,6 +1,5 @@
 using System.Net;
 using System.Security.Claims;
-using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -8,7 +7,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using VSaga.Abstractions.Persistence;
 using VSaga.Abstractions.Sagas;
 using VSaga.Dashboard.Api.Hubs;
-using VSaga.Dashboard.Identity;
 using VSaga.Dashboard.Identity.Model;
 using VSaga.Dashboard.Identity.Services;
 using static VSaga.Dashboard.Api.Tests.TestSessions;
@@ -34,6 +32,7 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
     private const string RegistryCategory = "VSaga.Dashboard.Api.Hubs.HubConnectionRegistry";
     private const int DroppedEventId = 7320;
     private const int DropFailedEventId = 7321;
+    private const int AbortFailedEventId = 7322;
 
     private readonly DashboardApiFactory _factory = new();
 
@@ -244,11 +243,12 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
     }
 
     /// <summary>
-    /// One connection that cannot be closed must not leave the user's others open: the failure is logged at
-    /// Warning, the connection is forgotten like the rest, and the count of the log line is of those closed.
+    /// One connection that cannot be closed must not leave the user's others open, nor stay open itself: the failure is
+    /// logged at Warning, the connection is aborted as the fallback (it is already out of the registry, so no later
+    /// change would find it) and forgotten like the rest, and the count of the log line is of those closed.
     /// </summary>
     [Fact]
-    public async Task AConnectionThatCannotBeClosed_IsLogged_AndDoesNotStopTheOthers()
+    public async Task AConnectionThatCannotBeClosed_IsLoggedAndAborted_AndDoesNotStopTheOthers()
     {
         var logs = new AuditLogCapture();
         var registry = NewRegistry(logs);
@@ -261,12 +261,42 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
         await registry.UsersChangedAsync([alice], CancellationToken.None);
 
         Assert.All(connections, c => Assert.Equal(1, c.Closes));
+        Assert.Equal([0, 1, 0], connections.Select(c => c.Aborts));
         Assert.Equal(0, registry.Count);
         var failed = Assert.Single(logs.Logged(RegistryCategory, DropFailedEventId));
         Assert.Equal(LogLevel.Warning, failed.Level);
         Assert.Contains("a2", failed.Message, StringComparison.Ordinal);
+        Assert.Empty(logs.Logged(RegistryCategory, AbortFailedEventId));
         var dropped = Assert.Single(logs.Logged(RegistryCategory, DroppedEventId));
         Assert.Contains("Closed 2 live hub connection(s)", dropped.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A connection that can be neither closed nor aborted stays open, which is logged at Error, and still does not
+    /// stop the user's others from being closed.
+    /// </summary>
+    [Fact]
+    public async Task AConnectionThatCanBeNeitherClosedNorAborted_IsLoggedAsAnError_AndDoesNotStopTheOthers()
+    {
+        var logs = new AuditLogCapture();
+        var registry = NewRegistry(logs);
+        var alice = Guid.NewGuid();
+        var connections = new[] { Connection("a1", alice), Connection("a2", alice), Connection("a3", alice) };
+        connections[1].FailToClose(new InvalidOperationException("transport already gone"));
+        connections[1].FailToAbort(new InvalidOperationException("still gone"));
+        foreach (var connection in connections)
+            registry.Add(connection);
+
+        await registry.UsersChangedAsync([alice], CancellationToken.None);
+
+        Assert.All(connections, c => Assert.Equal(1, c.Closes));
+        Assert.Equal([0, 1, 0], connections.Select(c => c.Aborts));
+        Assert.Equal(0, registry.Count);
+        Assert.Equal(LogLevel.Warning, Assert.Single(logs.Logged(RegistryCategory, DropFailedEventId)).Level);
+        var abortFailed = Assert.Single(logs.Logged(RegistryCategory, AbortFailedEventId));
+        Assert.Equal(LogLevel.Error, abortFailed.Level);
+        Assert.Contains("a2", abortFailed.Message, StringComparison.Ordinal);
+        Assert.Contains("Closed 2 live hub connection(s)", Assert.Single(logs.Logged(RegistryCategory, DroppedEventId)).Message, StringComparison.Ordinal);
     }
 
     /// <summary>Over the wire: a scoped user's subscriptions answer true or false, and the pushes follow the scope.</summary>
@@ -331,7 +361,7 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
         using (var change = await otherSession.ChangePasswordAsync(Password, "a brand new passphrase"))
             Assert.Equal(HttpStatusCode.OK, change.StatusCode);
 
-        AssertClosedForReconnect(await connection.WaitForCloseAsync());
+        HubTestConnection.AssertClosedForReconnect(await connection.WaitForCloseAsync());
         using var negotiate = await HubTestConnection.NegotiateAsync(_factory, cookie);
         Assert.Equal(HttpStatusCode.Unauthorized, negotiate.StatusCode);
     }
@@ -349,7 +379,7 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
         using (var logout = await otherSession.PostAsync("/api/auth/logout"))
             Assert.True(logout.IsSuccessStatusCode);
 
-        AssertClosedForReconnect(await connection.WaitForCloseAsync());
+        HubTestConnection.AssertClosedForReconnect(await connection.WaitForCloseAsync());
     }
 
     [Fact]
@@ -366,7 +396,7 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
         using (var disable = await admin.PutAsync($"/api/admin/users/{alice.Id}", """{"isEnabled":false}"""))
             Assert.Equal(HttpStatusCode.OK, disable.StatusCode);
 
-        AssertClosedForReconnect(await aliceConnection.WaitForCloseAsync());
+        HubTestConnection.AssertClosedForReconnect(await aliceConnection.WaitForCloseAsync());
         Assert.True((await bobConnection.InvokeAsync("SubscribeToList")).GetBoolean());
         using var negotiate = await HubTestConnection.NegotiateAsync(_factory, aliceCookie);
         Assert.Equal(HttpStatusCode.Unauthorized, negotiate.StatusCode);
@@ -386,8 +416,8 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
         using (var update = await admin.PutAsync($"/api/admin/roles/{watchers.Id}", """{"name":"Watchers","permissions":["sagas.view","sagas.data"]}"""))
             Assert.Equal(HttpStatusCode.OK, update.StatusCode);
 
-        AssertClosedForReconnect(await aliceConnection.WaitForCloseAsync());
-        AssertClosedForReconnect(await bobConnection.WaitForCloseAsync());
+        HubTestConnection.AssertClosedForReconnect(await aliceConnection.WaitForCloseAsync());
+        HubTestConnection.AssertClosedForReconnect(await bobConnection.WaitForCloseAsync());
     }
 
     /// <summary>
@@ -407,8 +437,8 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
         using (var delete = await admin.DeleteAsync($"/api/admin/roles/{spare.Id}"))
             Assert.True(delete.IsSuccessStatusCode, $"Deleting the role answered {delete.StatusCode}.");
 
-        AssertClosedForReconnect(await aliceConnection.WaitForCloseAsync());
-        AssertClosedForReconnect(await keyConnection.WaitForCloseAsync());
+        HubTestConnection.AssertClosedForReconnect(await aliceConnection.WaitForCloseAsync());
+        HubTestConnection.AssertClosedForReconnect(await keyConnection.WaitForCloseAsync());
     }
 
     /// <summary>The API key's connection (the key sent as a header) subscribes like any caller, and a role change closes it too.</summary>
@@ -425,43 +455,7 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
         using (var update = await admin.PutAsync($"/api/admin/roles/{watchers.Id}", """{"name":"Watchers","permissions":["sagas.view","sagas.data"]}"""))
             Assert.Equal(HttpStatusCode.OK, update.StatusCode);
 
-        AssertClosedForReconnect(await connection.WaitForCloseAsync());
-    }
-
-    /// <summary>
-    /// Socket traffic does not slide the session: a connection is closed, with a close message that lets the client
-    /// reconnect, when the ticket it opened under expires. The ticket was issued a second ago and expires in eight
-    /// seconds, so negotiate and connect, which a slow host can stretch, still find it valid, and sliding renewal,
-    /// which waits for half its life to pass, does not touch it. The wait is long for the same reason.
-    /// </summary>
-    [Fact]
-    public async Task AConnectionWhoseTicketExpires_IsClosedForReconnect()
-    {
-        var user = await CreateUserWithPasswordAsync(_factory.Services, "alice", Password, grants: AllTypes(BuiltInRoles.ViewerId));
-        var now = DateTimeOffset.UtcNow;
-        var cookie = CookieHeader(_factory.Services, user, now, issuedUtc: now.AddSeconds(-1), expiresUtc: now.AddSeconds(8));
-        await using var connection = await HubTestConnection.ConnectAsync(_factory, cookie);
-        Assert.True((await connection.InvokeAsync("SubscribeToList")).GetBoolean());
-
-        AssertClosedForReconnect(await connection.WaitForCloseAsync(within: TimeSpan.FromSeconds(30)));
-    }
-
-    /// <summary>
-    /// The sliding ticket can outlast the session's absolute lifetime (the cookie is renewed while it is used), but
-    /// a socket must not: the expiry SignalR reads is capped at the sign-in time plus the absolute lifetime. Signed
-    /// in ten seconds short of that lifetime, with a ticket valid for another hour, the connection is closed within
-    /// seconds, not an hour from now.
-    /// </summary>
-    [Fact]
-    public async Task AConnectionIsClosedForReconnectAtTheSessionsAbsoluteLifetime_WhateverTheSlidingTicketSays()
-    {
-        var user = await CreateUserWithPasswordAsync(_factory.Services, "alice", Password, grants: AllTypes(BuiltInRoles.ViewerId));
-        var signedInAt = DateTimeOffset.UtcNow - DashboardSecuritySettings.Default.SessionAbsoluteTimeout + TimeSpan.FromSeconds(10);
-        var cookie = CookieHeader(_factory.Services, user, signedInAt);
-        await using var connection = await HubTestConnection.ConnectAsync(_factory, cookie);
-        Assert.True((await connection.InvokeAsync("SubscribeToList")).GetBoolean());
-
-        AssertClosedForReconnect(await connection.WaitForCloseAsync(within: TimeSpan.FromSeconds(30)));
+        HubTestConnection.AssertClosedForReconnect(await connection.WaitForCloseAsync());
     }
 
     private static (SagaHub Hub, RecordingGroupManager Groups, HubConnectionRegistry Registry) NewHub(CallerAccess? caller) =>
@@ -489,15 +483,6 @@ public sealed class SagaHubAccessTests : IAsyncLifetime, IAsyncDisposable
         new(new ClaimsIdentity([new Claim(DashboardClaims.Subject, userId.ToString("D"))], "Test"));
 
     private static TestHubCallerContext Connection(string connectionId, Guid userId) => new(connectionId, UserPrincipal(userId));
-
-    /// <summary>The server ended the connection with a close message that allows the client to reconnect, as SignalR does for an expired ticket.</summary>
-    private static void AssertClosedForReconnect(JsonElement? close)
-    {
-        Assert.NotNull(close);
-        Assert.True(
-            close.Value.TryGetProperty("allowReconnect", out var allowed) && allowed.GetBoolean(),
-            $"The connection was not closed with a message that allows reconnecting: {close}");
-    }
 
     private static SagaSummary Summary(string sagaType, Guid? correlationId = null) =>
         new(correlationId ?? Guid.NewGuid(), sagaType, SagaKind.Orchestrated, "Running", SagaStatus.Running, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 1,

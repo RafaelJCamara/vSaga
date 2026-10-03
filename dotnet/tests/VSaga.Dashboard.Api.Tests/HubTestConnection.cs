@@ -153,6 +153,18 @@ internal sealed class HubTestConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Asserts that <paramref name="close"/> (what <see cref="WaitForCloseAsync"/> returned) is a close message that
+    /// allows the client to reconnect, as SignalR sends for an expired ticket; <c>Abort()</c> would send one that does not.
+    /// </summary>
+    public static void AssertClosedForReconnect(JsonElement? close)
+    {
+        Assert.NotNull(close);
+        Assert.True(
+            close.Value.TryGetProperty("allowReconnect", out var allowed) && allowed.GetBoolean(),
+            $"The connection was not closed with a message that allows reconnecting: {close}");
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_socket.State == WebSocketState.Open)
