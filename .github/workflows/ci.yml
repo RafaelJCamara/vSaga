@@ -56,6 +56,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          # The runner's cached 22 can be older than 22.22.3, below which Angular CLI 22 exits.
+          check-latest: true
           cache: npm
           cache-dependency-path: dashboard-web/package-lock.json
 

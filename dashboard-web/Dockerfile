@@ -1,4 +1,6 @@
-FROM node:22-bookworm-slim AS build
+# Pinned to a 22 minor at or above 22.22.3: Angular CLI 22 exits on older Node, and a floating
+# node:22 tag lets a machine reuse a stale cached image.
+FROM node:22.23-bookworm-slim AS build
 WORKDIR /src
 ENV CI=true NG_CLI_ANALYTICS=false
 # Manifests before sources, so npm ci stays cached while the SPA or the nginx template changes.

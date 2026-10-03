@@ -13,8 +13,8 @@ To use the dashboard you need only Docker: `docker compose up -d --build` from t
 builds this app into the `dashboard-web` image and serves it on http://localhost:4200, next to the API
 it reads (see ["Run the demo"](../README.md#run-the-demo)).
 
-Node.js 22.22.3+ or 24.15.0+ (this package's `engines` field, Angular 22's own range; CI builds with
-the latest 22) is needed only to develop it: the dev server, the unit tests, and builds outside
+Node.js 22 (22.22.3 or later), 24 (24.15.0 or later) or 26+ (this package's `engines` field, Angular
+22's own range; CI builds with the latest 22) is needed only to develop it: the dev server, the unit tests, and builds outside
 Docker. The dev server has no data of its own, so an API has to be running first, by default the
 compose stack's:
 
@@ -118,8 +118,9 @@ Two consequences worth knowing before you change anything:
 [`Dockerfile`](Dockerfile) builds the image compose runs as `dashboard-web`, with this directory as its
 context:
 
-1. **Build stage**, `node:22-bookworm-slim`: `npm ci`, then `npx ng build`. The manifests are copied
-   before the sources, so the `npm ci` layer stays cached while only the app or the nginx template
+1. **Build stage**, `node:22.23-bookworm-slim`: `npm ci`, then `npx ng build`. The tag pins a 22
+   minor at or above 22.22.3, below which Angular CLI 22 refuses to run; a floating `node:22` would
+   let a machine reuse an older cached image. The manifests are copied before the sources, so the `npm ci` layer stays cached while only the app or the nginx template
    changes. [`.dockerignore`](.dockerignore) keeps `node_modules/`, `dist/`, `.angular/`, coverage,
    spec files and `src/app/testing/` out of the context.
 2. **Runtime stage**, `nginxinc/nginx-unprivileged:1.30-alpine-slim`: nginx as uid 101 on port 8080,
@@ -179,4 +180,6 @@ src/app/
 ```
 
 Generated with Angular CLI 21.2.10 and since moved to Angular 22; `npx ng generate component <name>`
-still works as usual for adding to it.
+still works as usual for adding to it. Angular 22 generates `OnPush` components by default, so
+`angular.json` sets the component schematic to `Eager`, the change detection every existing component
+declares.

@@ -102,7 +102,9 @@ forever. `api-config.ts` hard-codes `API_BASE_URL = 'http://localhost:5080'` and
 `DASHBOARD_API_KEY = 'dev-local-only-change-me'`; `interceptors/api-key.interceptor.ts` adds the key to
 every request and the hub sends it through `accessTokenFactory`. There is no browser storage, no lazy
 route and no `src/app/util/` folder. The production build has about 96 kB of headroom under the 500 kB
-initial-bundle warning; component styles warn at 4 kB (`angular.json` budgets).
+initial-bundle warning; component styles warn at 4 kB (`angular.json` budgets). [2026-10-03: after the
+earlier SPA commits and the move to Angular 22 the headroom is about 18.7 kB; see the note under
+§12's Progress.]
 
 **The API** (`dotnet/src/VSaga.Dashboard.Api/`). Minimal API endpoints in `Endpoints/SagaEndpoints.cs`:
 list, detail (`SagaDetail(summary, dataJson)`), timeline, map, children, retry, saga types, and
@@ -1275,15 +1277,19 @@ assume the key.
 
 **Progress:** nothing has landed yet beyond `22f04bf` ("Override piscina to 5.3.2 and patch
 brace-expansion for npm audit"), which made `npm audit --audit-level=low` pass on `main` again, a gate
-every commit above must clear.
+every commit above must clear. [2026-10-03: this sentence predates the work. Progress is recorded in
+the history files under `docs/history/` as each part lands, and the final commit (C58) rewrites this
+line; the commits are not listed here meanwhile.]
 
-*Note, 2026-10-03:* a second prerequisite landed before C36, "Move the dashboard SPA to Angular 22 for
-the http-cache-semantics advisory". A high advisory in every version of `http-cache-semantics`
-(GHSA-ch52-4w7c-c8xp), reached only through the Angular 21 CLI's `pacote` chain, failed the same audit
-gate, and the only fix is Angular CLI 22. The SPA is now on Angular 22.2.1 with TypeScript 6.0, and the
-piscina override from `22f04bf` is gone (`@angular/build` 22 depends on 5.3.2 itself). Where §1 and §2
-say Angular 21 or 21.2.24, read 22.2.1; the components keep the pre-22 change detection
-(`ChangeDetectionStrategy.Eager`) and the XHR backend (`withXhr()`).
+*Note, 2026-10-03:* a second prerequisite landed between C36 and C37, "Move the dashboard SPA to
+Angular 22 for the http-cache-semantics advisory". A high advisory in every version of
+`http-cache-semantics` (GHSA-ch52-4w7c-c8xp), reached only through the Angular 21 CLI's `pacote` chain,
+failed the same audit gate, and the only fix is Angular CLI 22. The SPA is now on Angular 22.2.1 with
+TypeScript 6.0, and the piscina override from `22f04bf` is gone (`@angular/build` 22 depends on 5.3.2
+itself). Where §1 and §2 say Angular 21 or 21.2.24, read 22.2.1; the components keep the pre-22 change
+detection (`ChangeDetectionStrategy.Eager`) and the XHR backend (`withXhr()`). The initial bundle is now
+481.34 kB, about 18.7 kB under the 500 kB warning budget, so the remaining SPA commits keep new pages and
+services in lazy chunks and their eager additions minimal.
 
 ---
 
