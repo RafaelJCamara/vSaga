@@ -16,6 +16,8 @@ class FakeHubConnection {
   stopCount = 0;
   state = 'Disconnected';
   startResult: () => Promise<void> = () => Promise.resolve();
+  /** What the hub answers to invoke(): a boolean for the subscribe methods, or a rejection. */
+  invokeResult: () => Promise<unknown> = () => Promise.resolve();
 
   private reconnectingHandlers: Array<(error?: Error) => void> = [];
   private reconnectedHandlers: Array<(connectionId?: string) => void> = [];
@@ -45,9 +47,9 @@ class FakeHubConnection {
     });
   }
 
-  invoke(...args: unknown[]): Promise<void> {
+  invoke(...args: unknown[]): Promise<unknown> {
     this.invocations.push(args);
-    return Promise.resolve();
+    return this.invokeResult();
   }
 
   stop(): Promise<void> {
@@ -88,6 +90,10 @@ const built: {
 
 let connection: FakeHubConnection;
 
+/** Lets every already-queued microtask and zero-delay timer run: for work the service starts in the
+ *  background (a reconnect policy's probe) and a test cannot await directly. */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
 vi.mock('@microsoft/signalr', () => ({
   HubConnectionState: { Disconnected: 'Disconnected', Connected: 'Connected' },
   HubConnectionBuilder: class {
@@ -117,6 +123,10 @@ describe('SagaHubService', () => {
 
     TestBed.configureTestingModule({});
     service = TestBed.inject(SagaHubService);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('builds the connection against HUB_URL, with the dashboard api key as the access token', async () => {
@@ -353,5 +363,319 @@ describe('SagaHubService', () => {
   it('ngOnDestroy() does nothing when no connection was ever built', () => {
     expect(() => service.ngOnDestroy()).not.toThrow();
     expect(connection.stopCount).toBe(0);
+  });
+
+  // The session can end while a tab is open: a sign-out elsewhere, a password change, a disabled
+  // account. The server drops the hub connection, signalR reconnects on its own policy, and every
+  // negotiate is refused with a 401 for good -- so the service must be able to stop, not just retry.
+  describe('stopAndReset() and resume()', () => {
+    it('stops the connection and reports disconnected', async () => {
+      await service.subscribeToList();
+      const seen: string[] = [];
+      service.connectionState$.subscribe((s) => seen.push(s));
+
+      await service.stopAndReset();
+
+      expect(connection.stopCount).toBe(1);
+      expect(seen).toEqual(['connected', 'disconnected']);
+    });
+
+    it('resolves, and builds nothing, when no connection was ever built', async () => {
+      await expect(service.stopAndReset()).resolves.toBeUndefined();
+      expect(connection.stopCount).toBe(0);
+      expect(built.url).toBeUndefined();
+    });
+
+    it('never rejects, even when the connection will not stop', async () => {
+      await service.subscribeToList();
+      connection.stop = () => Promise.reject(new Error('already closed'));
+
+      await expect(service.stopAndReset()).resolves.toBeUndefined();
+    });
+
+    it('blocks subscribing until resume(): no connection is started and nothing is invoked', async () => {
+      await service.subscribeToList();
+      await service.stopAndReset();
+      const fresh = (connection = new FakeHubConnection());
+
+      await service.subscribeToList();
+      await service.subscribeToSaga('OrderSaga', 'abc-123');
+
+      expect(fresh.startCount).toBe(0);
+      expect(fresh.invocations).toEqual([]);
+    });
+
+    it('builds and starts a new connection after resume()', async () => {
+      await service.subscribeToList();
+      const stale = connection;
+      await service.stopAndReset();
+      const fresh = (connection = new FakeHubConnection());
+      const seen: string[] = [];
+      service.connectionState$.subscribe((s) => seen.push(s));
+
+      service.resume();
+      await service.subscribeToList();
+
+      expect(fresh.startCount).toBe(1);
+      expect(fresh.invocations).toEqual([['SubscribeToList']]);
+      expect(stale.startCount).toBe(1);
+      expect(seen).toEqual(['disconnected', 'connected']);
+    });
+
+    it('forgets every subscription: the next connection rejoins only what is subscribed after resume()', async () => {
+      await service.subscribeToList();
+      await service.subscribeToSaga('OrderSaga', 'abc-123');
+      await service.stopAndReset();
+      await service.subscribeToSaga('OrderSaga', 'def-456'); // refused while stopped, and not remembered
+      const fresh = (connection = new FakeHubConnection());
+      service.resume();
+      await service.subscribeToSaga('InvoiceSaga', 'ghi-789');
+
+      fresh.triggerReconnected();
+      await settle();
+
+      expect(fresh.invocations).toEqual([
+        ['SubscribeToSaga', 'InvoiceSaga', 'ghi-789'],
+        ['SubscribeToSaga', 'InvoiceSaga', 'ghi-789'],
+      ]);
+    });
+
+    it('a start still in flight when the service is reset neither connects nor subscribes', async () => {
+      let finishStart!: () => void;
+      connection.startResult = () => new Promise<void>((resolve) => (finishStart = resolve));
+      const seen: string[] = [];
+      service.connectionState$.subscribe((s) => seen.push(s));
+
+      const subscribing = service.subscribeToList();
+      await service.stopAndReset();
+      finishStart();
+      await subscribing;
+
+      expect(seen).not.toContain('connected');
+      expect(connection.invocations).toEqual([]);
+    });
+
+    // The reset empties the subscription records, but a subscription made on the next connection can fill
+    // them again before the old rejoin gets back from its pending invoke: it must not reach the old one.
+    it('a reset while rejoining after a reconnect does not carry on rejoining on the replaced connection', async () => {
+      await service.subscribeToList();
+      await service.subscribeToSaga('OrderSaga', 'abc-123');
+      const replaced = connection;
+      replaced.invocations.length = 0;
+      let finishInvoke!: () => void;
+      replaced.invokeResult = () => new Promise<void>((resolve) => (finishInvoke = resolve));
+
+      replaced.triggerReconnected(); // the list is being rejoined, the sagas come next
+      await service.stopAndReset();
+      connection = new FakeHubConnection();
+      service.resume();
+      await service.subscribeToSaga('InvoiceSaga', 'ghi-789');
+      finishInvoke();
+      await settle();
+
+      expect(replaced.invocations).toEqual([['SubscribeToList']]);
+    });
+
+    it('ignores events and lifecycle callbacks from a connection that was replaced', async () => {
+      await service.subscribeToList();
+      const replaced = connection;
+      await service.stopAndReset();
+      connection = new FakeHubConnection();
+      service.resume();
+      await service.subscribeToList();
+      const states: string[] = [];
+      const updates: SagaSummary[] = [];
+      const entries: unknown[] = [];
+      service.connectionState$.subscribe((s) => states.push(s));
+      service.sagaUpdated$.subscribe((s) => updates.push(s));
+      service.timelineEntryAdded$.subscribe((e) => entries.push(e));
+      const summary = { correlationId: 'abc-123', sagaType: 'OrderSaga' } as SagaSummary;
+
+      replaced.emit('SagaUpdated', summary);
+      replaced.emit('TimelineEntryAdded', 'OrderSaga', 'abc-123', {
+        sequenceNumber: 7,
+      } as SagaLogEntry);
+      replaced.triggerReconnecting();
+      replaced.triggerReconnected();
+      replaced.triggerClose();
+      await settle();
+
+      expect(updates).toEqual([]);
+      expect(entries).toEqual([]);
+      expect(states).toEqual(['connected']);
+      expect(replaced.invocations).toEqual([['SubscribeToList']]);
+
+      connection.emit('SagaUpdated', summary);
+      expect(updates).toEqual([summary]);
+    });
+  });
+
+  describe('session probe', () => {
+    it('a failed start whose probe says the session is gone stops after that one start and never connects', async () => {
+      vi.useFakeTimers();
+      connection.startResult = () => Promise.reject(new Error('Unauthorized'));
+      service.setSessionProbe(() => Promise.resolve(false));
+      const seen: string[] = [];
+      service.connectionState$.subscribe((s) => seen.push(s));
+
+      const subscribing = service.subscribeToList();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(connection.startCount).toBe(1);
+      expect(seen).not.toContain('connected');
+      expect(seen.at(-1)).toBe('disconnected');
+      expect(connection.stopCount).toBe(1);
+      await subscribing;
+      expect(connection.invocations).toEqual([]);
+    });
+
+    it('a failed start whose probe says the session is alive is retried', async () => {
+      const probe = vi.fn(() => Promise.resolve(true));
+      service.setSessionProbe(probe);
+      let calls = 0;
+      connection.startResult = () => (calls++ === 0 ? Promise.reject(new Error('API is down')) : Promise.resolve());
+
+      await service.subscribeToList();
+
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(connection.startCount).toBe(2);
+      expect(connection.invocations).toEqual([['SubscribeToList']]);
+    });
+
+    it('stopAndReset() during the back-off ends the start loop', async () => {
+      vi.useFakeTimers();
+      connection.startResult = () => Promise.reject(new Error('API is down'));
+
+      const subscribing = service.subscribeToList();
+      await vi.advanceTimersByTimeAsync(2000);
+      const startsBeforeReset = connection.startCount;
+      expect(startsBeforeReset).toBeGreaterThan(1);
+
+      await service.stopAndReset();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(connection.startCount).toBe(startsBeforeReset);
+      await subscribing;
+    });
+
+    // The server closes the connection with allowReconnect when access changed; signalR reconnects, and
+    // the negotiate is refused with a 401 for a disabled user or a rotated session. signalR reports that
+    // as another failed attempt: previousRetryCount > 0.
+    it('a failed reconnect attempt whose probe says the session is gone stops the connection for good', async () => {
+      await service.subscribeToList();
+      const probe = vi.fn(() => Promise.resolve(false));
+      service.setSessionProbe(probe);
+      const seen: string[] = [];
+      service.connectionState$.subscribe((s) => seen.push(s));
+      connection.triggerReconnecting();
+
+      const delay = built.retryPolicy!.nextRetryDelayInMilliseconds({ previousRetryCount: 1 });
+      await settle();
+
+      expect(typeof delay).toBe('number'); // the policy still answers at once
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(connection.stopCount).toBe(1);
+      expect(seen.at(-1)).toBe('disconnected');
+
+      // and nothing builds the connection again while there is no session
+      const fresh = (connection = new FakeHubConnection());
+      await service.subscribeToList();
+      expect(fresh.startCount).toBe(0);
+    });
+
+    it('a failed reconnect attempt whose probe says the session is alive keeps the connection', async () => {
+      await service.subscribeToList();
+      const probe = vi.fn(() => Promise.resolve(true));
+      service.setSessionProbe(probe);
+      connection.triggerReconnecting();
+
+      const delay = built.retryPolicy!.nextRetryDelayInMilliseconds({ previousRetryCount: 3 });
+      await settle();
+
+      expect(delay).toBe(10000);
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(connection.stopCount).toBe(0);
+    });
+
+    it('does not ask the probe about the first retry decision after a drop', async () => {
+      await service.subscribeToList();
+      const probe = vi.fn(() => Promise.resolve(false));
+      service.setSessionProbe(probe);
+
+      built.retryPolicy!.nextRetryDelayInMilliseconds({ previousRetryCount: 0 });
+      await settle();
+
+      expect(probe).not.toHaveBeenCalled();
+      expect(connection.stopCount).toBe(0);
+    });
+
+    it('treats a probe that fails as a session that is still there', async () => {
+      await service.subscribeToList();
+      service.setSessionProbe(() => Promise.reject(new Error('probe failed')));
+
+      built.retryPolicy!.nextRetryDelayInMilliseconds({ previousRetryCount: 1 });
+      await settle();
+
+      expect(connection.stopCount).toBe(0);
+    });
+
+    it('a late probe answer cannot stop the connection that replaced the one it was asked about', async () => {
+      await service.subscribeToList();
+      const stalePolicy = built.retryPolicy!;
+      let answer!: (alive: boolean) => void;
+      service.setSessionProbe(() => new Promise<boolean>((resolve) => (answer = resolve)));
+      stalePolicy.nextRetryDelayInMilliseconds({ previousRetryCount: 1 });
+
+      await service.stopAndReset();
+      const fresh = (connection = new FakeHubConnection());
+      service.resume();
+      await service.subscribeToList();
+      answer(false);
+      await settle();
+
+      expect(fresh.stopCount).toBe(0);
+      expect(fresh.state).toBe('Connected');
+    });
+  });
+
+  // The hub's subscribe methods answer false, not an error, to a subscription access refuses, and
+  // every caller is fire-and-forget: nothing here may reject.
+  describe('invoke failures and refusals', () => {
+    it('a rejected invoke does not reject any subscribe or unsubscribe call', async () => {
+      await service.subscribeToList();
+      connection.invokeResult = () => Promise.reject(new Error('Failed to invoke'));
+
+      await expect(service.subscribeToSaga('OrderSaga', 'abc-123')).resolves.toBeUndefined();
+      await expect(service.subscribeToList()).resolves.toBeUndefined();
+      await expect(service.unsubscribeFromSaga('OrderSaga', 'abc-123')).resolves.toBeUndefined();
+      expect(connection.invocations).toHaveLength(4);
+    });
+
+    it('a rejected invoke while rejoining after a reconnect does not stop the other groups being rejoined', async () => {
+      await service.subscribeToList();
+      await service.subscribeToSaga('OrderSaga', 'abc-123');
+      connection.invocations.length = 0;
+      connection.invokeResult = () => Promise.reject(new Error('Failed to invoke'));
+
+      connection.triggerReconnected();
+      await settle();
+
+      expect(connection.invocations).toEqual([['SubscribeToList'], ['SubscribeToSaga', 'OrderSaga', 'abc-123']]);
+    });
+
+    // A refusal is not final: access changes, and the server drops the connection when it does, so the
+    // reconnect is where a refused subscription is asked again and may now be accepted.
+    it('keeps a subscription the hub refused and sends it again after a reconnect', async () => {
+      connection.invokeResult = () => Promise.resolve(false);
+      await service.subscribeToList();
+      await service.subscribeToSaga('OrderSaga', 'abc-123');
+      connection.invokeResult = () => Promise.resolve(true);
+      connection.invocations.length = 0;
+
+      connection.triggerReconnected();
+      await settle();
+
+      expect(connection.invocations).toEqual([['SubscribeToList'], ['SubscribeToSaga', 'OrderSaga', 'abc-123']]);
+    });
   });
 });
