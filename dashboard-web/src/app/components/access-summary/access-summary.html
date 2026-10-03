@@ -1,0 +1,38 @@
+@if (rows().length === 0) {
+  <p class="muted">You hold no permissions yet. An administrator can grant you access.</p>
+} @else {
+  <table class="data-table">
+    <caption class="sr-only">
+      Your permissions: for every saga type, and for each saga type you were granted on its own
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Saga types</th>
+        <th scope="col">What you may do</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (row of rows(); track row.sagaType) {
+        <tr>
+          <td>
+            @if (row.sagaType === null) {
+              All saga types
+            } @else {
+              <code>{{ row.sagaType }}</code>
+            }
+          </td>
+          <td>
+            <div class="chips">
+              @for (permission of row.permissions; track permission.key) {
+                <span class="chip" [attr.title]="permission.key">{{ permission.label }}</span>
+              }
+            </div>
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+  @if (onlyListedTypes()) {
+    <p class="field-hint">Saga types that are not listed are not available to you.</p>
+  }
+}

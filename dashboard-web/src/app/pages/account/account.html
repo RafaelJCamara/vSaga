@@ -1,0 +1,117 @@
+<h1 class="title">Account</h1>
+
+@if (mustChangePassword()) {
+  <div class="banner banner--warning" role="status">
+    You need to choose a new password before you can use the dashboard.
+  </div>
+}
+
+@if (user(); as me) {
+  <section class="card" aria-labelledby="identity-title">
+    <h2 id="identity-title" class="section-title">Signed in as</h2>
+    <dl class="identity">
+      <dt class="micro-label">Display name</dt>
+      <dd>{{ me.displayName }}</dd>
+      <dt class="micro-label">Username</dt>
+      <dd>
+        <code>{{ me.username }}</code>
+      </dd>
+    </dl>
+  </section>
+
+  <section class="card" aria-labelledby="password-title">
+    <h2 id="password-title" class="section-title">Change password</h2>
+
+    @if (failure(); as message) {
+      <div class="banner banner--error" role="alert">{{ message }}</div>
+    }
+
+    <form class="password-form" ngNoForm novalidate (submit)="$event.preventDefault(); submit()">
+      <div class="field">
+        <label class="label" for="account-current">Current password</label>
+        <input
+          id="account-current"
+          name="currentPassword"
+          class="input"
+          type="password"
+          autocomplete="current-password"
+          [attr.maxlength]="128"
+          aria-required="true"
+          [(ngModel)]="currentPassword"
+          (ngModelChange)="forget('currentPassword')"
+          [attr.aria-invalid]="errors().currentPassword ? 'true' : null"
+          [attr.aria-describedby]="errors().currentPassword ? 'account-current-error' : null"
+        />
+        @if (errors().currentPassword; as message) {
+          <span id="account-current-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="label" for="account-new">New password</label>
+        <input
+          id="account-new"
+          name="newPassword"
+          class="input"
+          type="password"
+          autocomplete="new-password"
+          [attr.maxlength]="128"
+          aria-required="true"
+          [attr.minlength]="minLength()"
+          [(ngModel)]="newPassword"
+          (ngModelChange)="forget('newPassword')"
+          [attr.aria-invalid]="errors().newPassword ? 'true' : null"
+          [attr.aria-describedby]="
+            errors().newPassword ? 'account-new-hint account-new-error' : 'account-new-hint'
+          "
+        />
+        <span id="account-new-hint" class="field-hint">
+          @if (minLength(); as min) {
+            At least {{ min }} characters, and not the same as the current one.
+          } @else {
+            Choose a long password that is not used anywhere else.
+          }
+        </span>
+        @if (errors().newPassword; as message) {
+          <span id="account-new-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="label" for="account-confirmation">Repeat the new password</label>
+        <input
+          id="account-confirmation"
+          name="confirmation"
+          class="input"
+          type="password"
+          autocomplete="new-password"
+          [attr.maxlength]="128"
+          aria-required="true"
+          [(ngModel)]="confirmation"
+          [attr.aria-invalid]="errors().confirmation ? 'true' : null"
+          [attr.aria-describedby]="errors().confirmation ? 'account-confirmation-error' : null"
+        />
+        @if (errors().confirmation; as message) {
+          <span id="account-confirmation-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn" [disabled]="busy()">
+          {{ busy() ? 'Changing…' : 'Change password' }}
+        </button>
+      </div>
+    </form>
+  </section>
+} @else {
+  <p class="muted">This session has no user account, so there is no password to change here.</p>
+}
+
+<section class="card" aria-labelledby="access-title">
+  <h2 id="access-title" class="section-title">Your access</h2>
+  @if (mustChangePassword()) {
+    <p class="muted">Your access is empty until you have changed your password.</p>
+  } @else {
+    <app-access-summary [access]="auth.access()" />
+  }
+</section>

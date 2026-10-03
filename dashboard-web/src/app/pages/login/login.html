@@ -1,0 +1,75 @@
+<section class="card auth-card" aria-labelledby="login-title">
+  <h1 id="login-title" class="title">Sign in</h1>
+
+  @if (notice(); as message) {
+    <div class="banner banner--info" role="status">{{ message }}</div>
+  }
+
+  @if (unreachable()) {
+    <div class="banner banner--warning" role="alert">
+      @if (signInUnavailable()) {
+        Sign-in is unavailable: the API is running, but its identity store is not ready. Ask an
+        administrator to check the identity entry of the API's /health.
+      } @else {
+        Cannot reach the dashboard API. Check that it is running.
+      }
+      This page tries again every few seconds.
+    </div>
+  } @else {
+    @if (failure(); as message) {
+      <div class="banner banner--error" role="alert">{{ message }}</div>
+    }
+
+    <form ngNoForm novalidate (submit)="$event.preventDefault(); submit()">
+      <div class="field">
+        <label class="label" for="login-username">Username</label>
+        <input
+          #usernameField
+          id="login-username"
+          name="username"
+          class="input"
+          type="text"
+          autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
+          [attr.maxlength]="64"
+          aria-required="true"
+          [(ngModel)]="username"
+          (ngModelChange)="usernameError.set(null)"
+          [attr.aria-invalid]="usernameError() ? 'true' : null"
+          [attr.aria-describedby]="usernameError() ? 'login-username-error' : null"
+        />
+        @if (usernameError(); as message) {
+          <span id="login-username-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="label" for="login-password">Password</label>
+        <input
+          #passwordField
+          id="login-password"
+          name="password"
+          class="input"
+          type="password"
+          autocomplete="current-password"
+          [attr.maxlength]="128"
+          aria-required="true"
+          [(ngModel)]="password"
+          (ngModelChange)="passwordError.set(null)"
+          [attr.aria-invalid]="passwordError() ? 'true' : null"
+          [attr.aria-describedby]="passwordError() ? 'login-password-error' : null"
+        />
+        @if (passwordError(); as message) {
+          <span id="login-password-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn" [disabled]="busy()">
+          {{ busy() ? 'Signing in…' : 'Sign in' }}
+        </button>
+      </div>
+    </form>
+  }
+</section>

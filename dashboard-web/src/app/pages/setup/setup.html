@@ -1,0 +1,168 @@
+@if (closed()) {
+  <section class="card auth-card" aria-labelledby="setup-title">
+    <h1 id="setup-title" class="title">First-run setup is closed</h1>
+    <p>
+      Setup is offered only while no dashboard user exists and no seed keys are set. Here an
+      administrator already exists, or <code>Dashboard:Admin:Username</code> and
+      <code>Dashboard:Admin:Password</code> are set.
+    </p>
+    @if (closedDetail(); as detail) {
+      <div class="banner banner--info" role="status">{{ detail }}</div>
+    }
+    <p class="field-hint">
+      To create the first administrator you need the one-time setup code. The API writes it to its
+      log (a warning) each time it starts while no user exists and no seed keys are set; with the
+      demo stack, <code>docker compose logs dashboard-api</code> shows it. Restart the API to get a
+      new one.
+    </p>
+    @if (stillClosed()) {
+      <p class="field-error" role="status">Setup is still closed.</p>
+    }
+    <div class="actions">
+      <button type="button" class="btn" [disabled]="checking()" (click)="checkAgain()">
+        {{ checking() ? 'Checking…' : 'Check again' }}
+      </button>
+      <a class="btn" routerLink="/login">Go to sign in</a>
+    </div>
+  </section>
+} @else {
+  <section class="card auth-card" aria-labelledby="setup-title">
+    <h1 id="setup-title" class="title">Set up the dashboard</h1>
+    <p class="muted intro">
+      No one can sign in yet. Create the first administrator with the one-time setup code from the
+      API log.
+    </p>
+
+    @if (failure(); as message) {
+      <div class="banner banner--error" role="alert">{{ message }}</div>
+    }
+
+    <form ngNoForm novalidate (submit)="$event.preventDefault(); submit()">
+      <div class="field">
+        <label class="label" for="setup-username">Username</label>
+        <input
+          id="setup-username"
+          name="username"
+          class="input"
+          type="text"
+          autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
+          [attr.maxlength]="64"
+          aria-required="true"
+          [(ngModel)]="username"
+          (ngModelChange)="forget('username')"
+          [attr.aria-invalid]="errors().username ? 'true' : null"
+          [attr.aria-describedby]="errors().username ? 'setup-username-error' : null"
+        />
+        @if (errors().username; as message) {
+          <span id="setup-username-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="label" for="setup-display-name">Display name</label>
+        <input
+          id="setup-display-name"
+          name="displayName"
+          class="input"
+          type="text"
+          autocomplete="name"
+          [attr.maxlength]="128"
+          aria-required="true"
+          [(ngModel)]="displayName"
+          (ngModelChange)="forget('displayName')"
+          [attr.aria-invalid]="errors().displayName ? 'true' : null"
+          [attr.aria-describedby]="errors().displayName ? 'setup-display-name-error' : null"
+        />
+        @if (errors().displayName; as message) {
+          <span id="setup-display-name-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="label" for="setup-password">Password</label>
+        <input
+          id="setup-password"
+          name="password"
+          class="input"
+          type="password"
+          autocomplete="new-password"
+          [attr.maxlength]="128"
+          aria-required="true"
+          [attr.minlength]="minLength()"
+          [(ngModel)]="password"
+          (ngModelChange)="forget('password')"
+          [attr.aria-invalid]="errors().password ? 'true' : null"
+          [attr.aria-describedby]="
+            errors().password ? 'setup-password-hint setup-password-error' : 'setup-password-hint'
+          "
+        />
+        <span id="setup-password-hint" class="field-hint">
+          @if (minLength(); as min) {
+            At least {{ min }} characters.
+          } @else {
+            Choose a long password that is not used anywhere else.
+          }
+        </span>
+        @if (errors().password; as message) {
+          <span id="setup-password-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="label" for="setup-confirmation">Repeat the password</label>
+        <input
+          id="setup-confirmation"
+          name="confirmation"
+          class="input"
+          type="password"
+          autocomplete="new-password"
+          [attr.maxlength]="128"
+          aria-required="true"
+          [(ngModel)]="confirmation"
+          [attr.aria-invalid]="errors().confirmation ? 'true' : null"
+          [attr.aria-describedby]="errors().confirmation ? 'setup-confirmation-error' : null"
+        />
+        @if (errors().confirmation; as message) {
+          <span id="setup-confirmation-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="field">
+        <label class="label" for="setup-code">Setup code</label>
+        <input
+          id="setup-code"
+          name="code"
+          class="input"
+          type="text"
+          autocomplete="one-time-code"
+          autocapitalize="characters"
+          spellcheck="false"
+          [attr.maxlength]="64"
+          aria-required="true"
+          [(ngModel)]="code"
+          (ngModelChange)="forget('code')"
+          [attr.aria-invalid]="errors().code ? 'true' : null"
+          [attr.aria-describedby]="
+            errors().code ? 'setup-code-hint setup-code-error' : 'setup-code-hint'
+          "
+        />
+        <span id="setup-code-hint" class="field-hint">
+          The one-time code the API logged when it started (with the demo stack,
+          <code>docker compose logs dashboard-api</code>), or the value of
+          <code>Dashboard:Setup:Code</code> if you set one.
+        </span>
+        @if (errors().code; as message) {
+          <span id="setup-code-error" class="field-error">{{ message }}</span>
+        }
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn" [disabled]="busy()">
+          {{ busy() ? 'Creating…' : 'Create administrator' }}
+        </button>
+      </div>
+    </form>
+  </section>
+}
