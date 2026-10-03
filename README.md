@@ -75,9 +75,11 @@ docker compose up -d --build     # Postgres + RabbitMQ + dashboard API + dashboa
 Then open **http://localhost:4200**. The UI starts once the dashboard API reports healthy (both show
 as `healthy` in `docker compose ps`), and the first `--build` also installs the SPA's npm packages and
 builds it inside the `dashboard-web` image, so it takes longer than later runs, which reuse the build
-cache. There is no sign-in yet: the UI authenticates with the demo API key compiled into the SPA.
+cache. Sign in as `admin` / `dev-local-only-change-me`, the administrator that `Dashboard__Admin__*` in
+`docker-compose.yml` seeds on the first start.
 
-From a terminal, talk to the dashboard API directly:
+From a terminal, talk to the dashboard API directly. The API key is read-only (it acts as the Viewer role), so
+it can list and read sagas but not retry one:
 
 ```bash
 curl http://localhost:5080/health
@@ -99,8 +101,8 @@ docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml 
 
 | What | Where | Notes |
 | --- | --- | --- |
-| Dashboard UI | http://localhost:4200 | No sign-in yet: the UI uses the demo API key built into the SPA (`dashboard-web/src/app/api-config.ts`), which the dashboard's authentication work replaces with per-user sign-in. Served by nginx in the `dashboard-web` container, which proxies `/api` and `/hubs` to the API — see [`docs/dashboard.md`](docs/dashboard.md#the-spa) |
-| Dashboard API | http://localhost:5080 | For `curl` and machine clients: API key `dev-local-only-change-me` — see [`docs/dashboard.md`](docs/dashboard.md#authentication). The UI does not use this port |
+| Dashboard UI | http://localhost:4200 | Sign in as `admin` / `dev-local-only-change-me`, seeded by `Dashboard__Admin__*` in `docker-compose.yml`. Served by nginx in the `dashboard-web` container, which proxies `/api` and `/hubs` to the API — see [`docs/dashboard.md`](docs/dashboard.md#the-spa) |
+| Dashboard API | http://localhost:5080 | For `curl` and machine clients: API key `dev-local-only-change-me`, read-only (the Viewer role) — see [`docs/dashboard.md`](docs/dashboard.md#authentication). The UI does not use this port |
 | RabbitMQ management | http://localhost:15672 | `guest` / `guest` |
 | RabbitMQ (AMQP) | `localhost:5672` | `guest` / `guest`, i.e. `amqp://guest:guest@localhost:5672/` |
 | Postgres | `localhost:5433` | `postgres`/`postgres`, database `vsaga` (port 5433, not 5432, to avoid clashing with a local Postgres) |
@@ -126,15 +128,19 @@ stack; see ["Running an adapter's own overlay"](docs/transports/index.md#running
 for the exact commands and ports. Every stack serves its own dashboard UI; open that stack's UI port,
 there is nothing to edit.
 
-> **The demo's credentials are public.** The API key `dev-local-only-change-me` is committed in
-> `docker-compose.yml` and compiled into the SPA, so the dashboard ports (UI and API, in every stack)
-> are bound to `127.0.0.1` and only this machine can reach them. To expose the dashboard deliberately,
-> change the bind address in the compose file together with `Dashboard__ApiKey` (and the SPA's
-> `DASHBOARD_API_KEY`, which must match it), put TLS in front, and narrow `Dashboard__TrustedProxies`
-> to your proxy's address or network, since the compose value trusts every private range — see
+> **The demo's credentials are public.** The administrator's password and the API key are both
+> `dev-local-only-change-me`, committed in `docker-compose.yml`, so the dashboard ports (UI and API, in every
+> stack) are bound to `127.0.0.1` and only this machine can reach them. To expose the dashboard deliberately,
+> change the bind address in the compose file, change `Dashboard__ApiKey`, and change the administrator's
+> password (below), put TLS in front, and narrow `Dashboard__TrustedProxies` to your proxy's address or
+> network, since the compose value trusts every private range — see
 > [`docs/dashboard.md`](docs/dashboard.md#behind-your-own-proxy-or-tls) and
-> [`Dashboard:TrustedProxies`](docs/configuration.md#dashboardtrustedproxies). Until per-user sign-in
-> lands, anyone who can load the UI can read the key from its bundle.
+> [`Dashboard:TrustedProxies`](docs/configuration.md#dashboardtrustedproxies).
+>
+> The seeded password applies **only to an empty identity volume**: the administrator is created on the first
+> start and never touched again, so editing `Dashboard__Admin__Password` afterwards changes nothing. Once the
+> volume exists, change the password by signing in and changing it on the Account page, or set
+> `Dashboard__Admin__ResetOnStart=true` for one start, or start over with `docker compose down -v`.
 >
 > If `up` reports port 4200 as already allocated, a dev server is most likely still running on it
 > (4200 is the Angular CLI's default port; this repository's own dev server uses 4201).
@@ -142,6 +148,10 @@ there is nothing to edit.
 > **Postgres volume note:** `docker compose up` reuses the named volume across restarts — it is not
 > reset for you. See [`docs/persistence.md`](docs/persistence.md#the-volume-caveat) if you're
 > comparing before/after counts or your volume predates the EF Core migrations pass.
+>
+> The dashboard's users, roles and session keys are kept the same way, in a SQLite file on the
+> `vsaga-dashboard-identity` volume: they survive `docker compose up`, a rebuild and a recreate, and
+> `docker compose down -v` removes them (the administrator is then seeded again on the next start).
 
 To work on the SPA itself, run its dev server with hot reload on http://localhost:4201, beside the
 compose UI and against the same API; see [`dashboard-web/README.md`](dashboard-web/README.md#run-it).

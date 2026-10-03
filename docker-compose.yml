@@ -48,9 +48,11 @@ services:
       # network; acceptable here because the ports are bound to loopback. Narrow this to your proxy's
       # address or network for a real deployment: any peer in these ranges can assert a client address.
       Dashboard__TrustedProxies: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
-      # Operator, so the dashboard UI, which still signs its requests with the key above, can retry a
-      # failed saga. The commit that switches the UI to sign-in sets this back to Viewer.
-      Dashboard__ApiKeyRole: "Operator"
+      # The role the key above acts as. Viewer (the default, spelled out here) is read-only: enough for curl
+      # and monitoring, and it cannot retry a saga. The dashboard UI does not use the key (it signs in with
+      # a username and password), so nothing in the demo needs more; name another role only for a machine
+      # client that does.
+      Dashboard__ApiKeyRole: "Viewer"
       # Users, roles and the session keys live in this SQLite file on the volume below, so they survive a
       # rebuild or recreate of this container; `docker compose down -v` removes them. The image sets the
       # same path.

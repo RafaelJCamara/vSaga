@@ -1,6 +1,5 @@
 import { Routes } from '@angular/router';
 import { SagaList } from './pages/saga-list/saga-list';
-import { SagaDetail } from './pages/saga-detail/saga-detail';
 import { anonymousGuard, authGuard, setupGuard } from './guards/auth.guards';
 
 export const routes: Routes = [
@@ -22,10 +21,18 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./pages/account/account').then((m) => m.Account),
   },
-  { path: 'sagas', component: SagaList },
+  // The saga pages need a signed-in user: the guard sends anyone else to /login (carrying the page to come
+  // back to), or to /setup while no user exists.
+  { path: 'sagas', component: SagaList, canActivate: [authGuard] },
   // Both halves of the saga instance identity are in the URL: a correlation id alone can be
   // tracked by more than one saga type.
-  { path: 'sagas/:sagaType/:id', component: SagaDetail },
+  // Lazy: the detail page (timeline, map, state inspector) is the heaviest in the app, and the initial
+  // bundle has no room for it beside the session code. The guard still runs before the chunk is requested.
+  {
+    path: 'sagas/:sagaType/:id',
+    canActivate: [authGuard],
+    loadComponent: () => import('./pages/saga-detail/saga-detail').then((m) => m.SagaDetail),
+  },
   // A URL that matches nothing (a stale bookmark, a return URL to a page that is gone) goes to the saga list.
   { path: '**', redirectTo: 'sagas' },
 ];

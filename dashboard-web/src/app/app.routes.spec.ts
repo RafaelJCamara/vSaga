@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { Router, Routes, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { routes } from './app.routes';
+import { authGuard } from './guards/auth.guards';
 import { Account } from './pages/account/account';
 import { Login } from './pages/login/login';
 import { Setup } from './pages/setup/setup';
@@ -56,7 +57,11 @@ describe('routes', () => {
       account: vi.fn<() => void>(),
     };
     return routes.map((route) => {
-      if (route.component) return { ...route, component: SagaStub };
+      if (route.path?.startsWith('sagas')) {
+        // The detail page is lazy and the list is not: either way the stub stands in, with the route's guards.
+        const { loadComponent: _lazy, ...eager } = route;
+        return { ...eager, component: SagaStub };
+      }
       const load = route.loadComponent;
       const count = route.path === undefined ? undefined : loads[route.path];
       if (!load || !count) return route;
@@ -88,6 +93,24 @@ describe('routes', () => {
 
       expect(route?.component, path).toBeUndefined();
       expect(route?.loadComponent, path).toBeInstanceOf(Function);
+    }
+  });
+
+  // The initial bundle is within a few kilobytes of its 500 kB budget (angular.json), and the detail page
+  // (timeline, map, state inspector) is the heaviest in the app: it stays in a chunk of its own. The saga
+  // list is the page everyone lands on, so it ships with the app.
+  it('loads the saga detail page lazily and the saga list with the app', () => {
+    const detail = routes.find((r) => r.path === 'sagas/:sagaType/:id');
+    const list = routes.find((r) => r.path === 'sagas');
+
+    expect(detail?.component).toBeUndefined();
+    expect(detail?.loadComponent).toBeInstanceOf(Function);
+    expect(list?.component).toBeDefined();
+  });
+
+  it('puts every saga page behind a signed-in user', () => {
+    for (const path of ['sagas', 'sagas/:sagaType/:id']) {
+      expect(routes.find((r) => r.path === path)?.canActivate, path).toEqual([authGuard]);
     }
   });
 
@@ -165,9 +188,9 @@ describe('routes', () => {
       expect(shown().textContent).toContain('choose a new password');
     });
   });
-  describe('where each session ends up, for each of the three pages', () => {
-    // The saga routes are open in this commit, so a user who must change the password is not sent from
-    // them to /account yet: the commit that guards them changes those rows.
+  describe('where each session ends up, for each page', () => {
+    // The saga pages are as guarded as the account page: a user who must change the password is sent from
+    // them to /account, and /login and /setup hand a signed-in visitor on to /sagas first.
     const matrix: Array<[string, string, string, Page]> = [
       ['anonymous', '/login', '/login', 'Login'],
       ['anonymous', '/setup', '/login', 'Login'],
@@ -184,14 +207,52 @@ describe('routes', () => {
       ['signed in', '/login', '/sagas', 'sagas'],
       ['signed in', '/setup', '/sagas', 'sagas'],
       ['signed in', '/account', '/account', 'Account'],
-      ['signed in, must change the password', '/login', '/sagas', 'sagas'],
+      ['signed in, must change the password', '/login', '/account', 'Account'],
       ['signed in, must change the password', '/login?returnUrl=%2Faccount', '/account', 'Account'],
-      ['signed in, must change the password', '/login?returnUrl=%2Fsagas', '/sagas', 'sagas'],
-      ['signed in, must change the password', '/setup', '/sagas', 'sagas'],
+      ['signed in, must change the password', '/login?returnUrl=%2Fsagas', '/account', 'Account'],
+      ['signed in, must change the password', '/setup', '/account', 'Account'],
       ['signed in, must change the password', '/account', '/account', 'Account'],
       ['the API key, with no user yet', '/login', '/setup', 'Setup'],
       ['the API key, with no user yet', '/setup', '/setup', 'Setup'],
       ['the API key, with no user yet', '/account', '/setup', 'Setup'],
+      // The saga pages, the list and a detail URL.
+      ['anonymous', '/sagas', '/login?returnUrl=%2Fsagas', 'Login'],
+      ['anonymous', '/sagas/OrderSaga/abc', '/login?returnUrl=%2Fsagas%2FOrderSaga%2Fabc', 'Login'],
+      [
+        'anonymous',
+        '/sagas?status=Failed&page=2',
+        '/login?returnUrl=%2Fsagas%3Fstatus%3DFailed%26page%3D2',
+        'Login',
+      ],
+      // A saga type is free-form text and travels percent-encoded: it must come back as it left.
+      [
+        'anonymous',
+        '/sagas/Order%2FSaga/abc',
+        '/login?returnUrl=%2Fsagas%2FOrder%252FSaga%2Fabc',
+        'Login',
+      ],
+      [
+        'signed in',
+        '/login?returnUrl=%2Fsagas%2FOrder%252FSaga%2Fabc',
+        '/sagas/Order%2FSaga/abc',
+        'sagas',
+      ],
+      ['signed in', '/login?returnUrl=%2Fsagas%2FOrderSaga%2Fabc', '/sagas/OrderSaga/abc', 'sagas'],
+      ['no user yet, setup open', '/sagas', '/setup', 'Setup'],
+      ['no user yet, setup open', '/sagas/OrderSaga/abc', '/setup', 'Setup'],
+      ['no user yet, setup closed by a seed', '/sagas', '/setup', 'Setup'],
+      ['API unreachable', '/sagas', '/login?returnUrl=%2Fsagas', 'Login'],
+      [
+        'API unreachable',
+        '/sagas/OrderSaga/abc',
+        '/login?returnUrl=%2Fsagas%2FOrderSaga%2Fabc',
+        'Login',
+      ],
+      ['signed in', '/sagas', '/sagas', 'sagas'],
+      ['signed in', '/sagas/OrderSaga/abc', '/sagas/OrderSaga/abc', 'sagas'],
+      ['signed in, must change the password', '/sagas', '/account', 'Account'],
+      ['signed in, must change the password', '/sagas/OrderSaga/abc', '/account', 'Account'],
+      ['the API key, with no user yet', '/sagas', '/setup', 'Setup'],
     ];
 
     it.each(matrix)('%s: %s settles on %s', async (session, from, settled, page) => {

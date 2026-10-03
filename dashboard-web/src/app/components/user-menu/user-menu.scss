@@ -1,0 +1,32 @@
+:host {
+  position: relative;
+  display: block;
+}
+
+.user-menu-name {
+  display: inline-block;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 20;
+  max-width: 20rem;
+}
+
+.user-menu-who {
+  margin-bottom: 0.3rem;
+  padding: 0.4rem 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.user-menu-display {
+  font-weight: 600;
+}

@@ -1,7 +1,7 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import * as signalR from '@microsoft/signalr';
 import { BehaviorSubject, Subject } from 'rxjs';
-import { DASHBOARD_API_KEY, HUB_URL } from '../api-config';
+import { HUB_URL } from '../api-config';
 import { SagaLogEntry, SagaSummary } from '../models/saga.model';
 
 export type SagaHubConnectionState = 'connected' | 'reconnecting' | 'disconnected';
@@ -131,8 +131,10 @@ export class SagaHubService implements OnDestroy {
 
     if (!this.connection) {
       const generation = this.generation;
+      // No access token: the session cookie authenticates the negotiate and the WebSocket (same origin, and
+      // signalR sends credentials by default), so nothing credential-shaped is in the URL or the bundle.
       const connection = new signalR.HubConnectionBuilder()
-        .withUrl(HUB_URL, { accessTokenFactory: () => DASHBOARD_API_KEY })
+        .withUrl(HUB_URL)
         .withAutomaticReconnect(this.retryPolicyFor(generation))
         .build();
       this.connection = connection;

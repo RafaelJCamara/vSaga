@@ -4,6 +4,21 @@
       <span class="brand-mark">v<span class="brand-mark-accent">Saga</span></span>
       <span class="brand-sub">Saga Dashboard</span>
     </a>
+    @if (auth.isAuthenticated()) {
+      <nav class="topnav" aria-label="Primary">
+        <a routerLink="/sagas" routerLinkActive="active" ariaCurrentWhenActive="page">Sagas</a>
+        @if (auth.canManageAccess()) {
+          <a routerLink="/admin" routerLinkActive="active" ariaCurrentWhenActive="page"
+            >Administration</a
+          >
+        }
+      </nav>
+    }
+    <div class="topbar-end">
+      @if (auth.isAuthenticated()) {
+        <app-user-menu />
+      }
+    </div>
   </header>
   <main class="content">
     <router-outlet />

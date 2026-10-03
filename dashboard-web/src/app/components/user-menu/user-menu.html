@@ -1,0 +1,33 @@
+<button
+  #trigger
+  type="button"
+  class="btn user-menu-trigger"
+  id="user-menu-trigger"
+  aria-haspopup="menu"
+  aria-controls="user-menu-panel"
+  [attr.aria-expanded]="open()"
+  [disabled]="signingOut()"
+  (click)="toggle()"
+  (keydown.arrowdown)="showFromKey($event)"
+>
+  <span class="user-menu-name">{{ signingOut() ? 'Signing out…' : label() }}</span>
+  <span aria-hidden="true"> ▾</span>
+</button>
+
+@if (open()) {
+  <div class="menu user-menu-panel" id="user-menu-panel">
+    <div class="user-menu-who">
+      <div class="user-menu-display">{{ user()?.displayName }}</div>
+      <div class="muted">{{ user()?.username }}</div>
+    </div>
+    <div
+      role="menu"
+      aria-labelledby="user-menu-trigger"
+      (keydown.arrowdown)="moveFocus($event, 1)"
+      (keydown.arrowup)="moveFocus($event, -1)"
+    >
+      <a role="menuitem" routerLink="/account" (click)="select()">Account</a>
+      <button role="menuitem" type="button" (click)="signOut()">Sign out</button>
+    </div>
+  </div>
+}

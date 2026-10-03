@@ -7,7 +7,6 @@
 export const API_BASE_URL = '';
 export const HUB_URL = `${API_BASE_URL}/hubs/saga`;
 
-// Matches docker-compose.yml's Dashboard__ApiKey dev value. A key embedded in a compiled SPA bundle is
-// visible to anyone with devtools — this only closes off unauthenticated direct API access, it is not
-// per-user auth. Change both places together if you change this.
-export const DASHBOARD_API_KEY = 'dev-local-only-change-me';
+// No credential lives here or anywhere in the bundle: the SPA signs in with a username and password, and
+// the browser carries the session cookie (and Angular's XSRF interceptor copies the antiforgery cookie into
+// a header). The API key in docker-compose.yml is for curl and other machine clients.

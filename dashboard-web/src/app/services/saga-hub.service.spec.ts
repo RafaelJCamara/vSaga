@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
-import { DASHBOARD_API_KEY, HUB_URL } from '../api-config';
+import { HUB_URL } from '../api-config';
 import { SagaLogEntry, SagaSummary } from '../models/saga.model';
 import { SagaHubService } from './saga-hub.service';
 
@@ -132,11 +132,13 @@ describe('SagaHubService', () => {
     vi.useRealTimers();
   });
 
-  it('builds the connection against HUB_URL, with the dashboard api key as the access token', async () => {
+  // The session cookie authenticates the hub; a token factory would put a credential in the bundle (or
+  // the URL: signalR sends the token as `access_token` on the WebSocket).
+  it('builds the connection against HUB_URL with no access token factory', async () => {
     await service.subscribeToList();
 
     expect(built.url).toBe(HUB_URL);
-    expect(built.options?.accessTokenFactory?.()).toBe(DASHBOARD_API_KEY);
+    expect(built.options?.accessTokenFactory).toBeUndefined();
   });
 
   // A dashboard tab is meant to be left open for hours; giving up on reconnecting after ~30s of

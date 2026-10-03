@@ -62,8 +62,11 @@ const VISIBLE_REFRESH_INTERVAL_MS = 60000;
  * - The dependency on the hub is one way: this service stops, resumes and probes it; the hub knows nothing
  *   of this service.
  *
- * The guards (`guards/auth.guards.ts`) and the sign-in pages call it; the app initializer and the
- * interceptor come with the commit that requires a session.
+ * It is wired into the app: the app initializer (`app.config.ts`) calls `bootstrap` before the first
+ * navigation; the guards (`guards/auth.guards.ts`) read the session and send a visitor who has none to the
+ * login page; the sign-in pages and the user menu in the top bar call the flows; and the interceptor
+ * (`interceptors/auth.interceptor.ts`) reports what the API answers (`handleUnauthorized` for a 401,
+ * `noteForbidden` for a 403) and reads the session again for an antiforgery refusal (`refresh`).
  */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
