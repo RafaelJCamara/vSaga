@@ -909,14 +909,59 @@ describe('SagaList', () => {
         expect(fixture.nativeElement.querySelectorAll('.saga-row')).toHaveLength(1);
       });
 
-      it('does not read the session on a reconnect while it holds the permission', () => {
+      // The server closes a connection when access changes, so a later connect reads the session too (the
+      // first one adds nothing), and the list once: the session read must not double the list's requests.
+      it('reads the session once on a later reconnect, not on the first connect, and the list once', () => {
         const { fixture } = open({}, [of(page([makeSummary()], 1, 1))]);
+        expect(auth.refresh).not.toHaveBeenCalled();
+
         hubMock.connectionState$.next('reconnecting');
         hubMock.connectionState$.next('connected');
+        fixture.detectChanges();
 
-        expect(auth.refresh).not.toHaveBeenCalled();
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
         expect(apiMock.list).toHaveBeenCalledTimes(2);
         expect(fixture.componentInstance.error()).toBeNull();
+      });
+
+      it('reads the list once when the session read brings a widened scope', () => {
+        const { fixture } = open({ access: scopedView }, [of(page([makeSummary()], 1, 1))]);
+        auth.refresh.mockImplementation(() => {
+          auth.access.set({
+            permissions: [],
+            scoped: [
+              { sagaType: 'OrderSaga', permissions: ['sagas.view'] },
+              { sagaType: 'ShippingSaga', permissions: ['sagas.view'] },
+            ],
+          });
+          return Promise.resolve('authenticated' as const);
+        });
+
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        fixture.detectChanges();
+
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(1);
+        expect(fixture.nativeElement.querySelectorAll('.saga-row')).toHaveLength(1);
+      });
+
+      it('shows the no-access state, and asks for no more lists, when the session read brings a narrowed scope with nothing left', () => {
+        const { fixture } = open({ access: scopedView }, [of(page([makeSummary()], 1, 1))]);
+        auth.refresh.mockImplementation(() => {
+          auth.access.set(none);
+          return Promise.resolve('authenticated' as const);
+        });
+
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        fixture.detectChanges();
+
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(apiMock.list).toHaveBeenCalledTimes(2);
+        expect(text(fixture.nativeElement.querySelector('.empty'))).toBe(noAccessText);
+        expect(fixture.nativeElement.querySelector('.saga-row')).toBeNull();
       });
     });
 

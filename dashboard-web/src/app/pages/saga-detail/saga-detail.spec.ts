@@ -2336,6 +2336,85 @@ describe('SagaDetail', () => {
       });
     });
 
+    // The server closes a user's connection whenever their access changes, so a later connect reads the
+    // session too: a grant that widened what the viewer may do shows up without a reload.
+    describe('a reconnect of live updates', () => {
+      const reconnect = () => {
+        hubMock.connectionState$.next('reconnecting');
+        hubMock.connectionState$.next('connected');
+        vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      };
+      /** What the next session read brings. */
+      const grant = (held: ReturnType<typeof access>) =>
+        auth.refresh.mockImplementation(() => {
+          auth.access.set(held);
+          return Promise.resolve('authenticated' as const);
+        });
+
+      it('reads the session once, and not on the first connect', () => {
+        vi.useFakeTimers();
+        const fixture = setup(makeDetail({ status: 'Running' }));
+        expect(auth.refresh).not.toHaveBeenCalled();
+
+        reconnect();
+        fixture.detectChanges();
+
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(apiMock.get).toHaveBeenCalledTimes(2);
+        reconnect();
+        expect(auth.refresh).toHaveBeenCalledTimes(2);
+      });
+
+      it('shows the retry row, with no reload, when the session read brings sagas.retry for the type', () => {
+        vi.useFakeTimers();
+        authOptions = { access: access(['sagas.view']) };
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        const el: HTMLElement = fixture.nativeElement;
+        expect(el.querySelector('.retry-row button')).toBeNull();
+        expect(text(el.querySelector('.retry-hint'))).toContain('You do not have permission to retry');
+        grant(access(['sagas.view'], [{ sagaType: 'OrderSaga', permissions: ['sagas.view', 'sagas.retry'] }]));
+
+        reconnect();
+        fixture.detectChanges();
+
+        expect(el.querySelector('.retry-row button')).not.toBeNull();
+        expect(el.querySelector('.retry-hint')).toBeNull();
+        // The page re-read its data once for the reconnect, and the gain did not add a load of its own.
+        expect(apiMock.get).toHaveBeenCalledTimes(2);
+        expect(fixture.componentInstance.loading()).toBe(false);
+      });
+
+      it('asks for the retry plan once when the session read brings sagas.view', () => {
+        vi.useFakeTimers();
+        authOptions = { access: access([]) };
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        expect(apiMock.getRetryPlan).not.toHaveBeenCalled();
+        grant(access(['sagas.view']));
+
+        reconnect();
+        fixture.detectChanges();
+
+        expect(apiMock.getRetryPlan).toHaveBeenCalledTimes(1);
+        expect(apiMock.getRetryPlan).toHaveBeenCalledWith('OrderSaga', 'saga-1');
+      });
+
+      it('opens the data bar when the session read brings sagas.data', () => {
+        vi.useFakeTimers();
+        authOptions = { access: access(['sagas.view']) };
+        const fixture = setup(makeDetail({ status: 'Completed' }), [makeEntry()]);
+        const el: HTMLElement = fixture.nativeElement;
+        const startButton = () => el.querySelector<HTMLButtonElement>('.ov-bar button')!;
+        expect(startButton().disabled).toBe(true);
+        grant(access(['sagas.view', 'sagas.data']));
+
+        reconnect();
+        fixture.detectChanges();
+
+        expect(startButton().disabled).toBe(false);
+        expect(el.querySelector('.ov-bar .muted')).toBeNull();
+      });
+    });
+
     describe('the hub group', () => {
       it('is not joined for a session without sagas.view for the type, and is once the API lets the page in', () => {
         authOptions = { access: access([]) };

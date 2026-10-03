@@ -171,6 +171,11 @@ export class SagaList implements OnInit, OnDestroy {
           // through the interceptor, which refreshes the session). A REST failure that is still on
           // screen (e.g. the API was down on page load) is retried the same way, so both clear together.
           if (hadError || wasConnected) this.refresh();
+          // A later connect also reads the session, so a scope that was widened or narrowed since is
+          // noticed by the session too, not only by what the API answers (the read is single-flight and
+          // bounded, and adopting a session never reconnects the hub, so this cannot loop). Only a change
+          // of whether the list may be shown at all moves the page, through the effect above.
+          if (wasConnected) void this.auth.refresh();
         }
       }),
     );

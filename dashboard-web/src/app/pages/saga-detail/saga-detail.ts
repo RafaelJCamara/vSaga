@@ -353,6 +353,12 @@ export class SagaDetail implements OnInit, OnDestroy {
           // not that the failed GET requests have been retried. Re-run them now so both clear together.
           // Any later reconnect also re-reads everything once: the pushes sent while the hub was
           // down are lost, and a saga that finished meanwhile would never send another.
+          // The server closes a user's connection when their access changes, so a later connect is also
+          // the cue to read the session: a grant that widened what the viewer may do (retry, data) is then
+          // picked up without a reload, and the effects that follow a gained permission fire. A forbidden
+          // page's refresh() reads it already. The read is single-flight and bounded, and adopting a
+          // session never reconnects the hub, so a reconnect cannot start a loop.
+          if (wasConnectedBefore && !this.forbidden()) void this.auth.refresh();
           if (hadError) {
             this.load();
           } else if (wasConnectedBefore || hadTimelineError || hadMapError) {
