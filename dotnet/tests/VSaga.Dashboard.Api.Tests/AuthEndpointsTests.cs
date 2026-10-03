@@ -473,7 +473,7 @@ public sealed class AuthEndpointsTests : IAsyncLifetime, IAsyncDisposable
         var queued = limits.AcquireHashingAsync(CancellationToken.None).AsTask();
         using (running)
         {
-            using var response = await client.PostContentAsync("/api/auth/login", Body(json, declaresItsLength));
+            using var response = await client.PostContentAsync("/api/auth/login", SignInClient.Body(json, declaresItsLength));
 
             var problem = await AssertProblemAsync(response, HttpStatusCode.BadRequest, AuthProblems.ValidationCode);
             Assert.True(problem.GetProperty("errors").TryGetProperty("request", out _));
@@ -492,7 +492,7 @@ public sealed class AuthEndpointsTests : IAsyncLifetime, IAsyncDisposable
         using var client = await SignInClient.StartAsync(_factory);
         var json = JsonSerializer.Serialize(new { username = "alice", password = Password }).PadRight(AuthEndpoints.MaxRequestBodyBytes);
 
-        using var response = await client.PostContentAsync("/api/auth/login", Body(json, declaresItsLength));
+        using var response = await client.PostContentAsync("/api/auth/login", SignInClient.Body(json, declaresItsLength));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -539,26 +539,6 @@ public sealed class AuthEndpointsTests : IAsyncLifetime, IAsyncDisposable
     }
 
     private static List<string?> Strings(JsonElement array) => [.. array.EnumerateArray().Select(e => e.GetString())];
-
-    /// <summary>A UTF-8 JSON body that declares its length, or one sent without a Content-Length (streamed).</summary>
-    private static HttpContent Body(string json, bool declaresItsLength)
-    {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(json);
-        HttpContent content = declaresItsLength ? new ByteArrayContent(bytes) : new UnsizedContent(bytes);
-        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-        return content;
-    }
-
-    private sealed class UnsizedContent(byte[] bytes) : HttpContent
-    {
-        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(bytes).AsTask();
-
-        protected override bool TryComputeLength(out long length)
-        {
-            length = 0;
-            return false;
-        }
-    }
 
     private sealed class RecordingObserver : IAccessChangeObserver
     {

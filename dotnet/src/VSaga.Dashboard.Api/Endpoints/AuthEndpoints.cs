@@ -1,16 +1,12 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
-using System.Text.Json;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.Options;
 using VSaga.Dashboard.Api.Auth;
 using VSaga.Dashboard.Identity;
 using VSaga.Dashboard.Identity.Model;
 using VSaga.Dashboard.Identity.Services;
 using VSaga.Dashboard.Identity.Stores;
-using HttpJsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
 
 namespace VSaga.Dashboard.Api.Endpoints;
 
@@ -300,69 +296,10 @@ public static class AuthEndpoints
         return SessionResponse.For(caller, new SetupState(setupRequired, setupAvailable, problem), settings.PasswordMinLength);
     }
 
-    /// <summary>
-    /// The JSON body as <typeparamref name="T"/> with the API's serializer options, or a 400 validation problem
-    /// naming the offending member (camelCase path) when it is malformed, has an unknown member or is missing,
-    /// or naming <c>request</c> when it is larger than <see cref="MaxRequestBodyBytes"/>.
-    /// </summary>
-    private static async Task<(T? Request, IResult? Invalid)> ReadBodyAsync<T>(HttpContext context)
-        where T : class
-    {
-        if (await ReadCappedBodyAsync(context) is not { } body)
-        {
-            return (null, AuthProblems.Validation(
-                new Dictionary<string, string[]>(StringComparer.Ordinal) { ["request"] = [$"The request body is larger than {MaxRequestBodyBytes / 1024} KiB."] }));
-        }
-
-        var options = context.RequestServices.GetRequiredService<IOptions<HttpJsonOptions>>().Value.SerializerOptions;
-        try
-        {
-            var request = JsonSerializer.Deserialize<T>(body.Span, options);
-            if (request is not null)
-                return (request, null);
-        }
-        catch (JsonException ex)
-        {
-            var member = ex.Path is { Length: > 2 } path && path.StartsWith("$.", StringComparison.Ordinal) ? path[2..] : "request";
-            return (null, AuthProblems.Validation(
-                new Dictionary<string, string[]>(StringComparer.Ordinal) { [member] = ["Not a member of this request, or not a valid value for it."] }));
-        }
-
-        return (null, AuthProblems.Validation(
-            new Dictionary<string, string[]>(StringComparer.Ordinal) { ["request"] = ["Send the request as a JSON object."] }));
-    }
-
-    /// <summary>
-    /// The request body, or null when it is larger than <see cref="MaxRequestBodyBytes"/>. A declared length over
-    /// the cap is refused unread; otherwise at most one byte past the cap is read (the server is told the cap
-    /// too, where it lets the limit be changed), so an oversized body costs no more than the cap to refuse.
-    /// </summary>
-    private static async Task<ReadOnlyMemory<byte>?> ReadCappedBodyAsync(HttpContext context)
-    {
-        if (context.Request.ContentLength > MaxRequestBodyBytes)
-            return null;
-
-        if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } serverLimit)
-            serverLimit.MaxRequestBodySize = MaxRequestBodyBytes;
-
-        var buffer = new byte[MaxRequestBodyBytes + 1];
-        var length = 0;
-        try
-        {
-            var read = -1;
-            while (read != 0 && length < buffer.Length)
-            {
-                read = await context.Request.Body.ReadAsync(buffer.AsMemory(length), context.RequestAborted);
-                length += read;
-            }
-        }
-        catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
-        {
-            return null;
-        }
-
-        return length > MaxRequestBodyBytes ? null : buffer.AsMemory(0, length);
-    }
+    /// <summary>The body as <typeparamref name="T"/>, capped at <see cref="MaxRequestBodyBytes"/> (<see cref="JsonRequestBody"/>).</summary>
+    private static Task<(T? Request, IResult? Invalid)> ReadBodyAsync<T>(HttpContext context)
+        where T : class =>
+        JsonRequestBody.ReadAsync<T>(context, MaxRequestBodyBytes);
 
     private static IResult RateLimited(HttpContext context, RateLimitLease lease, string action, string? username)
     {

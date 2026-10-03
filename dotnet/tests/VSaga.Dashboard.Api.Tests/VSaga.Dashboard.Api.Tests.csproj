@@ -10,6 +10,13 @@
     <ProjectReference Include="..\..\src\VSaga.Transport.InMemory\VSaga.Transport.InMemory.csproj" />
   </ItemGroup>
 
+  <!-- The golden JSON of the administration contract. They live with the SPA's test fixtures (excluded from
+       the app build and the image) because admin-api.service.spec.ts asserts the same files; copied here so
+       the endpoint tests read them from the output folder. -->
+  <ItemGroup>
+    <None Include="..\..\..\dashboard-web\src\app\testing\contracts\admin\*.json" LinkBase="Contracts\Admin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="coverlet.collector">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

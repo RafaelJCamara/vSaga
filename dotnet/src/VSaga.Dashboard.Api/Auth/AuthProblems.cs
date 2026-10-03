@@ -188,6 +188,18 @@ public static class AuthProblems
             extensions: Code(InvalidCredentialsCode));
     }
 
+    /// <summary>
+    /// 409 with an access rule's <paramref name="code"/> (<c>username_taken</c>, <c>name_taken</c>,
+    /// <c>role_in_use</c>, <c>role_immutable</c> or <c>last_administrator</c>, see <see cref="IdentityRuleCodes"/>)
+    /// and the rule's own explanation.
+    /// </summary>
+    public static IResult AccessRuleConflict(string code, string detail) =>
+        Problem(StatusCodes.Status409Conflict, "The change breaks an access rule", detail, code);
+
+    /// <summary>404 for a user, team or role id that does not exist. The design's code list has none for it.</summary>
+    public static IResult NotFound(string detail) =>
+        TypedResults.Problem(detail: detail, statusCode: StatusCodes.Status404NotFound, title: "Not found");
+
     private static IResult Problem(int status, string title, string detail, string code) =>
         TypedResults.Problem(detail: detail, statusCode: status, title: title, extensions: Code(code));
 

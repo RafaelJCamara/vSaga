@@ -1,0 +1,13 @@
+{
+  "id": "b8e1d2c3-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+  "name": "Payments",
+  "description": "The payments on-call rota.",
+  "memberIds": ["7f3c9a52-1d4e-4b8a-9c61-2f0e5b7d8a10"],
+  "grants": [
+    {
+      "roleId": "a0000000-0000-0000-0000-000000000002",
+      "allSagaTypes": false,
+      "sagaTypes": ["PaymentSaga"]
+    }
+  ]
+}

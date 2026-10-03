@@ -1,0 +1,30 @@
+[
+  {
+    "key": "sagas.view",
+    "name": "View sagas",
+    "description": "List sagas and open their detail, timeline and map without saga data, message payloads or error text; see children, correlations, saga types and the retry plan.",
+    "scopable": true,
+    "implies": []
+  },
+  {
+    "key": "sagas.data",
+    "name": "View saga data",
+    "description": "See saga state, message payloads and error messages.",
+    "scopable": true,
+    "implies": ["sagas.view"]
+  },
+  {
+    "key": "sagas.retry",
+    "name": "Retry sagas",
+    "description": "Re-run the failed step of a failed or timed-out saga.",
+    "scopable": true,
+    "implies": ["sagas.view"]
+  },
+  {
+    "key": "access.manage",
+    "name": "Manage access",
+    "description": "Manage users, teams and roles. Counts only in a grant for all saga types.",
+    "scopable": false,
+    "implies": []
+  }
+]

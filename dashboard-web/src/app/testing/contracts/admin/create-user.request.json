@@ -1,0 +1,18 @@
+{
+  "username": "alice",
+  "displayName": "Alice Example",
+  "password": "a temporary password",
+  "mustChangePassword": true,
+  "grants": [
+    {
+      "roleId": "a0000000-0000-0000-0000-000000000003",
+      "allSagaTypes": true,
+      "sagaTypes": []
+    },
+    {
+      "roleId": "a0000000-0000-0000-0000-000000000002",
+      "allSagaTypes": false,
+      "sagaTypes": ["OrderSaga", "PaymentSaga"]
+    }
+  ]
+}

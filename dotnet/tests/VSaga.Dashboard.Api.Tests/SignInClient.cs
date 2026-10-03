@@ -39,9 +39,20 @@ internal sealed class SignInClient : IDisposable
         PostContentAsync(path, json is null ? null : new StringContent(json, Encoding.UTF8, "application/json"), token);
 
     /// <summary>Posts <paramref name="content"/> (disposed with the request) with the token, as <see cref="PostAsync"/> does.</summary>
-    public async Task<HttpResponseMessage> PostContentAsync(string path, HttpContent? content, string? token = null)
+    public Task<HttpResponseMessage> PostContentAsync(string path, HttpContent? content, string? token = null) =>
+        SendContentAsync(HttpMethod.Post, path, content, token);
+
+    /// <summary>Sends <paramref name="json"/> (no body when null) with <paramref name="method"/> and the token, as <see cref="PostAsync"/> does.</summary>
+    public Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string? json = null, string? token = null) =>
+        SendContentAsync(method, path, json is null ? null : new StringContent(json, Encoding.UTF8, "application/json"), token);
+
+    public Task<HttpResponseMessage> PutAsync(string path, string json) => SendAsync(HttpMethod.Put, path, json);
+
+    public Task<HttpResponseMessage> DeleteAsync(string path) => SendAsync(HttpMethod.Delete, path);
+
+    private async Task<HttpResponseMessage> SendContentAsync(HttpMethod method, string path, HttpContent? content, string? token)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+        using var request = new HttpRequestMessage(method, path);
         request.Content = content;
 
         var sent = token ?? Token;
@@ -67,6 +78,15 @@ internal sealed class SignInClient : IDisposable
         return await ReadJsonAsync(response);
     }
 
+    /// <summary>A UTF-8 JSON body that declares its length, or one sent without a Content-Length (streamed).</summary>
+    public static HttpContent Body(string json, bool declaresItsLength)
+    {
+        var bytes = Encoding.UTF8.GetBytes(json);
+        HttpContent content = declaresItsLength ? new ByteArrayContent(bytes) : new UnsizedContent(bytes);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        return content;
+    }
+
     public static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>
         await JsonSerializer.DeserializeAsync<JsonElement>(await response.Content.ReadAsStreamAsync());
 
@@ -86,5 +106,16 @@ internal sealed class SignInClient : IDisposable
     {
         if (SetCookie(response, AntiforgeryEnforcement.RequestTokenCookieName) is { Length: > 0 } token)
             Token = token;
+    }
+
+    private sealed class UnsizedContent(byte[] bytes) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) => stream.WriteAsync(bytes).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
     }
 }

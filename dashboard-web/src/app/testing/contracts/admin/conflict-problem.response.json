@@ -1,0 +1,7 @@
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.10",
+  "title": "The change breaks an access rule",
+  "status": 409,
+  "detail": "This change would leave no enabled user who can manage access for all saga types.",
+  "code": "last_administrator"
+}

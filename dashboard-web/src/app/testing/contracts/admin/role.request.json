@@ -1,0 +1,5 @@
+{
+  "name": "Support",
+  "description": "Views and retries sagas without seeing their data.",
+  "permissions": ["sagas.view", "sagas.retry"]
+}

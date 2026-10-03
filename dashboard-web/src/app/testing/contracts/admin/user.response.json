@@ -1,0 +1,23 @@
+{
+  "id": "3d9f6c1e-8a2b-4c7d-9e0f-1a2b3c4d5e6f",
+  "username": "alice",
+  "displayName": "Alice Example",
+  "isEnabled": true,
+  "mustChangePassword": true,
+  "lockedUntilUtc": null,
+  "lastSignInAtUtc": null,
+  "createdAtUtc": "2026-10-03T09:15:00+00:00",
+  "grants": [
+    {
+      "roleId": "a0000000-0000-0000-0000-000000000002",
+      "allSagaTypes": false,
+      "sagaTypes": ["OrderSaga", "PaymentSaga"]
+    },
+    {
+      "roleId": "a0000000-0000-0000-0000-000000000003",
+      "allSagaTypes": true,
+      "sagaTypes": []
+    }
+  ],
+  "teamIds": []
+}

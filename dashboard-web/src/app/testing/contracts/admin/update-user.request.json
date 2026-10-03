@@ -1,0 +1,11 @@
+{
+  "displayName": "Alice Example (payments)",
+  "isEnabled": false,
+  "grants": [
+    {
+      "roleId": "a0000000-0000-0000-0000-000000000003",
+      "allSagaTypes": true,
+      "sagaTypes": []
+    }
+  ]
+}

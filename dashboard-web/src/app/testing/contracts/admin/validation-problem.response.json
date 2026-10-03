@@ -1,0 +1,11 @@
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+  "title": "One or more validation errors occurred.",
+  "status": 400,
+  "detail": "The request is not valid.",
+  "errors": {
+    "grants[0].sagaTypes": ["Name 1 to 100 saga types, or grant all saga types."],
+    "grants[1].roleId": ["No role has this id."]
+  },
+  "code": "validation"
+}

@@ -186,6 +186,7 @@ app.UseApiResponseHeaders();
 app.UseDashboardAuth();
 
 app.MapAuthEndpoints();
+app.MapAdminEndpoints();
 app.MapSagaEndpoints();
 // The only endpoints exempt from antiforgery enforcement: a WebSocket upgrade cannot carry the header.
 app.MapHub<SagaHub>("/hubs/saga").RequireAuthorization().WithMetadata(AntiforgeryExemption.Hub);
