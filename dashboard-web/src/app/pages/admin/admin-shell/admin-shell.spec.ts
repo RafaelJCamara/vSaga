@@ -499,7 +499,7 @@ describe('AdminShell: the guide that is really there', () => {
 
     await harness.navigateByUrl('/admin/roles');
     await settle();
-    expect(guide.area()?.id).toBe('admin'); // forgotten when the navigation ended, announced again after it
+    expect(guide.area()?.id).toBe('admin'); // kept across the navigation (the guide's `within`), and announced again after it
 
     await harness.navigateByUrl('/elsewhere');
     await settle();

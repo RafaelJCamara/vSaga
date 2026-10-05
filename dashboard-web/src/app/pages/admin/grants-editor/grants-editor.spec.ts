@@ -9,6 +9,7 @@ import {
   grant,
   role,
 } from '../../../testing/admin';
+import { flat, quoted, quotedSentence } from '../../../testing/admin-tour';
 import { Grant, PermissionInfo, Role } from '../admin.model';
 import { GrantsEditor, grantsBody, scopedWithoutTypes } from './grants-editor';
 
@@ -566,6 +567,37 @@ describe('GrantsEditor', () => {
       ).toEqual([1, 3]);
       expect(scopedWithoutTypes([])).toEqual([]);
       expect(scopedWithoutTypes([grant(OPERATOR_ID), grant(VIEWER_ID, ['A'])])).toEqual([]);
+    });
+  });
+
+  // What the administration tour says of this editor is what the editor says: each phrase is read from the tour.
+  describe('what the administration tour quotes of the editor', () => {
+    it('writes the sentence about a permission that a scoped grant ignores, as the tour has it', async () => {
+      await render([grant(ADMINISTRATOR_ID, ['OrderSaga'])]);
+
+      const sentence = quotedSentence('admin-grants', 'is ignored in a scoped grant');
+
+      expect(flat(group(0))).toContain(sentence);
+    });
+
+    it('offers the two scopes by the names the tour gives them', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga'])]);
+
+      const scopes = quoted('admin-grants', /\b(?:All|Selected) saga types\b/g);
+
+      expect(scopes).toEqual(['All saga types', 'Selected saga types']);
+      for (const scope of scopes)
+        expect(flat(group(0).querySelector('.scope')), scope).toContain(scope);
+    });
+
+    it('has the exact saga type name box, and says that case matters, as the tour does', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga'])]);
+
+      const [box] = quoted('admin-grants', /exact saga type name/i);
+      const [caution] = quoted('admin-grants', /case matters/);
+
+      expect(flat(group(0).querySelector('.custom label')).toLowerCase()).toBe(box.toLowerCase());
+      expect(flat(group(0).querySelector('.custom'))).toContain(caution);
     });
   });
 

@@ -13,9 +13,13 @@ export type GuidePlacement = 'bottom' | 'top' | 'right' | 'left';
 /**
  * What starts an area while Guide is on. A `route` area starts when the user opens the page (the path,
  * without its query, matches); a `shown` area starts when the page announces it (`GuideService.areaShown`):
- * `what` says in words which moment that is, for whoever wires the page.
+ * `what` says in words which moment that is, for whoever wires the page. `within`, for an area whose pages are
+ * several routes (the administration pages), matches the paths of those pages: a navigation that stays inside
+ * them keeps the area as the one Replay repeats, instead of forgetting it until the page announces it again
+ * (which would remove and re-create Replay and the hint for a render).
  */
-export type GuideTrigger = { on: 'route'; match: RegExp } | { on: 'shown'; what: string };
+export type GuideTrigger =
+  { on: 'route'; match: RegExp } | { on: 'shown'; what: string; within?: RegExp };
 
 /**
  * One area. `version` is bumped when the area's tour changes, which shows the changed tour once more to

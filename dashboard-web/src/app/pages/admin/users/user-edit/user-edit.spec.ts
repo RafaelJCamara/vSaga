@@ -23,6 +23,7 @@ import {
   role,
   team,
 } from '../../../../testing/admin';
+import { flat, quoted } from '../../../../testing/admin-tour';
 import { AuthMockOptions, createAuthMock, provideAuthMock } from '../../../../testing/auth-mock';
 import createUserRequest from '../../../../testing/contracts/admin/create-user.request.json';
 import resetPasswordRequest from '../../../../testing/contracts/admin/reset-password.request.json';
@@ -1345,6 +1346,20 @@ describe('UserEdit', () => {
       const labels = preview().flatMap((row) => row.permissions.map(([label]) => label));
       expect(labels).toContain('See sagas');
       expect(labels).not.toContain('View sagas');
+    });
+
+    it('is headed, described and sourced as the administration tour says: Effective access, saved or not, direct: and team X: origins', async () => {
+      await open('/admin/users/u-alice');
+
+      const [heading] = quoted('admin-preview', /Effective access/);
+      const [unsaved] = quoted('admin-preview', /saved or not/);
+      const origins = quoted('admin-preview', /direct: \w+|team \w+: \w+/g);
+
+      expect(flat(el().querySelector('#user-access-title'))).toBe(heading);
+      expect(flat(el().querySelector('section.preview'))).toContain(unsaved);
+      expect(origins).toEqual(['direct: Operator', 'team Payments: Viewer']);
+      const written = flat(el().querySelector('app-access-summary'));
+      for (const origin of origins) expect(written, origin).toContain(origin);
     });
 
     it('is what the grants and the teams confer, with what grants each permission', async () => {

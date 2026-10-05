@@ -123,6 +123,27 @@ describe('GuideService', () => {
       expect(guideAreaForPath(path)).toBeNull();
     });
 
+    it('says which paths the administration area lives on: the pages of /admin, and nothing like it', () => {
+      const trigger = guideAreaOf('admin')?.trigger;
+      const within = trigger?.on === 'shown' ? trigger.within : undefined;
+
+      expect(
+        ['/admin', '/admin/users', '/admin/users/new', '/admin/roles/r1'].map((p) =>
+          within?.test(p),
+        ),
+      ).toEqual([true, true, true, true]);
+      expect(
+        ['/administration', '/sagas', '/account', '/adminx'].map((p) => within?.test(p)),
+      ).toEqual([false, false, false, false]);
+      // Only the area that is several routes has one.
+      for (const area of GUIDE_AREAS.filter((a) => a.id !== 'admin')) {
+        expect(
+          area.trigger.on === 'shown' ? area.trigger.within : undefined,
+          area.id,
+        ).toBeUndefined();
+      }
+    });
+
     it('waits for the element that says the area is on screen', () => {
       const ready = Object.fromEntries(GUIDE_AREAS.map((a) => [a.id, a.readyAnchor]));
 
@@ -1080,17 +1101,38 @@ describe('GuideService', () => {
         expect(guide.canReplay()).toBe(true);
       });
 
-      it('is forgotten when a navigation inside the area ends, until the shell announces it again', async () => {
+      it('stays the area to replay across a navigation inside the area, so Replay and the hint are never taken away between two pages', async () => {
         const { guide, router } = await onAdminPage({ seen: { admin: 1 } });
         guide.areaShown('admin');
         expect(guide.area()?.id).toBe('admin');
 
         await router.navigateByUrl('/admin');
 
-        expect(guide.area()).toBeNull();
+        expect(guide.area()?.id).toBe('admin'); // not null for the render before the shell announces it again
+        expect(guide.canReplay()).toBe(true);
         guide.areaShown('admin');
         expect(guide.area()?.id).toBe('admin');
         expect(guide.request()).toBeNull(); // seen
+      });
+
+      it('is forgotten when the area is left, and not brought back by a page outside it', async () => {
+        const { guide, router } = await onAdminPage({ seen: { admin: 1 } });
+        guide.areaShown('admin');
+
+        await router.navigateByUrl('/account');
+
+        expect(guide.area()).toBeNull();
+        expect(guide.canReplay()).toBe(false);
+      });
+
+      it('does not keep it for a session that lost access.manage meanwhile', async () => {
+        const { guide, router } = await onAdminPage({ seen: { admin: 1 } });
+        guide.areaShown('admin');
+        held.set(['sagas.view']);
+
+        await router.navigateByUrl('/admin');
+
+        expect(guide.area()).toBeNull();
       });
     });
 

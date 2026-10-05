@@ -23,6 +23,7 @@ import {
   role,
   team,
 } from '../../../../testing/admin';
+import { flat, quoted } from '../../../../testing/admin-tour';
 import { createAuthMock, provideAuthMock } from '../../../../testing/auth-mock';
 import teamRequest from '../../../../testing/contracts/admin/team.request.json';
 import { problem } from '../../../../testing/http-error';
@@ -1708,6 +1709,20 @@ describe('TeamEdit', () => {
       const labels = preview().flatMap((row) => row.permissions.map(([label]) => label));
       expect(labels).toContain('See sagas');
       expect(labels).not.toContain('View sagas');
+    });
+
+    it('is headed as the administration tour says, and the page says what saving does, as the tour does', async () => {
+      await open('/admin/teams/t-pay');
+
+      const [heading] = quoted('admin-preview', /what the team gives its members/i);
+      const [saving] = quoted('admin-teams', /saving replaces/i);
+
+      expect(flat(el().querySelector('#team-access-title')).toLowerCase()).toBe(
+        heading.toLowerCase(),
+      );
+      expect(flat(el().querySelector('#team-save-hint')).toLowerCase()).toContain(
+        saving.toLowerCase(),
+      );
     });
 
     it('is what the grants confer to each member, with the team as the origin of each permission', async () => {

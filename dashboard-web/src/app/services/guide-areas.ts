@@ -74,7 +74,11 @@ export const GUIDE_AREAS: readonly GuideArea<GuideAnchor>[] = [
   {
     id: 'admin',
     version: 1,
-    trigger: { on: 'shown', what: 'the administration pages are shown' },
+    trigger: {
+      on: 'shown',
+      what: 'the administration pages are shown',
+      within: /^\/admin(\/|$)/,
+    },
     readyAnchor: 'admin-nav',
     requires: 'access.manage',
     docsAnchor: '#administration',

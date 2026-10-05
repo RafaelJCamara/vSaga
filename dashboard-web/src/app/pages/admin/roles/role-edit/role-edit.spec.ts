@@ -21,6 +21,7 @@ import {
   role,
   team,
 } from '../../../../testing/admin';
+import { quoted } from '../../../../testing/admin-tour';
 import roleRequest from '../../../../testing/contracts/admin/role.request.json';
 import { problem } from '../../../../testing/http-error';
 import { AdminStore } from '../../admin.store';
@@ -779,6 +780,28 @@ describe('RoleEdit', () => {
 
       http.expectNone((r) => r.method !== 'GET');
       expect(banner()).toBeNull();
+    });
+
+    it('says and offers what the administration tour quotes: it cannot be changed or deleted, and Duplicate as custom role', () => {
+      const [action] = quoted('admin-roles', /Duplicate as custom role/);
+      const [rule] = quoted('admin-roles', /cannot be changed or deleted/);
+
+      expect(button(action)).toBeDefined();
+      expect(banner('.banner--info')?.textContent).toContain(rule);
+    });
+
+    it('lists the four permissions the tour names, by the labels the catalogue gives', () => {
+      const names = quoted('admin-roles', /View sagas|View saga data|Retry sagas|Manage access/g);
+      const labels = Array.from(el().querySelectorAll('.permission-name'), (l) =>
+        l.textContent?.replace(/\s+/g, ' ').trim(),
+      );
+
+      expect(names).toHaveLength(4);
+      for (const name of names)
+        expect(
+          labels.some((l) => l?.startsWith(name)),
+          name,
+        ).toBe(true);
     });
 
     it('offers to duplicate it as a custom role, and to go back', async () => {

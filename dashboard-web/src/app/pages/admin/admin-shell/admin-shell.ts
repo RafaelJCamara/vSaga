@@ -50,7 +50,9 @@ export class AdminShell {
   private readonly navigations = signal(0);
 
   constructor() {
-    // The router has already finished the navigation that created this shell; the ones after it are the area's own.
+    // The shell is created while the router activates the route of the navigation that opens the area, so that
+    // navigation's own NavigationEnd follows and is seen here too (it announces the area, and moves the focus
+    // if it was lost); every later one is a navigation inside the area.
     inject(Router)
       .events.pipe(
         filter((event) => event instanceof NavigationEnd),

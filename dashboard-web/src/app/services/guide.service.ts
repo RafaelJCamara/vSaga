@@ -295,10 +295,20 @@ export class GuideService {
     this.requestState.set(null);
     this.pending = [];
     const area = guideAreaForPath(path);
-    this.currentId.set(area?.id ?? null);
+    // An area that lives on several routes (the administration pages) stays the current one while the navigation
+    // stays inside them: its page announces it again after the navigation, and until then Replay and the hint
+    // must not be taken away and put back.
+    this.currentId.set(area?.id ?? (this.staysWithin(path) ? this.currentId() : null));
     if (area && this.enabledState() && this.allowed(area) && !this.isSeen(area.id)) {
       this.enqueue(area);
     }
+  }
+
+  /** Whether the current area is one that spans several routes and `path` is one of them. */
+  private staysWithin(path: string): boolean {
+    const id = this.currentId();
+    const trigger = id === null ? undefined : guideAreaOf(id)?.trigger;
+    return trigger?.on === 'shown' && trigger.within?.test(path) === true;
   }
 
   /** Asks for the area now, or queues it behind the tour that is running or already asked for. */
