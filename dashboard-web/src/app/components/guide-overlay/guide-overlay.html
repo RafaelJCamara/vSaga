@@ -11,8 +11,8 @@
     <div class="guide-text" aria-live="polite">
       <h2 class="guide-title" id="guide-title">{{ step()?.title }}</h2>
       <p class="guide-body" id="guide-body">{{ step()?.body }}</p>
+      <p class="guide-progress muted">Step {{ index() + 1 }} of {{ current.steps.length }}</p>
     </div>
-    <p class="guide-progress muted">Step {{ index() + 1 }} of {{ current.steps.length }}</p>
     <div class="guide-actions">
       <a class="btn btn--quiet" [href]="userGuideUrl()" target="_blank" rel="noopener noreferrer"
         >User guide</a

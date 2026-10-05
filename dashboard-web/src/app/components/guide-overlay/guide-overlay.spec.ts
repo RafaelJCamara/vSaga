@@ -23,7 +23,9 @@ import { GUIDE_TOURS, GuideAnchor } from './guide-tours';
   imports: [GuideOverlay],
   template: `
     <div id="page">
-      <div data-tour="topbar-guide"><button id="guide-switch" type="button">Guide</button></div>
+      <div data-tour="topbar-guide">
+        <button id="guide-switch" class="guide-switch" type="button">Guide</button>
+      </div>
       <button id="other" type="button">Somewhere else</button>
     </div>
     <app-guide-overlay />
@@ -531,6 +533,7 @@ describe('GuideOverlay', () => {
 
       expect(popover()).toBe(dialog);
       expect(root.querySelector('[aria-live="polite"]')).toBe(region);
+      expect(region?.textContent).toContain('Step 2 of 7'); // the position is announced with the step
     });
 
     it('focuses the primary button on every step, even when focus had moved off it', async () => {
@@ -818,24 +821,27 @@ describe('GuideOverlay', () => {
       });
 
       it('takes the key listener, the timers and the frame away', async () => {
-        await startList();
+        await setup('/sagas');
+        listPage();
+        const add = vi.spyOn(document, 'addEventListener');
+        const remove = vi.spyOn(document, 'removeEventListener');
+        guide.setEnabled(true);
+        flush();
+        const handler = add.mock.calls.find((c) => c[0] === 'keydown')?.[1];
+        expect(handler).toBeDefined();
+        expect(remove).not.toHaveBeenCalledWith('keydown', handler);
         const instance = overlay();
         const frame = instance['frame'] as number;
         expect(frames.has(frame)).toBe(true);
 
         await end();
 
+        expect(remove).toHaveBeenCalledWith('keydown', handler); // the very handler that was added
         expect(frames.has(frame)).toBe(false);
         expect(cancelFrame).toHaveBeenCalledWith(frame);
         expect(instance['frame']).toBeNull();
         expect(instance['pollTimer']).toBeNull();
         expect(instance['revealTimer']).toBeNull();
-        // Nothing the keys did while it ran does anything now.
-        const before = document.activeElement;
-        document.dispatchEvent(
-          new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
-        );
-        expect(document.activeElement).toBe(before);
       });
     });
   });
@@ -879,6 +885,100 @@ describe('GuideOverlay', () => {
       key('Escape');
 
       expect(document.activeElement).toBe(page.querySelector('#guide-switch'));
+    });
+
+    it('gives the page back before it moves the focus: the element it returns to is never inert when it is focused', async () => {
+      await setup('/sagas');
+      listPage();
+      const other = page.querySelector('#other') as HTMLElement;
+      other.focus();
+      guide.setEnabled(true);
+      flush();
+      let sawInert: boolean | null = null;
+      vi.spyOn(other, 'focus').mockImplementation(() => {
+        sawInert = page.hasAttribute('inert');
+      });
+
+      key('Escape');
+
+      expect(sawInert).toBe(false); // an inert element cannot take the focus, so the page comes back first
+    });
+
+    it('does the same when it falls back on the Guide switch', async () => {
+      await setup('/sagas');
+      listPage();
+      guide.setEnabled(true);
+      flush();
+      const toggle = page.querySelector('#guide-switch') as HTMLElement;
+      let sawInert: boolean | null = null;
+      vi.spyOn(toggle, 'focus').mockImplementation(() => {
+        sawInert = page.hasAttribute('inert');
+      });
+
+      key('Escape');
+
+      expect(sawInert).toBe(false);
+    });
+
+    describe('when the tour ends because the page changed or the session lost the permission', () => {
+      const ends: [string, () => Promise<void>][] = [
+        [
+          'the page changed',
+          async () => {
+            await router.navigateByUrl('/account');
+            flush();
+          },
+        ],
+        [
+          'the permission was lost',
+          async () => {
+            held.set([]);
+            flush();
+          },
+        ],
+      ];
+
+      describe.each(ends)('after %s', (_name, end) => {
+        it('leaves the focus where the next page put it', async () => {
+          await setup('/sagas');
+          listPage();
+          guide.setEnabled(true);
+          flush();
+          // The page that follows has placed the focus on a control of its own.
+          const other = page.querySelector('#other') as HTMLElement;
+          other.focus();
+          expect(popover()?.contains(document.activeElement)).toBe(false);
+
+          await end();
+
+          expect(document.activeElement).toBe(other);
+        });
+
+        it('takes the focus from the dialog, which is about to go, to the Guide switch', async () => {
+          await setup('/sagas');
+          listPage();
+          guide.setEnabled(true);
+          flush();
+          expect(popover()?.contains(document.activeElement)).toBe(true);
+
+          await end();
+
+          expect(document.activeElement).toBe(page.querySelector('#guide-switch'));
+        });
+
+        it('takes the focus from the body to the Guide switch', async () => {
+          await setup('/sagas');
+          listPage();
+          guide.setEnabled(true);
+          flush();
+          (document.activeElement as HTMLElement).blur();
+          expect(document.activeElement).toBe(document.body);
+
+          await end();
+
+          expect(document.activeElement).toBe(page.querySelector('#guide-switch'));
+        });
+      });
     });
 
     it('is back on the page before the dialog is removed, so it is never lost to the body', async () => {

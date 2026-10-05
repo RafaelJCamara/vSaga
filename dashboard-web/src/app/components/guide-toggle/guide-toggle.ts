@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, inject, viewChild } from '@angular/core';
 import { USER_GUIDE_URL } from '../../services/guide-areas';
 import { GuideService } from '../../services/guide.service';
 
@@ -18,4 +18,13 @@ import { GuideService } from '../../services/guide.service';
 export class GuideToggle {
   protected readonly guide = inject(GuideService);
   protected readonly userGuideUrl = USER_GUIDE_URL;
+  private readonly guideSwitch = viewChild.required<ElementRef<HTMLButtonElement>>('guideSwitch');
+
+  /** Answers the hint. Both answers remove the button that was pressed, and with it the keyboard focus, so
+   *  the focus goes to the Guide switch first (a tour that starts takes it from there, and returns it there). */
+  protected answerHint(startTour: boolean): void {
+    this.guideSwitch().nativeElement.focus();
+    if (startTour) this.guide.setEnabled(true);
+    else this.guide.dismissHint();
+  }
 }

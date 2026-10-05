@@ -410,10 +410,22 @@ export class GuideOverlay implements OnDestroy {
     this.run.set(null);
   }
 
+  /**
+   * Puts the focus back where it was when the tour began, or on the Guide switch when that element is gone.
+   * Not when the focus is somewhere meaningful already: a tour that ends because the page changed or the
+   * session lost the permission may have been followed by a page that placed the focus itself (the sign-in
+   * form, the heading of an administration page), and that is not ours to take. The focus is ours to move
+   * while it is in the dialog or nowhere (on the page's body).
+   */
   private restoreFocus(): void {
     const back = this.returnFocus;
     this.returnFocus = null;
-    const toggle = this.document.querySelector<HTMLElement>('[data-tour="topbar-guide"] button');
+    const active = this.document.activeElement;
+    if (active && active !== this.document.body && !this.host.nativeElement.contains(active))
+      return;
+    const toggle = this.document.querySelector<HTMLElement>(
+      '[data-tour="topbar-guide"] .guide-switch',
+    );
     (back?.isConnected ? back : toggle)?.focus();
   }
 

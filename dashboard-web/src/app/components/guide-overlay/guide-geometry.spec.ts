@@ -152,6 +152,16 @@ describe('placePopover', () => {
     expect(placePopover(spot, popover, viewport, 'bottom', 12, 200).placement).toBe('inside');
   });
 
+  it('keeps a popover as tall as the viewport allows at the margin, with or without an element', () => {
+    const short: Size = { width: 1000, height: 160 };
+    const tall: Size = { width: 300, height: 136 }; // what max-height leaves of a 160 px screen
+
+    expect(placePopover(null, tall, short)).toMatchObject({ top: 12, placement: 'center' });
+    const beside = placePopover({ top: 40, left: 100, width: 200, height: 40 }, tall, short);
+    expect(beside.top).toBe(12);
+    expect(beside.top + tall.height).toBeLessThanOrEqual(short.height - 12);
+  });
+
   it('never leaves the corner of a viewport smaller than the popover', () => {
     const small: Size = { width: 200, height: 100 };
 

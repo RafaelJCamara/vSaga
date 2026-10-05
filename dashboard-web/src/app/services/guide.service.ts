@@ -231,6 +231,10 @@ export class GuideService {
    * been through its tour it is asked for (after any tour that is running). Call it when the part shows, not
    * when it is created: a tab that was hidden announces itself each time it is shown, and an area that was
    * explained once is not explained again.
+   *
+   * Call it from an effect or `afterNextRender`, never from a constructor or `ngOnInit`: a page change
+   * resets what the guide knows about the page when the navigation ends (`NavigationEnd`), and a component
+   * is created before that, so an announcement made while it is being created is wiped.
    */
   areaShown(id: GuideAreaId): void {
     const area = guideAreaOf(id);
@@ -290,6 +294,8 @@ export class GuideService {
 
   /** Asks for the area now, or queues it behind the tour that is running or already asked for. */
   private enqueue(area: GuideArea): void {
+    // The tour on screen is not asked for again: it is not seen until it ends, so it would run a second time.
+    if (this.runningState() === area.id) return;
     if (this.requestState() !== null || this.runningState() !== null) {
       if (this.requestState()?.area.id !== area.id && !this.pending.includes(area.id)) {
         this.pending.push(area.id);
@@ -299,13 +305,13 @@ export class GuideService {
     this.requestState.set({ area, nonce: ++this.nonce });
   }
 
-  /** Starts the next queued area the session may still see. (Everything queued was unseen and Guide was on
-   *  when it was queued, and switching Guide off or changing page empties the queue, so only the permission
-   *  can have changed.) */
+  /** Starts the next queued area that is still unseen and that the session may still see. (Switching Guide off
+   *  or changing page empties the queue; a seen area is queued only through a race the guard in `enqueue`
+   *  closes, and is skipped here all the same.) */
   private advance(): void {
     while (this.pending.length > 0) {
       const area = guideAreaOf(this.pending.shift() as GuideAreaId);
-      if (area && this.allowed(area)) {
+      if (area && !this.isSeen(area.id) && this.allowed(area)) {
         this.requestState.set({ area, nonce: ++this.nonce });
         return;
       }

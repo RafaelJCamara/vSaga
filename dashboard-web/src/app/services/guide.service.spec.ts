@@ -305,6 +305,24 @@ describe('GuideService', () => {
 
       expect(TestBed.inject(GUIDE_STORAGE)).toBe(globalThis.localStorage);
     });
+
+    it('is no storage at all where the browser refuses the access (blocked site data)', () => {
+      const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+      Object.defineProperty(globalThis, 'localStorage', {
+        get() {
+          throw new DOMException('denied', 'SecurityError');
+        },
+        configurable: true,
+      });
+      try {
+        TestBed.configureTestingModule({});
+
+        expect(TestBed.inject(GUIDE_STORAGE)).toBeNull();
+      } finally {
+        if (original) Object.defineProperty(globalThis, 'localStorage', original);
+        else Reflect.deleteProperty(globalThis, 'localStorage');
+      }
+    });
   });
 
   describe('switching Guide on and off', () => {
@@ -841,6 +859,32 @@ describe('GuideService', () => {
       guide.started('retry');
       guide.ended('retry', true);
       expect(guide.request()).toBeNull();
+    });
+
+    it('does not queue the tour that is running behind itself: it would run a second time after Done', async () => {
+      const { guide } = await onDetailPage();
+      guide.areaShown('map');
+      guide.started('map');
+
+      guide.areaShown('map'); // the tab is shown again while its tour is on screen
+      guide.ended('map', true);
+
+      expect(guide.request()).toBeNull();
+      expect(guide.isSeen('map')).toBe(true);
+    });
+
+    it('does not bring back, after the next tour, one that ended without being remembered', async () => {
+      const { guide } = await onDetailPage();
+      guide.areaShown('map');
+      guide.started('map');
+      guide.areaShown('map');
+      guide.ended('map', false); // the session lost the permission, say: nothing is remembered
+
+      guide.areaShown('timeline');
+      guide.started('timeline');
+      guide.ended('timeline', true);
+
+      expect(guide.request()).toBeNull(); // the map was not left in the queue
     });
 
     it('queues an area once however often it is announced, which an abandoned request shows', async () => {

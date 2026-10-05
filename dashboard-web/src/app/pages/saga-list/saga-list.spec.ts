@@ -668,8 +668,6 @@ describe('SagaList', () => {
     );
   });
 
-  // What the session lets the viewer list: the API enforces it, and the page follows the session so it
-  // neither asks for what it would refuse nor words a refusal as an outage.
   describe('the anchors of the guide tour', () => {
     const twoSagas = () =>
       setup({
@@ -985,6 +983,8 @@ describe('SagaList', () => {
     });
   });
 
+  // What the session lets the viewer list: the API enforces it, and the page follows the session so it
+  // neither asks for what it would refuse nor words a refusal as an outage.
   describe('access by permission', () => {
     const none = { permissions: [], scoped: [] };
     const scopedView = { permissions: [], scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.view'] }] };

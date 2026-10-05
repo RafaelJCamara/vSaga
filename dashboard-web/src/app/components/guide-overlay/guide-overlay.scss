@@ -41,6 +41,19 @@
   background: var(--bg-elevated);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
   animation: guide-fade 140ms ease-out;
+  /* Never taller than the screen (a short landscape phone, a page zoomed to 400%), so the placement, which
+     measures it, can keep it inside the margin. The text scrolls inside it and the buttons stay in view;
+     the popover itself scrolls only if even the buttons do not fit. */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+
+.guide-text {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 @keyframes guide-fade {
@@ -68,6 +81,7 @@
 }
 
 .guide-actions {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -86,6 +100,11 @@
   border-color: var(--accent);
   background: var(--accent);
   /* The page's own dark, not white: white on the accent is under the 4.5:1 a small label needs. */
+  color: var(--bg);
+}
+
+/* The global hover of .btn sets the page's text colour, which on the accent fill is under 3:1. */
+.guide-primary:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--bg);
 }
 

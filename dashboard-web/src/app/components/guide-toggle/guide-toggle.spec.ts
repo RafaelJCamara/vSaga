@@ -216,6 +216,28 @@ describe('GuideToggle', () => {
       expect(storedGuide(storage)).toMatchObject({ enabled: true, hintDismissed: true });
     });
 
+    it('keeps the keyboard focus on the Guide switch when the button that was pressed goes with the hint', async () => {
+      for (const [label, enabled] of [
+        ['No thanks', false],
+        ['Start the tour', true],
+      ] as const) {
+        TestBed.resetTestingModule();
+        const { fixture, guide, root, switchButton } = await create('/sagas');
+        const answer = Array.from(root.querySelectorAll('button')).find(
+          (b) => b.textContent?.trim() === label,
+        ) as HTMLButtonElement;
+        answer.focus();
+        expect(document.activeElement).toBe(answer); // the focus starts somewhere else than the switch
+
+        answer.click();
+        fixture.detectChanges();
+
+        expect(answer.isConnected).toBe(false);
+        expect(guide.enabled()).toBe(enabled);
+        expect(document.activeElement, label).toBe(switchButton());
+      }
+    });
+
     it('goes away for good on "No thanks" and leaves Guide off', async () => {
       const { fixture, guide, root, hint } = await create('/sagas');
 
