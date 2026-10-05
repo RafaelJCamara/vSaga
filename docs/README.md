@@ -26,6 +26,12 @@ new here; the rest of this index is organized by topic, roughly in the order you
 - [`observability.md`](observability.md) — the persisted event log and its state snapshots,
   OpenTelemetry traces/metrics, the one-line OTLP exporter wiring, and the dashboard's own log events
   (the audit log category and its event ids).
+- [`dashboard-guide.md`](dashboard-guide.md) — the user guide to the dashboard's web interface: opening it,
+  signing in (the seeded administrator, the setup code, lockout, forced password change, session timeouts), guide
+  mode, the saga list and the detail page (map, timeline, saga data, retrying a saga and what each outcome means),
+  administration (users, teams, roles, grants scoped to saga types, the last-administrator rule), your account and
+  troubleshooting (two stacks in one browser, locked accounts, the engine version a targeted retry needs). It
+  changes together with the UI and the in-app tours: see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - [`dashboard.md`](dashboard.md) — API endpoints and the permission each needs, the manual retry that
   re-runs the failed step for one saga type, state snapshots, sign-in (cookie sessions, the first
   administrator and its setup code, passwords, lockout and rate limits, CSRF protection), the API key,

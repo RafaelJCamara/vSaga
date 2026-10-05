@@ -76,7 +76,8 @@ Then open **http://localhost:4200**. The UI starts once the dashboard API report
 as `healthy` in `docker compose ps`), and the first `--build` also installs the SPA's npm packages and
 builds it inside the `dashboard-web` image, so it takes longer than later runs, which reuse the build
 cache. Sign in as `admin` / `dev-local-only-change-me`, the administrator that `Dashboard__Admin__*` in
-`docker-compose.yml` seeds on the first start.
+`docker-compose.yml` seeds on the first start. The [dashboard user guide](docs/dashboard-guide.md) explains every
+page, and **Guide** in the dashboard's top bar walks you through each one in the app.
 
 From a terminal, talk to the dashboard API directly. The API key is read-only (it acts as the Viewer role), so
 it can list and read sagas but not retry one:
@@ -210,6 +211,8 @@ Full index: [`docs/README.md`](docs/README.md). Straight to the reference docs:
 - [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, MongoDB, Redis, in-memory, migrations.
 - [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log and its
   state snapshots, OTLP wiring.
+- [`docs/dashboard-guide.md`](docs/dashboard-guide.md) — the dashboard user guide: opening it, signing in, guide
+  mode, the saga list and detail page (map, timeline, saga data, retrying a saga), administration, troubleshooting.
 - [`docs/dashboard.md`](docs/dashboard.md) — API endpoints, the targeted manual retry, state snapshots,
   sign-in and the API key, access control (roles and per-saga-type grants, the identity store), the audit
   log, live updates over SignalR, the SPA and its saga detail page, deploying beyond localhost, the Saga Map.

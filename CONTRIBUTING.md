@@ -78,6 +78,15 @@ the `dashboard-web` image, so a page can work on the dev server's port 4201 and 
 stack. Load each page you touched through the stack's UI port with the browser's devtools open and
 check the console for CSP violations.
 
+**The dashboard user guide and the guide-mode tours** describe what the dashboard shows and does, so they
+change with it. A change that alters what a page shows or does (a label, a control, a banner, a status, a
+permission rule, the outcome of an action) updates [`docs/dashboard-guide.md`](docs/dashboard-guide.md) and the
+tour steps in `dashboard-web/src/app/components/guide-overlay/guide-tours.ts` in the same change. When a tour's
+copy changes, bump that area's `version` in `dashboard-web/src/app/services/guide-areas.ts`, so people who saw the
+old tour see the new one once. The tours link into the guide by heading (`docsAnchor` in `guide-areas.ts`), so a
+heading they use is renamed together with that file. A removed `data-tour` anchor fails a spec; a sentence that no
+longer matches the page fails nothing, which is why this is a rule.
+
 Filter queries by `createdAtUtc`/`updatedAtUtc` after the container's own start timestamp — the named
 Postgres volume is **not** reset by `docker compose up` (see
 [`docs/persistence.md`](docs/persistence.md#the-volume-caveat)). Use `docker compose down -v` for a
@@ -134,6 +143,9 @@ underlying issue before committing, not after.
   `nginx/default.conf.template`) or a compose file: `docker compose build dashboard-web` and
   `docker compose run --rm --no-deps dashboard-web nginx -t` succeed, and the pages you changed load
   through the stack's UI port (http://localhost:4200) with no CSP violation in the browser console.
+- If your change alters what the dashboard shows or does: [`docs/dashboard-guide.md`](docs/dashboard-guide.md)
+  and the tour steps in `dashboard-web/src/app/components/guide-overlay/guide-tours.ts` say what it now does,
+  and the area's `version` in `dashboard-web/src/app/services/guide-areas.ts` is bumped when a tour's copy changed.
 - If your change touches message flow, headers, correlation, or timing, you've live-verified it
   against `docker compose up` (and the chaos overlay, where relevant) — not just unit tests.
 - New reference behaviour is documented in `docs/`, not left only in a commit message or code comment.
