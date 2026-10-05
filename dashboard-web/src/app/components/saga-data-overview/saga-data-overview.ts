@@ -10,6 +10,25 @@ export type DataView = 'start' | 'end' | 'compare';
 /** Every view, in bar order: what the detail page accepts in its `data` query parameter. */
 export const DATA_VIEWS: readonly DataView[] = ['start', 'end', 'compare'];
 
+/**
+ * Whether Compare has both sides to compare: a recorded state snapshot in the history and the stored state.
+ * Pure; the bar enables Compare with it, and the detail page asks it too, to announce the data area only for
+ * a view that is really on screen.
+ */
+export function canCompareData(history: SagaHistory, currentJson: string | null | undefined): boolean {
+  return history.firstRecorded?.snapshotJson != null && currentJson != null;
+}
+
+/** The view on screen: none without the permission, and none for a Compare with nothing to compare. Pure. */
+export function visibleDataView(
+  view: DataView | null,
+  canViewData: boolean,
+  canCompare: boolean,
+): DataView | null {
+  if (!canViewData) return null;
+  return view === 'compare' && !canCompare ? null : view;
+}
+
 /** Statuses a saga can still move on from; its stored state is "Current" rather than "At end". */
 const LIVE_STATUSES: ReadonlySet<SagaStatus> = new Set<SagaStatus>(['Running', 'Compensating']);
 
@@ -67,7 +86,7 @@ export class SagaDataOverview {
   });
 
   /** Compare needs both sides: a recorded snapshot and the stored state. */
-  readonly canCompare = computed(() => this.first() !== null && this.currentJson() != null);
+  readonly canCompare = computed(() => canCompareData(this.history(), this.currentJson()));
 
   /** Why Compare is disabled, for its title: the missing side, or null when nothing is missing yet. */
   readonly compareBlockedReason = computed(() => {
@@ -78,11 +97,9 @@ export class SagaDataOverview {
   });
 
   /** The view on screen: none without the permission, and none for a Compare with nothing to compare. */
-  readonly shown = computed<DataView | null>(() => {
-    const view = this.view();
-    if (!this.canViewData()) return null;
-    return view === 'compare' && !this.canCompare() ? null : view;
-  });
+  readonly shown = computed<DataView | null>(() =>
+    visibleDataView(this.view(), this.canViewData(), this.canCompare()),
+  );
 
   readonly initiatingPretty = computed(() => prettyJson(this.history().initiating?.json));
 

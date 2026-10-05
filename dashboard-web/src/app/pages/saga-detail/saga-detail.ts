@@ -33,7 +33,7 @@ import { StatusBadge } from '../../components/status-badge/status-badge';
 import { SagaMap } from '../../components/saga-map/saga-map';
 import { LocalTime } from '../../components/local-time/local-time';
 import { SagaTimeline } from '../../components/saga-timeline/saga-timeline';
-import { DATA_VIEWS, DataView, SagaDataOverview } from '../../components/saga-data-overview/saga-data-overview';
+import { DATA_VIEWS, DataView, SagaDataOverview, canCompareData, visibleDataView } from '../../components/saga-data-overview/saga-data-overview';
 import { FORBIDDEN_CODE, problemOf } from '../../util/http-error';
 import { PENDING_SNAPSHOT_MS, SagaHistory, foldTimeline, stepContaining } from '../../util/saga-transitions';
 import { timezoneLabel, toMillis } from '../../util/time-format';
@@ -242,9 +242,14 @@ export class SagaDetail implements OnInit, OnDestroy {
   private readonly mapShown = computed(() => this.showing() && this.tab() === 'map' && this.map() !== null);
   /** The timeline view is rendered: its tab, with entries (the template shows "Loading…" or "No events" instead). */
   private readonly timelineShown = computed(() => this.showing() && this.tab() === 'timeline' && this.history().rowCount > 0);
-  /** A Saga data view is open, or a step's inspector (which only the timeline view shows). */
+  /** A Saga data view is on screen as the bar resolves it (Compare with nothing to compare shows nothing, so
+   *  `?data=compare` on a saga with no snapshot is not a view), or a step's inspector (which only the timeline view shows). */
   private readonly dataShown = computed(
-    () => this.showing() && this.canViewData() && (this.dataView() !== null || (this.timelineShown() && this.openKeys().size > 0)),
+    () =>
+      this.showing() &&
+      this.canViewData() &&
+      (visibleDataView(this.dataView(), true, canCompareData(this.history(), this.detail()?.dataJson)) !== null ||
+        (this.timelineShown() && this.openKeys().size > 0)),
   );
 
   private subs: Subscription[] = [];

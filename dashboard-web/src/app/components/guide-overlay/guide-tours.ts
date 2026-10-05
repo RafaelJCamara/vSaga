@@ -111,7 +111,7 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
     {
       id: 'summary-tabs',
       title: 'Map and Timeline',
-      body: "Map and Timeline are two views of the same history: the map draws the messages between services and replays them, the timeline lists the engine's entries step by step. Each explains itself the first time you open it.",
+      body: "The Map tab, highlighted here, and the Timeline tab next to it are two views of the same history: the map draws the messages between services and replays them, the timeline lists the engine's entries step by step. Each explains itself the first time you open it.",
       anchor: 'detail-tab-map',
       fallbackAnchor: 'detail-tab-timeline',
     },
@@ -165,7 +165,7 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
     {
       id: 'data-views',
       title: 'Reading the data',
-      body: "Changes lists the fields that differ from the earlier recorded state, Full state shows all of it, Message shows the message that ran the step, and Copy JSON copies the raw text. A step's Data button on the Timeline opens the same views.",
+      body: "Once a view is open it offers Changes, the fields that differ from the earlier recorded state, and Full state, all of it. Under a step's Data button on the Timeline it also offers Message, the message that ran the step. Copy JSON copies the raw text.",
       anchor: 'detail-data',
       requires: 'sagas.data',
     },
@@ -174,14 +174,14 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
     {
       id: 'retry-what',
       title: 'Retry a failed saga',
-      body: 'For a Failed or TimedOut saga, Retry this saga re-runs the step that failed, for this saga only. It asks first: Re-run step N (message type, state) for this saga only? Yes, retry goes ahead; Cancel leaves the saga alone. The Timeline marks the failure Failed here, and Re-run starts here when a timeout means an earlier step runs again.',
+      body: 'On a Failed or TimedOut saga, Retry this saga re-runs the step that failed, for this saga only. It asks first: Re-run step N (message type, state) for this saga only? Yes, retry goes ahead; Cancel leaves it alone. A refused retry is dimmed, with its reason beside it. The Timeline marks Failed here and, for a timeout, Re-run starts here.',
       anchor: 'detail-retry',
       requires: 'sagas.retry',
     },
     {
       id: 'retry-effects',
       title: 'What a retry does not undo',
-      body: 'Other services that consume the same message still receive it, so their side effects can repeat. A failure decided by the message alone, such as a business rule saying no, fails again. The timeline records the retry as a step, with who asked for it.',
+      body: 'Other services that consume the same message still receive it, so a participant that handles it again repeats its side effects. A failure decided by the message alone, such as a business rule saying no, fails again. The timeline records the retry as a step, with who asked for it.',
       anchor: 'detail-retry',
       requires: 'sagas.retry',
     },

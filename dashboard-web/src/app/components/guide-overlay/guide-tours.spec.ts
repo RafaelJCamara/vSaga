@@ -233,6 +233,36 @@ describe('the guide tours', () => {
       expect(text).not.toMatch(/resets the saga|first message|replays? the whole|every step/i);
     });
 
+    it('say what a refused retry looks like, and that a participant that handles the message again repeats its side effects', () => {
+      const body = (id: string) => GUIDE_TOURS.retry.find((s) => s.id === id)?.body ?? '';
+
+      // The button is dimmed (aria-disabled) with the plan's reason beside it, and cannot open the prompt.
+      expect(body('retry-what')).toContain('A refused retry is dimmed, with its reason beside it');
+      // Design 7.5: other saga types ignore the replay; participants subscribed through the transport act on it.
+      expect(body('retry-effects')).toContain(
+        'so a participant that handles it again repeats its side effects',
+      );
+      expect(body('retry-effects')).not.toContain('their side effects can repeat');
+    });
+
+    it('say the data views as the page has them: Changes and Full state in any view, Message only under a step', () => {
+      const views = GUIDE_TOURS.data.find((s) => s.id === 'data-views')?.body ?? '';
+
+      expect(views).toContain('Once a view is open it offers Changes');
+      expect(views).toContain('and Full state');
+      expect(views).toContain("Under a step's Data button on the Timeline it also offers Message");
+      expect(views).toContain('Copy JSON');
+    });
+
+    it('say which tab the summary step highlights, and that the other is next to it', () => {
+      const tabs = GUIDE_TOURS.summary.find((s) => s.id === 'summary-tabs');
+
+      expect(tabs?.anchor).toBe('detail-tab-map');
+      expect(tabs?.body).toContain(
+        'The Map tab, highlighted here, and the Timeline tab next to it',
+      );
+    });
+
     it('name the labels the retry row and its confirmation have', () => {
       const text = copy('retry');
 

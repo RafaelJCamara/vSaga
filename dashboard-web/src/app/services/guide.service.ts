@@ -112,7 +112,7 @@ function sagaTypeOf(path: string): string | null {
  * The overlay answers to `request`: it waits for the area to be on screen, then calls `started`, and ends
  * with `ended` (with `remember` when the user finished or skipped the tour) or, if there was nothing to
  * show, `abandoned`. One tour runs at a time; an area announced meanwhile waits its turn, and a page
- * change or switching Guide off drops the queue.
+ * change, switching Guide off, or leaving a tour (Escape, Skip: `ended` without `startNext`) drops the queue.
  */
 @Injectable({ providedIn: 'root' })
 export class GuideService {
@@ -189,7 +189,8 @@ export class GuideService {
   /**
    * Switches Guide on or off. On: everything counts as unseen again (a person who switches Guide on wants the
    * walkthrough, whatever an earlier session of it covered), the hint is answered, and the current page's
-   * area starts. Off: whatever is wanted or queued is dropped; the overlay ends a tour it is showing,
+   * area starts, then the part of the page that was shown last when that is another area (the detail page's
+   * map). Off: whatever is wanted or queued is dropped; the overlay ends a tour it is showing,
    * without remembering it.
    */
   setEnabled(on: boolean): void {

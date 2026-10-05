@@ -535,6 +535,72 @@ describe('SagaDetail', () => {
       expect(apiMock.retry).toHaveBeenCalledTimes(1);
     });
 
+    describe('the answer to a retry', () => {
+      const region = (el: HTMLElement) => el.querySelector('.retry-row .retry-message') as HTMLElement | null;
+
+      it('is said in a status region that is already in the retry row, empty, before anything is asked', () => {
+        const el: HTMLElement = setup(makeDetail({ status: 'Failed' })).nativeElement;
+
+        expect(region(el)).not.toBeNull();
+        expect(region(el)?.getAttribute('role')).toBe('status');
+        expect(region(el)?.textContent?.trim()).toBe('');
+      });
+
+      it.each([
+        ['accepted', () => of(undefined), 'Retry accepted'],
+        ['refused', () => throwError(() => httpError(409, { error: 'Saga cannot be retried' })), 'Saga cannot be retried'],
+      ])('puts the text into that same element when the retry is %s: one inserted with its text is not announced', (_what, answer, said) => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        const el: HTMLElement = fixture.nativeElement;
+        const before = region(el);
+        apiMock.retry.mockReturnValue(answer());
+
+        fixture.componentInstance.retry();
+        fixture.detectChanges();
+
+        expect(region(el)).toBe(before);
+        expect(region(el)?.textContent).toContain(said);
+        expect(region(el)?.getAttribute('role')).toBe('status');
+      });
+
+      it('is emptied, not removed, when the next retry is asked', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        const el: HTMLElement = fixture.nativeElement;
+        apiMock.retry.mockReturnValue(throwError(() => httpError(409, { error: 'Saga cannot be retried' })));
+        fixture.componentInstance.retry();
+        fixture.detectChanges();
+        const before = region(el);
+        expect(before?.textContent).toContain('cannot be retried');
+
+        fixture.componentInstance.askRetryConfirmation();
+        fixture.detectChanges();
+
+        expect(region(el)).toBe(before);
+        expect(region(el)?.textContent?.trim()).toBe('');
+      });
+
+      it('is there while the prompt is open too, since the row keeps it across the swap of its buttons', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        const el: HTMLElement = fixture.nativeElement;
+        const before = region(el);
+
+        fixture.componentInstance.askRetryConfirmation();
+        fixture.detectChanges();
+
+        expect(el.querySelector('.retry-confirm')).not.toBeNull();
+        expect(region(el)).toBe(before);
+      });
+
+      it('is not an alert, and a row that is not shown has none', () => {
+        const el: HTMLElement = setup(makeDetail({ status: 'Failed' })).nativeElement;
+        expect(el.querySelector('.retry-message[role="alert"]')).toBeNull();
+
+        TestBed.resetTestingModule();
+        const running: HTMLElement = setup(makeDetail({ status: 'Running' })).nativeElement;
+        expect(running.querySelector('.retry-message')).toBeNull();
+      });
+    });
+
     it('lets a keyboard reach the Retry button the plan refuses, and does not open the prompt from it', () => {
       const reason = 'No failed step could be identified in this saga\'s timeline.';
       retryPlanResponse = of({ retryable: false, reason, failureKind: null, failureSequenceNumber: null, step: null });
@@ -2989,9 +3055,55 @@ describe('SagaDetail', () => {
 
         fixture.componentInstance.setDataView(null);
         fixture.detectChanges();
-        fixture.componentInstance.setDataView('compare');
+        fixture.componentInstance.setDataView('start');
         fixture.detectChanges();
         expect(shown()).toEqual(['data', 'data']);
+      });
+
+      // The bar shows nothing for a Compare with one side missing, so there is nothing for the tour to explain.
+      describe('a Compare, which needs a recorded snapshot and the stored state', () => {
+        const stored = '{"Status":5}';
+
+        it.each([
+          ['neither side', makeDetail({ status: 'TimedOut' }), [] as SagaLogEntry[]],
+          ['no stored state', makeDetail({ status: 'TimedOut' }), timedOutInvoice()],
+          ['no recorded snapshot', { ...makeDetail({ status: 'TimedOut' }), dataJson: stored }, [] as SagaLogEntry[]],
+        ])('is not announced with %s, and nothing opens', (_what, detail, entries) => {
+          const fixture = setup(detail, entries);
+          guideMock.areaShown.mockClear();
+
+          fixture.componentInstance.setDataView('compare');
+          fixture.detectChanges();
+
+          expect(fixture.nativeElement.querySelector('.ov-panel')).toBeNull();
+          expect(shown()).not.toContain('data');
+        });
+
+        it('is announced when both sides are there, and the panel is on screen', () => {
+          const fixture = setup({ ...makeDetail({ status: 'TimedOut' }), dataJson: stored }, timedOutInvoice());
+          guideMock.areaShown.mockClear();
+
+          fixture.componentInstance.setDataView('compare');
+          fixture.detectChanges();
+
+          expect(fixture.nativeElement.querySelector('.ov-compare')).not.toBeNull();
+          expect(shown()).toEqual(['data']);
+        });
+
+        it('is announced once the missing side arrives, for a Compare the URL asked for', () => {
+          const fixture = setup({ ...makeDetail({ status: 'TimedOut' }), dataJson: stored }, timedOutInvoice());
+          fixture.componentInstance.setDataView('compare');
+          fixture.componentInstance.timeline.set([]); // the history is not here yet
+          fixture.detectChanges();
+          guideMock.areaShown.mockClear();
+          expect(fixture.nativeElement.querySelector('.ov-compare')).toBeNull();
+
+          fixture.componentInstance.timeline.set(timedOutInvoice());
+          fixture.detectChanges();
+
+          expect(fixture.nativeElement.querySelector('.ov-compare')).not.toBeNull();
+          expect(shown()).toEqual(['data']);
+        });
       });
 
       it('announces the data when a step inspector is opened on the Timeline tab', () => {

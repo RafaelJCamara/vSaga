@@ -148,9 +148,8 @@
             <span id="retry-refusal" class="retry-refusal">{{ reason }}</span>
           }
         }
-        @if (retryMessage(); as msg) {
-          <span class="retry-message">{{ msg }}</span>
-        }
+        <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced, and the focus stays on the button, so this is how the answer is heard. -->
+        <span class="retry-message" role="status">{{ retryMessage() }}</span>
       </div>
     } @else if (retryable()) {
       <!-- A saga a retry would accept, shown to a viewer without sagas.retry for its type. -->
