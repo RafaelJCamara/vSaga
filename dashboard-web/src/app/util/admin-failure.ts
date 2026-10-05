@@ -41,7 +41,7 @@ export interface AdminFailure {
 }
 
 /**
- * A failed `/api/admin` call as the pages show it (design 8.9, blueprint 12). Pure.
+ * A failed `/api/admin` call as the pages show it (design 8.9). Pure.
  * `fallback` is the sentence for a failure that said nothing of its own ("The role could not be saved.").
  */
 export function adminFailure(err: unknown, fallback: string): AdminFailure {
