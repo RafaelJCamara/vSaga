@@ -8,7 +8,8 @@ persistence provider implements (`ISagaSummaryReader`, `ISagaEventLogStore`, `IS
 `IServiceTopologyStore`), plus a raw `IMessageTransport` republish for retry, so the dashboard needs no
 knowledge of any specific saga definition. People sign in with a username and password and see and do only
 what their roles allow, per saga type ([Authentication](#authentication), [Access control](#access-control));
-scripts and probes use an API key.
+scripts and probes use an API key. The [dashboard user guide](dashboard-guide.md) explains the web interface page
+by page; this document is the reference for the API, its access model and its configuration.
 
 ## API endpoints
 
@@ -834,6 +835,17 @@ sub-saga composition in both directions: a "Started by" link to the parent, read
 instance's own summary, and a "Started N sub-sagas" strip from
 `GET /api/sagas/{sagaType}/{correlationId}/children`, refreshed on the same snapshot terms as the
 sibling strip.
+
+**Guide mode.** A **Guide** switch in the top bar, off until someone turns it on, makes each area the user opens
+(the saga list, a saga's summary, its map, timeline, saga data and retry row, and the administration pages)
+explain itself in a short tour; the sign-in, setup and account pages have none. **Replay tour** repeats the last
+area shown and **User guide** opens [the user guide](dashboard-guide.md), the tours' own **User guide** link at
+the section of the area being explained. It is client-side only: one `localStorage` entry, `vsaga.guide`, per
+origin (so per compose stack, not per user), holds whether Guide is on, which version of each area's tour was
+seen and whether the one-time hint was answered; a tour is offered only for an area the session's permissions
+allow; and nothing about it reaches the API. The guide and the tour copy
+([`guide-tours.ts`](../dashboard-web/src/app/components/guide-overlay/guide-tours.ts)) change together with the
+pages: see [`CONTRIBUTING.md`](../CONTRIBUTING.md#test).
 
 ### Signing in, access and the administration area
 

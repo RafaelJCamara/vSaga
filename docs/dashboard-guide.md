@@ -67,9 +67,9 @@ dashboard page never uses it. See [API key](dashboard.md#api-key).
 | **vSaga Saga Dashboard** | Takes you to the saga list. |
 | **Sagas** | The saga list. |
 | **Administration** | The [administration area](#administration). Only people who hold **Manage access** see it. |
-| **Guide** | A switch: [guide mode](#guide-mode) explains each page the first time you open it. |
+| **Guide** | A switch: [guide mode](#guide-mode) explains the saga list, a saga's page and the administration pages the first time you open each. |
 | **Replay tour** | Appears while Guide is on and there is a tour to repeat. |
-| **User guide** | Opens this document in a new tab. |
+| **User guide** | Opens this document in a new tab. The link goes to the copy on GitHub's `main` branch (`USER_GUIDE_URL` in `guide-areas.ts`), so it needs internet access and can be newer than the build you run; the file in your checkout is the one that matches it. |
 | Your name, with a small arrow | A menu: **Account** and **Sign out**. |
 
 Times are shown in your browser's local time, and the page is in English.
@@ -187,16 +187,17 @@ page you were on remembered, under the notice "Your session expired. Sign in aga
 
 ### Signing out
 
-Open the menu with your name and choose **Sign out** (the button reads **Signing out…** while it works). The page
+Open the menu with your name and choose **Sign out** (while it works, the menu button shows **Signing out…** in place of your name). The page
 closes its live connection, ends this browser's session and goes to **Sign in**. Signing out does not invalidate a
 copy of the cookie held somewhere else; changing the password, or an administrator disabling the account, ends
 every session.
 
 ## Guide mode
 
-Guide mode is a walkthrough built into the page. While it is on, each part of the dashboard explains itself the
-first time it is shown, in a short tour of a few steps. It is off until you switch it on, and it never starts a
-tour by itself while it is off.
+Guide mode is a walkthrough built into the page. While it is on, the saga list, a saga's page (its summary, map,
+timeline, saga data and retry row) and the administration pages each explain themselves the first time they are
+shown, in a short tour of a few steps. The sign-in, setup and Account pages have no tour. It is off until you
+switch it on, and it never starts a tour by itself while it is off.
 
 ### Turning Guide on and off
 
@@ -251,7 +252,7 @@ behind it is inert: clicks outside the dialog do nothing, and Tab stays inside i
 | **Next** / **Done** | The next step; on the last step, **Done**. Finishing the tour marks the area as seen and starts the next one that is waiting. |
 | **Back** | The previous step (not shown on the first). |
 | **Skip tour**, or **Escape** | Ends the tour, marks the area as seen and drops anything waiting. |
-| **User guide** | Opens this document at the section of the area being explained. |
+| **User guide** | Opens this document at the section of the area being explained (the same GitHub copy as the top bar's link). |
 | Right and Left arrow | Next and previous (Right does nothing on the last step: use **Done**). |
 | Tab and Shift+Tab | Move between the dialog's controls and wrap around. |
 
@@ -321,8 +322,9 @@ are listed in the order **Status** sorts by, which is the lifecycle order from *
   by type or correlation id…"). The search is a case-insensitive substring match on the saga type and on the
   correlation id, so a part of an id works, and it runs as you type. **Refresh** reads the list again.
 - **Sorting.** Select the **Status** or **Updated** heading to sort by it (an arrow shows the direction) and
-  select it again to reverse. The server sorts the whole result, not just this page. Without a choice the list
-  is newest update first.
+  select it again to reverse. The first selection sorts ascending: **Status** starts with **Running**, and
+  **Updated** starts with the oldest, the opposite of the default. The server sorts the whole result, not just
+  this page. Without a choice the list is newest update first.
 - **Paging.** **Rows per page** (25, 50, 75 or 100), **Previous**, **Next**, "Page X of Y" and **Go to page**
   (type a number and press Enter).
 - **The address holds the view.** Status, kind, saga type, search, sort, page and rows per page are in the page's
@@ -404,13 +406,14 @@ they were recorded.
 | Solid arrow (**Answered**) | A message that got a reply. |
 | Dashed arrow (**No response**) | A message nothing answered. |
 | Dotted arrow (**Compensation**) | Part of undoing earlier work. |
-| Red arrow (**Failed hop**) | The hop that failed. A box turns red when the failure touches it. |
+| Red arrow (**Failed hop**) | The hop that failed. A box gets a red border when the failure touches it. |
 
 During a replay, boxes and arrows the replay has not reached yet are faint, the entry being shown is in the accent
 colour and what already happened is grey.
 
-The controls under the legend replay the history: **Restart**, **Play** / **Pause** and **Step forward** (one
-entry at a time), a slider to jump to any entry, and speeds of 0.5×, 1×, 2× and 4×. Playback stops at the failure.
+The controls under the legend replay the history. They are icon buttons whose tooltips name them: **Restart**
+(⇤), **Play** (▶, which becomes **Pause**, ❚❚) and **Step** (⇥, one entry forward), then a slider to jump to any
+entry and speed buttons of 0.5×, 1×, 2× and 4×. Playback stops at the failure.
 A line under the controls names the entry shown (`#3/12 — StepSucceeded · PaymentCharged · recorded at …`).
 Once the replay reaches the failure, a card shows its entry type, and the exception text when you may see saga
 data.
@@ -418,10 +421,16 @@ data.
 **Opening on an entry.** Clicking a timeline entry opens the map as of that entry, and so does `?entry=` in the
 address; for a **Failed** or **TimedOut** saga opened without one, the map opens on its failure. A banner then
 reads "As of entry #12 of 34: StepSucceeded, recorded at 14:03:07.140 (+1.224 s)", with **Back to this entry in
-the timeline**. Two sentences can follow it: "Nothing moved between services at this entry, so `<saga>` is
-highlighted." (a plain event such as a step's outcome has no arrow of its own) and, when the map you have is older
-than the entry, "The selected entry is not on the map yet; showing the closest earlier entry." Playing, stepping,
-restarting or dragging the slider takes the replay over from the focus.
+the timeline**. Further lines can follow it:
+
+- "Nothing moved between services at this entry, so `<saga>` is highlighted." for a plain event such as a step's
+  outcome, which has no arrow of its own.
+- "The selected entry is not on the map yet; showing the closest earlier entry." when the map you have is older
+  than the entry (the page fetches the map again).
+- "The selected entry is not on this saga's map; showing its first entry." when `?entry=` names an entry the
+  saga does not have.
+
+Playing, stepping, restarting or dragging the slider takes the replay over from the focus.
 
 A saga that failed on its very first outbound message has nothing to draw but one box. The page then adds a card
 headed **This saga failed with nothing to map**.
@@ -644,7 +653,8 @@ An existing user's page also has an **Account** section:
 
 - **Reset password** opens a panel with **New password**, its repeat and **Require a change at next sign-in**
   (ticked by default); **Set password** applies it. It ends the user's sessions, yours included if it is your own
-  account (use [Your account](#your-account) to change your own password).
+  account (use [Your account](#your-account) to change your own password). It does not clear a lock: select
+  **Unlock** as well when the account shows **Locked**.
 - **Locked until** *time* and **Unlock**, shown while the account is locked.
 - **Delete user**, which asks "Delete the user X? Their grants go with them. This cannot be undone." You cannot
   delete your own account.
@@ -774,12 +784,14 @@ sentence as for a wrong password). What ends a lock:
 | Way | Ends a lock in force? |
 | --- | --- |
 | Another administrator signs in and selects **Unlock** on the user's page (Administration, **Users**). | Yes, at once. |
-| Starting the API with `Dashboard:Admin:ResetOnStart=true` and both seed keys (`Dashboard:Admin:Username` naming the locked account and `Dashboard:Admin:Password` the password you want). In compose the seed keys are already set: add `Dashboard__Admin__ResetOnStart: "true"` to the `dashboard-api` environment, put the password you want in `Dashboard__Admin__Password` and run `docker compose up -d`. The start sets that password, enables and unlocks the account, ends its sessions and gives it back the Administrator grant for all saga types. It repeats at every start while it is `true`, so set it back to `false` once you are in. | Yes, at once. |
+| Starting the API with `Dashboard:Admin:ResetOnStart=true` and both seed keys (`Dashboard:Admin:Username` naming the locked account and `Dashboard:Admin:Password` the password you want). In compose the seed keys are already set: add `Dashboard__Admin__ResetOnStart: "true"` to the `dashboard-api` environment, put the password you want in `Dashboard__Admin__Password` and run `docker compose up -d`. The start sets that password, enables and unlocks the account, clears a forced password change, ends its sessions and gives the account an Administrator grant for all saga types (its other grants stay; an account that does not exist yet is created). Whoever you name becomes an administrator, so name an administrator's account. A password the policy rejects resets nothing, and the `identity` entry of `/health` says so. It repeats at every start while it is `true`, so set it back to `false` once you are in. | Yes, at once. |
 | Waiting out `Dashboard:Lockout:Minutes` (15 by default). | Yes, when it passes. |
 | Restarting with `Dashboard:Lockout:MaxFailedAttempts=0`. | **No.** It only stops *new* locks; a lock already in force still refuses sign-in until it ends. Use it to stop someone locking an account again while you do one of the above. |
 
 If you only forgot a password, ask an administrator to reset it (**Users**, the user, **Reset password**); the user
-then chooses a new one at next sign-in unless the box was unticked. If you are the only administrator and forgot
+then chooses a new one at next sign-in unless the box was unticked. A reset does not clear a lock, and someone who
+forgot a password has often tried it enough times to be locked, so the administrator also selects **Unlock** when
+the account shows **Locked**. If you are the only administrator and forgot
 yours, use `ResetOnStart` as above. More in [Passwords, lockout and rate limits](dashboard.md#passwords-lockout-and-rate-limits).
 
 ### Two stacks in one browser
@@ -829,7 +841,7 @@ undo](#what-a-retry-does-not-undo). Look at the new step in the timeline to see 
 | What you see | Why |
 | --- | --- |
 | "Your session expired. Sign in again to continue." | The [idle or absolute timeout](#how-long-a-session-lasts) passed, or an administrator disabled or deleted your account or changed your password. |
-| The same after `docker compose down -v` | `-v` removes the identity volume, so every user and every session is gone. A tab with live updates connected goes to **Sign in** by itself after the stack comes back (about 17 seconds in the live check); a tab with no live connection (an administration page you reloaded, say) stays where it is until its first change, which the API refuses with 401, and then goes to **Sign in**. Sign in again: the seeded administrator exists again, and everyone and everything else is gone. |
+| The same after `docker compose down -v` | `-v` removes the identity volume, so every user and every session is gone. A tab with live updates connected goes to **Sign in** by itself after the stack comes back (about 17 seconds in the live check); a tab with no live connection (an administration page you reloaded, say) stays where it is until it next talks to the API: its first change, which the API refuses with 401, or your coming back to the tab, which reads the session (at most once a minute). It then goes to **Sign in**. Sign in again: the seeded administrator exists again, and everyone and everything else is gone. |
 | "The server accepted the sign-in but no session was established. Check that the browser accepts cookies for this site." | The browser dropped the session cookie. |
 
 ### Sign-in is unavailable, or the API cannot be reached
@@ -851,8 +863,8 @@ yet healthy: `docker compose ps` shows which. See [The identity store](dashboard
 | "You do not have permission to retry `<type>` sagas." | **Retry sagas** for that type. |
 | No **Administration** link | **Manage access** in a grant for all saga types. |
 
-A grant that names the type must match it exactly, case included. An administrator can read what you hold on
-your [Account](#your-account) page and, for any user, in the **Effective access** preview.
+A grant that names the type must match it exactly, case included. You can read what you hold on your
+[Account](#your-account) page; an administrator can read it for any user in the **Effective access** preview.
 
 ### A tour does not start
 

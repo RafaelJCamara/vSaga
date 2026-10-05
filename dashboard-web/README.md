@@ -4,7 +4,9 @@ The web UI for the vSaga ops dashboard: sign-in, a saga list with filtering and 
 detail page with two tabs, a service map and a timeline of numbered steps, a Saga data bar (the data at
 start, at end, and a comparison) and each step's data, a retry that re-runs the step a failed saga
 failed in (see [`docs/dashboard.md`](../docs/dashboard.md#the-saga-detail-page)), and, for users who may
-manage access, an administration area for users, teams and roles. It is
+manage access, an administration area for users, teams and roles. A **Guide** switch in the top bar turns on
+[guide mode](#guide-mode), a short tour of each area the first time it is shown; the user-facing description of
+every page is the [dashboard user guide](../docs/dashboard-guide.md). The app is
 a thin client over the Dashboard API — every screen here is backed by an endpoint documented in
 [`docs/dashboard.md`](../docs/dashboard.md) — and decides nothing about access itself: it shows what the API
 would allow and hides what it would refuse.
@@ -206,6 +208,43 @@ tabs) and provides `AdminStore` from the route, so the store lives and dies with
   `confirm-button`. A `409 last_administrator` shows a banner and keeps the draft. Team membership is written
   only through the team: a user page shows teams read-only and sends no `teamIds`.
 
+## Guide mode
+
+Guide mode explains the pages from inside the app, in tours of a few steps, and `docs/dashboard-guide.md` is its
+long form. Its parts:
+
+- **`GuideService`** ([`services/guide.service.ts`](src/app/services/guide.service.ts), eager, created with the
+  shell) holds the state: whether Guide is on, the area **Replay tour** repeats, the tour being asked for and the
+  one-time hint. It keeps it in one `localStorage` key, `vsaga.guide`
+  (`{"v":1,"enabled":true,"seen":{"list":1},"hintDismissed":true}`), read through the `GUIDE_STORAGE` token, so it
+  is per origin (per compose stack), not per user; corrupt JSON, an unknown `v` or a storage that throws reads as
+  the defaults, and without storage the state stays in memory. `seen[area]` is the version of the tour that was
+  gone through, so bumping an area's `version` shows a changed tour once more; switching Guide on clears `seen`,
+  so everything is explained again. `GUIDE_PERMISSION_CHECK` is provided from `AuthService.can` in
+  `app.config.ts`, so an area the session may not use never starts, and a step it may not use is left out of its tour.
+- **Pages announce themselves.** A page tells the service that a part of it is on screen with
+  `guide.areaShown(id)` (the detail page's map, timeline, saga data and retry row, the administration shell). Call
+  it from an effect or `afterNextRender`, never from a constructor or `ngOnInit`: the service forgets what it
+  knew of a page when a navigation ends, which is after a component is created.
+- **`GUIDE_AREAS`** ([`services/guide-areas.ts`](src/app/services/guide-areas.ts)) is the area table: each area's
+  id, `version`, what triggers it (a route, or the page announcing it), the `readyAnchor` its tour waits for, the
+  permission it `requires` and the `docsAnchor`, a heading of the user guide that the tour's **User guide** link
+  opens. `USER_GUIDE_URL` is the one constant for the guide's address.
+- **`GuideToggle`** ([`components/guide-toggle/`](src/app/components/guide-toggle)) is the **Guide** switch, **Replay
+  tour**, the **User guide** link and the hint, in the top bar for a signed-in user.
+- **`GuideOverlay`** ([`components/guide-overlay/`](src/app/components/guide-overlay)) draws the tour on screen
+  (modal while it runs: the rest of the page is `inert`, Escape ends it). It is a lazy chunk, loaded with
+  `@defer (when guide.enabled())` as the last child of the app template, so the eager bundle carries only the
+  service, the area table and the toggle. `guide-geometry.ts` is its pure placement code, and
+  [`guide-tours.ts`](src/app/components/guide-overlay/guide-tours.ts) holds the `GUIDE_ANCHORS` vocabulary of
+  `data-tour` attribute values and the copy of every area's steps.
+- **Anchors are a contract.** A template carries a `data-tour` attribute only with a name from `GUIDE_ANCHORS`;
+  the specs of the pages and components that carry them have an anchor-contract case, and `guide-tours.spec.ts`
+  checks that every anchor, fallback and reveal control a step names is in the vocabulary, so a removed or
+  renamed anchor fails a test. A stale sentence fails nothing, hence the rule: a change to what a page shows or
+  does updates [`docs/dashboard-guide.md`](../docs/dashboard-guide.md) and the tour steps in the same change, and
+  bumps the area's `version` when the copy changes (see [`CONTRIBUTING.md`](../CONTRIBUTING.md#test)).
+
 ## Forms: the `ngNoForm` pattern
 
 The sign-in, account and administration forms are template-driven (`FormsModule`, `ngModel` bound to signals)
@@ -287,10 +326,12 @@ src/app/
   components/saga-timeline/ The timeline as numbered steps, with Recorded at times and the failed-step marker
   components/saga-data-inspector/  One state: changes against an earlier one, full state, message, copy
   components/saga-data-overview/   The Saga data bar: At start, At end (or Current), Compare
+  components/guide-toggle/  The Guide switch, Replay tour, the User guide link and the one-time hint
+  components/guide-overlay/ The tour on screen (a lazy chunk), its geometry, the tour copy and GUIDE_ANCHORS
   components/local-time/    A <time> in the browser's local zone, UTC on hover
   components/kind-badge/    The Orchestrated/Choreographed pill
   components/status-badge/  The saga-status pill
-  services/                 AuthService, the HTTP client and the SignalR hub client
+  services/                 AuthService, GuideService and its area table, the HTTP client and the SignalR hub client
   models/                   DTOs mirroring the API's response shapes (sessions, sagas)
   util/                     Pure helpers: the step fold, JSON diff, state JSON and markers, time formats,
                             entry-type labels, the API's problem bodies, session access checks

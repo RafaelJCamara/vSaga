@@ -77,7 +77,8 @@ as `healthy` in `docker compose ps`), and the first `--build` also installs the 
 builds it inside the `dashboard-web` image, so it takes longer than later runs, which reuse the build
 cache. Sign in as `admin` / `dev-local-only-change-me`, the administrator that `Dashboard__Admin__*` in
 `docker-compose.yml` seeds on the first start. The [dashboard user guide](docs/dashboard-guide.md) explains every
-page, and **Guide** in the dashboard's top bar walks you through each one in the app.
+page, and **Guide** in the dashboard's top bar tours the saga list, a saga's page and the administration pages
+in the app (sign-in, setup and Account have no tour).
 
 From a terminal, talk to the dashboard API directly. The API key is read-only (it acts as the Viewer role), so
 it can list and read sagas but not retry one:
