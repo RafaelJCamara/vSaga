@@ -5,11 +5,15 @@ import {
   ElementRef,
   Injector,
   afterNextRender,
+  effect,
   inject,
+  signal,
+  untracked,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
+import { GuideService } from '../../../services/guide.service';
 import { AdminStore } from '../admin.store';
 
 /**
@@ -25,6 +29,10 @@ import { AdminStore } from '../admin.store';
  * the heading of the page that has arrived (`tabindex="-1"`, set here), as the first thing a keyboard or a screen
  * reader user meets there. Focus that is somewhere (a tab link, a field a page has focused, the link of a "no
  * longer exists" notice) is never taken away.
+ *
+ * Guide mode: the shell announces the area (`areaShown('admin')`) once its pages show, not when the route is
+ * opened, so the tour finds the table it points at; and again after each navigation inside the area, because
+ * the guide forgets what it knew of a page when one ends. The tabs carry the tour's anchors.
  */
 @Component({
   selector: 'app-admin-shell',
@@ -37,6 +45,9 @@ export class AdminShell {
   protected readonly store = inject(AdminStore);
   private readonly host: HTMLElement = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly injector = inject(Injector);
+  private readonly guide = inject(GuideService);
+  /** The navigations that have ended since the shell was created: what makes the guide hear of the area again. */
+  private readonly navigations = signal(0);
 
   constructor() {
     // The router has already finished the navigation that created this shell; the ones after it are the area's own.
@@ -45,7 +56,16 @@ export class AdminShell {
         filter((event) => event instanceof NavigationEnd),
         takeUntilDestroyed(),
       )
-      .subscribe(() => this.focusHeading());
+      .subscribe(() => {
+        this.navigations.update((count) => count + 1);
+        this.focusHeading();
+      });
+    // From an effect, never from here: the guide resets what it knows about a page when a navigation ends, which
+    // is after this runs. The pages show once the store has read everything (a failed refresh keeps them).
+    effect(() => {
+      this.navigations();
+      if (this.store.loaded()) untracked(() => this.guide.areaShown('admin'));
+    });
     // The route's injector outlives this component: leaving the area drops what it held, and entering it again reads afresh.
     inject(DestroyRef).onDestroy(() => this.store.clear());
     void this.store.load();

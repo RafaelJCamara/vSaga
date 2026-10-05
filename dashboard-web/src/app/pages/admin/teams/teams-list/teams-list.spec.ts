@@ -14,6 +14,7 @@ import {
   role,
   team,
 } from '../../../../testing/admin';
+import { GUIDE_ANCHORS, GUIDE_TOURS } from '../../../../components/guide-overlay/guide-tours';
 import { AdminStore } from '../../admin.store';
 import { TeamsList } from './teams-list';
 
@@ -170,5 +171,53 @@ describe('TeamsList', () => {
 
     expect(names()).toEqual(['Alpha', 'operations', 'Payments', 'Zeta']);
     expect(el().querySelector('.page-header .muted')?.textContent).toBe('4 total');
+  });
+
+  describe('the anchors of the guide tour', () => {
+    const anchorsIn = (root: Element) =>
+      Array.from(root.querySelectorAll('[data-tour]'), (e) => e.getAttribute('data-tour'));
+
+    it('marks the table of teams, once, and nothing else', async () => {
+      await render();
+
+      expect(anchorsIn(el())).toEqual(['admin-list']);
+      expect(el().querySelector('table.data-table')?.getAttribute('data-tour')).toBe('admin-list');
+    });
+
+    it('has no table to mark when there are no teams yet: the step about it is left out', async () => {
+      await render({ teams: [] });
+
+      expect(el().querySelector('table')).toBeNull();
+      expect(anchorsIn(el())).toEqual([]);
+    });
+
+    it('uses a name of the vocabulary, and has the element the administration tour points at on its page', async () => {
+      await render();
+      const wanted = GUIDE_TOURS.admin
+        .filter((step) => step.anchor === 'admin-list')
+        .map((step) => step.anchor);
+
+      expect(wanted).toEqual(['admin-list']);
+      for (const name of anchorsIn(el())) expect(GUIDE_ANCHORS).toContain(name);
+      expect(el().querySelector(`[data-tour="${wanted[0]}"]`)).not.toBeNull();
+    });
+
+    it('names the column, the button and the phrases the tour names for a team', async () => {
+      await render();
+      const body = (id: string) => GUIDE_TOURS.admin.find((s) => s.id === id)?.body ?? '';
+
+      expect(Array.from(el().querySelectorAll('th'), (th) => th.textContent?.trim())).toContain(
+        'Access',
+      );
+      expect(el().querySelector('a.new-team')?.textContent?.trim()).toBe('New team');
+      expect(body('admin-list')).toContain('New team');
+      expect(body('admin-list')).toContain('Access');
+      const phrases = Array.from(el().querySelectorAll('tbody td:nth-child(3) div'), (d) =>
+        d.textContent?.trim(),
+      );
+      expect(phrases).toContain('Viewer · all types');
+      expect(body('admin-list')).toContain('Viewer · 2 types');
+      expect(phrases).toContain('Operator · 2 types');
+    });
   });
 });

@@ -93,6 +93,7 @@ describe('GuideOverlay', () => {
           { path: 'sagas', component: PageStub },
           { path: 'sagas/:sagaType/:id', component: PageStub },
           { path: 'admin', component: PageStub },
+          { path: 'admin/users', component: PageStub },
           { path: 'account', component: PageStub },
         ]),
         provideGuideStorage(storage),
@@ -299,14 +300,15 @@ describe('GuideOverlay', () => {
     });
 
     it('abandons an area that has no tour at once, without waiting for its page', async () => {
+      tourFor('summary', []);
       await setup('/account', { v: 1, enabled: true, seen: {}, hintDismissed: true });
-      await router.navigateByUrl('/admin'); // no anchor on the page: a tour would wait for it
+      await router.navigateByUrl('/sagas/OrderSaga/abc'); // no anchor on the page: a tour would wait for it
       flush();
 
-      expect(GUIDE_TOURS.admin).toEqual([]);
+      expect(GUIDE_TOURS.summary).toEqual([]);
       expect(guide.request()).toBeNull();
       expect(popover()).toBeNull();
-      expect(guide.isSeen('admin')).toBe(false);
+      expect(guide.isSeen('summary')).toBe(false);
     });
 
     it('stops looking when Guide is switched off meanwhile', async () => {
@@ -1774,6 +1776,243 @@ describe('GuideOverlay', () => {
       flush();
 
       expect(title()).toBe('Timeline');
+    });
+  });
+
+  // The administration area starts when the shell announces its pages (the route alone does not start it),
+  // and points at the shell's tabs and at the page's table.
+  describe('the administration area', () => {
+    const on = { v: 1, enabled: true, seen: {}, hintDismissed: true };
+    const TITLES = [
+      'Administration',
+      'Users',
+      'Teams',
+      'Roles and permissions',
+      'Open a row to edit it',
+      'Grants and scope',
+      'Effective access',
+      'You cannot lock everyone out',
+    ];
+
+    /** The shell's tabs, the page's heading and, unless the list is empty, its table. */
+    function adminPage(withTable = true): Record<string, FakeAnchor | HTMLElement> {
+      const heading = document.createElement('h2');
+      heading.id = 'admin-heading';
+      heading.tabIndex = -1;
+      heading.textContent = 'Users';
+      page.appendChild(heading);
+      return {
+        heading,
+        nav: addAnchor('admin-nav', { top: 60, left: 50, width: 400, height: 36 }),
+        users: addAnchor('admin-nav-users', { top: 62, left: 52, width: 60, height: 30 }),
+        teams: addAnchor('admin-nav-teams', { top: 62, left: 120, width: 60, height: 30 }),
+        roles: addAnchor('admin-nav-roles', { top: 62, left: 190, width: 60, height: 30 }),
+        ...(withTable ? { list: addAnchor('admin-list', { top: 140, height: 300 }) } : {}),
+      };
+    }
+
+    /** Opens the administration pages with Guide on, as the shell does once it has read everything. */
+    async function openAdmin(stored: unknown = on, withTable = true) {
+      await setup('/account', stored);
+      const anchors = adminPage(withTable);
+      await router.navigateByUrl('/admin');
+      flush();
+      return anchors;
+    }
+
+    const announce = () => {
+      guide.areaShown('admin');
+      flush();
+      runFrame();
+    };
+    const finishTour = () => {
+      while (button('Next')) press('Next');
+      press('Done');
+    };
+    const walk = () => {
+      const seen: [string | undefined, string | undefined][] = [];
+      do {
+        runFrame();
+        seen.push([title(), spot()?.style.display]);
+      } while (button('Next') && (press('Next'), true));
+      return seen;
+    };
+
+    it('does not start when the route opens: the shell has not shown its pages yet', async () => {
+      await openAdmin();
+      vi.advanceTimersByTime(1000);
+      flush();
+
+      expect(popover()).toBeNull();
+      expect(guide.request()).toBeNull();
+    });
+
+    it('starts when the shell announces its pages, on the tabs, with its own link to the user guide', async () => {
+      const anchors = await openAdmin();
+
+      announce();
+
+      expect(title()).toBe('Administration');
+      expect(progress()).toBe('Step 1 of 8');
+      const nav = anchors['nav'] as FakeAnchor;
+      expect(spot()?.style.top).toBe(`${nav.box.top - 6}px`);
+      expect(page.hasAttribute('inert')).toBe(true);
+      expect(guide.running()).toBe('admin');
+      expect(root.querySelector<HTMLAnchorElement>('.guide-popover a[href]')?.href).toContain(
+        '#administration',
+      );
+    });
+
+    it('goes through the tabs, the table and then the three steps about the pages below, which are centred', async () => {
+      await openAdmin();
+      announce();
+
+      const steps = walk();
+
+      expect(steps.map(([name]) => name)).toEqual(TITLES);
+      expect(steps).toEqual([
+        ['Administration', 'block'],
+        ['Users', 'block'],
+        ['Teams', 'block'],
+        ['Roles and permissions', 'block'],
+        ['Open a row to edit it', 'block'],
+        ['Grants and scope', 'none'],
+        ['Effective access', 'none'],
+        ['You cannot lock everyone out', 'none'],
+      ]);
+      expect(button('Done')).toBeTruthy(); // the last step is on screen
+    });
+
+    it('puts the spotlight of each tab step on that tab and the table step on the table', async () => {
+      const anchors = await openAdmin();
+      announce();
+      const at = (name: string) => (anchors[name] as FakeAnchor).box.top - 6;
+
+      press('Next');
+      runFrame();
+      expect([title(), spot()?.style.top, spot()?.style.left]).toEqual([
+        'Users',
+        `${at('users')}px`,
+        `${(anchors['users'] as FakeAnchor).box.left - 6}px`,
+      ]);
+      press('Next');
+      runFrame();
+      expect([title(), spot()?.style.left]).toEqual([
+        'Teams',
+        `${(anchors['teams'] as FakeAnchor).box.left - 6}px`,
+      ]);
+      press('Next');
+      runFrame();
+      expect([title(), spot()?.style.left]).toEqual([
+        'Roles and permissions',
+        `${(anchors['roles'] as FakeAnchor).box.left - 6}px`,
+      ]);
+      press('Next');
+      runFrame();
+      expect([title(), spot()?.style.top, spot()?.style.height]).toEqual([
+        'Open a row to edit it',
+        `${at('list')}px`,
+        `${(anchors['list'] as FakeAnchor).box.height + 12}px`,
+      ]);
+    });
+
+    it('leaves out the step about the table on a page that has none (no teams yet), and counts the rest', async () => {
+      await openAdmin(on, false);
+
+      announce();
+
+      expect(progress()).toBe('Step 1 of 7');
+      expect(walk().map(([name]) => name)).toEqual(TITLES.filter((name) => name !== TITLES[4]));
+    });
+
+    it('is never offered to a session without access.manage, although the pages are on screen', async () => {
+      await setup('/account', on);
+      held.set(['sagas.view', 'sagas.data', 'sagas.retry']);
+      adminPage();
+      await router.navigateByUrl('/admin');
+      flush();
+
+      announce();
+      vi.advanceTimersByTime(6000);
+      flush();
+
+      expect(popover()).toBeNull();
+      expect(guide.request()).toBeNull();
+      expect(guide.isSeen('admin')).toBe(false);
+      expect(guide.area()).toBeNull();
+    });
+
+    it('is remembered when finished: the pages announce it again and nothing starts, and Replay runs it', async () => {
+      await openAdmin();
+      announce();
+      finishTour();
+      expect(guide.isSeen('admin')).toBe(true);
+
+      await router.navigateByUrl('/admin/users'); // a navigation inside the area: the shell announces again
+      announce();
+      expect(popover()).toBeNull();
+      expect(guide.canReplay()).toBe(true);
+
+      guide.replay();
+      flush();
+      expect(title()).toBe('Administration');
+    });
+
+    it('does not remember a tour that the page change ended, so the next announcement starts it again', async () => {
+      await openAdmin();
+      announce();
+      expect(popover()).not.toBeNull();
+
+      await router.navigateByUrl('/account');
+      flush();
+      expect(popover()).toBeNull();
+      expect(guide.isSeen('admin')).toBe(false);
+
+      await router.navigateByUrl('/admin/users');
+      flush();
+      announce();
+      expect(title()).toBe('Administration');
+    });
+
+    describe('focus, with the shell moving it to the heading of the page that has arrived', () => {
+      it('returns to the heading the page had focused when the tour began', async () => {
+        const anchors = await openAdmin();
+        const heading = anchors['heading'] as HTMLElement;
+        heading.focus(); // what the shell does after a navigation that lost the focus
+        expect(document.activeElement).toBe(heading);
+
+        announce();
+        expect(popover()?.contains(document.activeElement)).toBe(true);
+        key('Escape');
+
+        expect(document.activeElement).toBe(heading);
+        expect(guide.isSeen('admin')).toBe(true);
+      });
+
+      it('goes to the Guide switch when the page had no focus, as on a page that was just loaded', async () => {
+        await openAdmin();
+        expect(document.activeElement).toBe(document.body);
+
+        announce();
+        key('Escape');
+
+        expect(document.activeElement).toBe(page.querySelector('#guide-switch'));
+      });
+
+      it('leaves the heading the shell focused after the navigation that ended the tour', async () => {
+        const anchors = await openAdmin();
+        announce();
+        expect(popover()?.contains(document.activeElement)).toBe(true);
+        const heading = anchors['heading'] as HTMLElement;
+
+        await router.navigateByUrl('/admin/users');
+        heading.focus(); // the shell, after the page has rendered
+        flush();
+
+        expect(popover()).toBeNull();
+        expect(page.hasAttribute('inert')).toBe(false);
+        expect(document.activeElement).toBe(heading);
+      });
     });
   });
 });

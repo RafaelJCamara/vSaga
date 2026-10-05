@@ -9,9 +9,13 @@ import {
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { Router, RouterLink, Routes, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
+import { GUIDE_ANCHORS } from '../../../components/guide-overlay/guide-tours';
+import { GuideService } from '../../../services/guide.service';
 import { adminData, answerLoad, answerReload } from '../../../testing/admin';
+import { createGuideStorage, provideGuideStorage } from '../../../testing/guide';
 import { AdminStore } from '../admin.store';
 import { AdminShell } from './admin-shell';
 
@@ -90,6 +94,60 @@ describe('AdminShell', () => {
     ]);
     expect(el().querySelector('nav.subtabs')).not.toBeNull();
     answerLoad(http);
+  });
+
+  describe('the anchors of the guide tour', () => {
+    const anchorsIn = () =>
+      Array.from(el().querySelectorAll('[data-tour]'), (e) => e.getAttribute('data-tour'));
+
+    it('marks the tabs, and each tab, once, and nothing else', async () => {
+      await open('/admin/users');
+
+      expect(anchorsIn()).toEqual([
+        'admin-nav',
+        'admin-nav-users',
+        'admin-nav-teams',
+        'admin-nav-roles',
+      ]);
+      expect(el().querySelector('nav.subtabs')?.getAttribute('data-tour')).toBe('admin-nav');
+      expect(tabs().map((a) => [a.textContent?.trim(), a.getAttribute('data-tour')])).toEqual([
+        ['Users', 'admin-nav-users'],
+        ['Teams', 'admin-nav-teams'],
+        ['Roles', 'admin-nav-roles'],
+      ]);
+    });
+
+    it('has them while the area is still reading, since the tour waits only for the tabs', async () => {
+      await harness.navigateByUrl('/admin/users');
+      const reading = { page: page(), anchors: anchorsIn() };
+      answerLoad(http); // before the expectations: a failing one must not leave the reads unanswered
+
+      expect(reading.page).toBeNull();
+      expect(reading.anchors).toEqual([
+        'admin-nav',
+        'admin-nav-users',
+        'admin-nav-teams',
+        'admin-nav-roles',
+      ]);
+    });
+
+    it('has them when the read failed, so the tour can still point at the tabs', async () => {
+      await harness.navigateByUrl('/admin/users');
+      http
+        .match(() => true)
+        .find((r) => r.request.url === '/api/admin/users')!
+        .flush({ title: 'Boom' }, { status: 500, statusText: 'Boom' });
+      await settle();
+
+      expect(el().querySelector('.banner--error')).not.toBeNull();
+      expect(anchorsIn()).toContain('admin-nav');
+    });
+
+    it('uses names of the vocabulary', async () => {
+      await open('/admin/users');
+
+      for (const name of anchorsIn()) expect(GUIDE_ANCHORS).toContain(name);
+    });
   });
 
   it('reads everything when it opens, and shows no page until that is done', async () => {
@@ -298,6 +356,184 @@ describe('AdminShell', () => {
   });
 });
 
+describe('AdminShell: guide mode', () => {
+  let http: HttpTestingController;
+  let harness: RouterTestingHarness;
+  let areaShown: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    areaShown = vi.fn();
+    TestBed.configureTestingModule({
+      providers: [
+        provideRouter(ROUTES),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: GuideService, useValue: { areaShown } },
+      ],
+    });
+    http = TestBed.inject(HttpTestingController);
+    harness = await RouterTestingHarness.create();
+  });
+
+  afterEach(() => http.verify());
+
+  const el = () => harness.routeNativeElement as HTMLElement;
+  const settle = async () => {
+    await new Promise((resolve) => setTimeout(resolve));
+    harness.detectChanges();
+  };
+  const announced = () => areaShown.mock.calls.map((call) => call[0]);
+
+  it('says nothing while the area is reading, and announces the administration area once its pages show', async () => {
+    await harness.navigateByUrl('/admin/users');
+    harness.detectChanges();
+    expect(announced()).toEqual([]); // not from the constructor, and not before there is a page
+
+    answerLoad(http);
+    await settle();
+
+    expect(el().querySelector('#page')).not.toBeNull();
+    expect(announced()).toEqual(['admin']);
+  });
+
+  it('says nothing when the read failed, and announces once asking again has worked', async () => {
+    await harness.navigateByUrl('/admin/users');
+    http
+      .match(() => true)
+      .find((r) => r.request.url === '/api/admin/users')!
+      .flush({ title: 'Boom' }, { status: 500, statusText: 'Boom' });
+    await settle();
+    expect(announced()).toEqual([]);
+
+    el().querySelector<HTMLButtonElement>('.banner--error button')!.click();
+    await settle();
+    answerLoad(http);
+    await settle();
+
+    expect(announced()).toEqual(['admin']);
+  });
+
+  it('announces it again after each navigation inside the area, which is when the guide forgets the page', async () => {
+    await harness.navigateByUrl('/admin/users');
+    answerLoad(http);
+    await settle();
+    expect(announced()).toEqual(['admin']);
+
+    await harness.navigateByUrl('/admin/roles');
+    await settle();
+    expect(announced()).toEqual(['admin', 'admin']);
+
+    await harness.navigateByUrl('/admin/roles/new');
+    await settle();
+    expect(announced()).toEqual(['admin', 'admin', 'admin']);
+  });
+
+  it('does not announce it while a failed refresh keeps the pages on screen', async () => {
+    await harness.navigateByUrl('/admin/users');
+    answerLoad(http);
+    await settle();
+    areaShown.mockClear();
+    const store = harness.routeDebugElement!.injector.get(AdminStore);
+
+    const saving = store.deleteTeam('t');
+    http.expectOne('/api/admin/teams/t').flush(null, { status: 204, statusText: 'No Content' });
+    await settle();
+    http.expectOne('/api/admin/teams').flush([]);
+    http.expectOne('/api/admin/roles').flush([]);
+    http.expectOne('/api/admin/users').error(new ProgressEvent('error'));
+    await saving;
+    await settle();
+
+    expect(el().querySelector('.banner--warning')).not.toBeNull();
+    expect(announced()).toEqual([]);
+  });
+
+  it('announces nothing once it is left', async () => {
+    await harness.navigateByUrl('/admin/users');
+    answerLoad(http);
+    await settle();
+    areaShown.mockClear();
+
+    await harness.navigateByUrl('/elsewhere');
+    await settle();
+
+    expect(announced()).toEqual([]);
+  });
+});
+
+// With the real guide: the order in which the guide forgets a page and the shell announces it again.
+describe('AdminShell: the guide that is really there', () => {
+  let http: HttpTestingController;
+  let harness: RouterTestingHarness;
+  let guide: GuideService;
+
+  beforeEach(async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        provideRouter(ROUTES),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideGuideStorage(
+          createGuideStorage({ v: 1, enabled: true, seen: { admin: 1 }, hintDismissed: true }),
+        ),
+      ],
+    });
+    http = TestBed.inject(HttpTestingController);
+    guide = TestBed.inject(GuideService); // the app creates it first thing, before any page
+    harness = await RouterTestingHarness.create();
+  });
+
+  afterEach(() => http.verify());
+
+  const settle = async () => {
+    await new Promise((resolve) => setTimeout(resolve));
+    harness.detectChanges();
+  };
+
+  it('is the administration area once the pages show, and still is after each navigation inside the area', async () => {
+    await harness.navigateByUrl('/admin/users');
+    expect(guide.area()).toBeNull(); // the route alone is not enough: nothing shown yet
+    answerLoad(http);
+    await settle();
+    expect(guide.area()?.id).toBe('admin');
+
+    await harness.navigateByUrl('/admin/roles');
+    await settle();
+    expect(guide.area()?.id).toBe('admin'); // forgotten when the navigation ended, announced again after it
+
+    await harness.navigateByUrl('/elsewhere');
+    await settle();
+    expect(guide.area()).toBeNull();
+  });
+
+  it('does not ask again for a tour the overlay gave up on: the guide changing its own state is not a reason to announce', async () => {
+    guide.setEnabled(false);
+    guide.setEnabled(true);
+    await harness.navigateByUrl('/admin/users');
+    answerLoad(http);
+    await settle();
+    expect(guide.request()?.area.id).toBe('admin');
+
+    guide.abandoned(); // nothing on the page could be shown
+    await settle();
+    await settle();
+
+    expect(guide.request()).toBeNull();
+  });
+
+  it('asks for the tour when it was not seen, once the pages show', async () => {
+    guide.setEnabled(false);
+    guide.setEnabled(true); // switching Guide on counts everything as unseen again
+    await harness.navigateByUrl('/admin/users');
+    expect(guide.request()).toBeNull();
+
+    answerLoad(http);
+    await settle();
+
+    expect(guide.request()?.area.id).toBe('admin');
+  });
+});
+
 // Where the keyboard focus is after a navigation inside the area. jsdom's click() does not move the focus: the
 // specs put it where a user's would be with focus(), and look at document.activeElement after.
 @Component({
@@ -459,6 +695,21 @@ describe('AdminShell: the focus after a navigation inside the area', () => {
 
     expect(heading()?.textContent).toBe('Users');
     expect(focused()).toBe(users);
+  });
+
+  it("does not take the focus from the guide's dialog, which holds it while a tour runs", async () => {
+    await open('/admin/users');
+    const dialog = document.createElement('button');
+    document.body.appendChild(dialog);
+    dialog.focus();
+    expect(focused()).toBe(dialog);
+
+    await TestBed.inject(Router).navigateByUrl('/admin/users/u1');
+    await settle();
+
+    expect(heading()?.textContent).toBe('alice');
+    expect(focused()).toBe(dialog);
+    dialog.remove();
   });
 
   it('does not take the focus from what the page that arrived has focused itself', async () => {

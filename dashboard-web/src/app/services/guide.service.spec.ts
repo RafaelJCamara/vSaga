@@ -84,7 +84,7 @@ describe('GuideService', () => {
       }
     });
 
-    it('starts the list, the detail summary and administration by route, and the rest when announced', () => {
+    it('starts the list and the detail summary by route, and the rest, the administration area included, when announced', () => {
       const triggers = Object.fromEntries(GUIDE_AREAS.map((a) => [a.id, a.trigger.on]));
 
       expect(triggers).toEqual({
@@ -94,7 +94,7 @@ describe('GuideService', () => {
         timeline: 'shown',
         data: 'shown',
         retry: 'shown',
-        admin: 'route',
+        admin: 'shown',
       });
     });
 
@@ -103,9 +103,6 @@ describe('GuideService', () => {
       ['/sagas/', 'list'],
       ['/sagas/OrderSaga/abc-123', 'summary'],
       ['/sagas/OrderSaga/abc-123/', 'summary'],
-      ['/admin', 'admin'],
-      ['/admin/users', 'admin'],
-      ['/admin/users/new', 'admin'],
     ])('%s is the %s area', (path, id) => {
       expect(guideAreaForPath(path)?.id).toBe(id);
     });
@@ -118,6 +115,10 @@ describe('GuideService', () => {
       '/sagas/a/b/c',
       '/administration',
       '/sagas2',
+      // The administration area is announced by its shell once its pages show: the route alone says nothing.
+      '/admin',
+      '/admin/users',
+      '/admin/users/new',
     ])('%s has no area of its own', (path) => {
       expect(guideAreaForPath(path)).toBeNull();
     });
@@ -454,6 +455,15 @@ describe('GuideService', () => {
       expect(guide.request()).toBeNull(); // the summary was not queued behind it
     });
 
+    it('starts the administration area when it is switched on from an administration page', async () => {
+      const { guide } = await create('/admin/users');
+      guide.areaShown('admin'); // the shell's pages are shown; Guide is off
+
+      guide.setEnabled(true);
+
+      expect(guide.request()?.area.id).toBe('admin');
+    });
+
     it('toggles', async () => {
       const { guide } = await create('/sagas');
 
@@ -567,14 +577,21 @@ describe('GuideService', () => {
       expect(guide.isSeen('list')).toBe(false);
     });
 
-    it('asks for the summary on a detail page and the administration area on the admin pages', async () => {
+    it('asks for the summary on a detail page', async () => {
       const { guide, router } = await createOn('/account');
 
       await router.navigateByUrl('/sagas/OrderSaga/abc');
+
       expect(guide.request()?.area.id).toBe('summary');
+    });
+
+    it('asks for nothing when the administration route opens: its shell announces the area once its pages show', async () => {
+      const { guide, router } = await createOn('/account');
 
       await router.navigateByUrl('/admin/users');
-      expect(guide.request()?.area.id).toBe('admin');
+
+      expect(guide.request()).toBeNull();
+      expect(guide.area()).toBeNull(); // not offered (no Replay) before the pages are there
     });
 
     it('is another page for another saga, so the summary is asked for again if it was not remembered', async () => {
@@ -779,11 +796,15 @@ describe('GuideService', () => {
       guide.setEnabled(true);
 
       await router.navigateByUrl('/admin/users');
+      guide.areaShown('admin');
       expect(guide.request()).toBeNull();
+      expect(guide.area()).toBeNull();
+      expect(guide.showHint()).toBe(false);
 
       held.set(['sagas.view', 'access.manage']);
       await router.navigateByUrl('/sagas');
       await router.navigateByUrl('/admin/users');
+      guide.areaShown('admin');
       expect(guide.request()?.area.id).toBe('admin');
     });
 
@@ -1022,6 +1043,55 @@ describe('GuideService', () => {
       guide.ended('summary', true);
 
       expect(guide.request()).toBeNull();
+    });
+
+    describe('the administration area', () => {
+      async function onAdminPage(state: Partial<Record<string, unknown>> = {}) {
+        storage = createGuideStorage(stored({ enabled: true, hintDismissed: true, ...state }));
+        return create('/admin/users');
+      }
+
+      it('is asked for when the shell shows its pages, and is the area to replay and to offer', async () => {
+        storage = createGuideStorage(stored({ enabled: false }));
+        const { guide } = await create('/admin/users');
+        expect(guide.showHint()).toBe(false); // nothing to offer before the pages show
+
+        guide.areaShown('admin');
+
+        expect(guide.area()?.id).toBe('admin');
+        expect(guide.showHint()).toBe(true); // Guide is off and the hint is not answered
+        expect(guide.request()).toBeNull();
+      });
+
+      it('asks for the tour once, with Guide on and the area unseen', async () => {
+        const { guide } = await onAdminPage();
+
+        guide.areaShown('admin');
+        expect(guide.request()?.area.id).toBe('admin');
+
+        guide.started('admin');
+        guide.areaShown('admin'); // the shell announces again while the tour is on screen
+        expect(guide.request()).toBeNull();
+        guide.ended('admin', true);
+        expect(guide.isSeen('admin')).toBe(true);
+
+        guide.areaShown('admin');
+        expect(guide.request()).toBeNull();
+        expect(guide.canReplay()).toBe(true);
+      });
+
+      it('is forgotten when a navigation inside the area ends, until the shell announces it again', async () => {
+        const { guide, router } = await onAdminPage({ seen: { admin: 1 } });
+        guide.areaShown('admin');
+        expect(guide.area()?.id).toBe('admin');
+
+        await router.navigateByUrl('/admin');
+
+        expect(guide.area()).toBeNull();
+        guide.areaShown('admin');
+        expect(guide.area()?.id).toBe('admin');
+        expect(guide.request()).toBeNull(); // seen
+      });
     });
 
     it('ignores an area the session may not see', async () => {

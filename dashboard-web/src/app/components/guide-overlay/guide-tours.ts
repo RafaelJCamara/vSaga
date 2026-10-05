@@ -186,6 +186,64 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
       requires: 'sagas.retry',
     },
   ],
-  // The administration area: no steps yet.
-  admin: [],
+  // The administration area: the shell's tabs, then what the page's table and the pages below it hold. The
+  // steps that are not about the table are centred, so they stay true on a page that has no table (no teams yet).
+  admin: [
+    {
+      id: 'admin-nav',
+      title: 'Administration',
+      body: 'This area controls who can sign in and what each person can see and do. Only accounts that hold Manage access for all saga types can open it. Its three parts are Users, Teams and Roles.',
+      anchor: 'admin-nav',
+      requires: 'access.manage',
+    },
+    {
+      id: 'admin-users',
+      title: 'Users',
+      body: "A user is one person's sign-in. The list flags accounts that are Disabled, Locked or Must change password, and shows each user's teams and direct access. A user's page resets the password, unlocks the account, disables it or deletes it. Disabling an account or resetting its password ends its open sessions.",
+      anchor: 'admin-nav-users',
+      requires: 'access.manage',
+    },
+    {
+      id: 'admin-teams',
+      title: 'Teams',
+      body: "A team is a named group of users. Its members hold the team's access on top of what they hold directly. A team's page sets its members and its access together: saving replaces both with what the page shows.",
+      anchor: 'admin-nav-teams',
+      requires: 'access.manage',
+    },
+    {
+      id: 'admin-roles',
+      title: 'Roles and permissions',
+      body: 'A role is a set of permissions: View sagas, View saga data, Retry sagas and Manage access. Administrator, Operator and Viewer are built in: open one to read it or to Duplicate as custom role, but it cannot be changed or deleted. A custom role cannot be deleted while a grant uses it.',
+      anchor: 'admin-nav-roles',
+      requires: 'access.manage',
+    },
+    {
+      id: 'admin-list',
+      title: 'Open a row to edit it',
+      body: 'Each row is a user, a team or a role, depending on the tab: select its name to open it, or use New user, New team or New role above the table. Access shows the grants a user or team holds, such as Operator · all types or Viewer · 2 types. In use counts the grants that use a role.',
+      anchor: 'admin-list',
+      requires: 'access.manage',
+    },
+    {
+      id: 'admin-grants',
+      title: 'Grants and scope',
+      body: "Grants are edited on a user's page (Access) and a team's page (Access of every member): one grant per role, held for All saga types or for Selected saga types. Tick the types the dashboard knows, or type an exact saga type name (case matters) for one that has not run yet. access.manage is ignored in a scoped grant: it counts only for all saga types.",
+      anchor: null,
+      requires: 'access.manage',
+    },
+    {
+      id: 'admin-preview',
+      title: 'Effective access',
+      body: "Under the grants, Effective access shows what the user would hold with them, saved or not, with their teams' grants included. Each permission says what grants it, such as direct: Operator or team Payments: Viewer. A team's page shows what the team gives its members.",
+      anchor: null,
+      requires: 'access.manage',
+    },
+    {
+      id: 'admin-last',
+      title: 'You cannot lock everyone out',
+      body: 'The dashboard refuses a change that would leave no enabled user holding access.manage for all saga types, such as deleting, disabling or demoting the last one. The page keeps your edits and says so: give another enabled user an all-saga-types grant whose role includes access.manage, then try again.',
+      anchor: null,
+      requires: 'access.manage',
+    },
+  ],
 };

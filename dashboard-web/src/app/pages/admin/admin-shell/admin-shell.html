@@ -1,9 +1,27 @@
 <h1 class="page-title">Administration</h1>
 
-<nav class="subtabs" aria-label="Administration">
-  <a routerLink="/admin/users" routerLinkActive="active" ariaCurrentWhenActive="page">Users</a>
-  <a routerLink="/admin/teams" routerLinkActive="active" ariaCurrentWhenActive="page">Teams</a>
-  <a routerLink="/admin/roles" routerLinkActive="active" ariaCurrentWhenActive="page">Roles</a>
+<nav class="subtabs" aria-label="Administration" data-tour="admin-nav">
+  <a
+    routerLink="/admin/users"
+    routerLinkActive="active"
+    ariaCurrentWhenActive="page"
+    data-tour="admin-nav-users"
+    >Users</a
+  >
+  <a
+    routerLink="/admin/teams"
+    routerLinkActive="active"
+    ariaCurrentWhenActive="page"
+    data-tour="admin-nav-teams"
+    >Teams</a
+  >
+  <a
+    routerLink="/admin/roles"
+    routerLinkActive="active"
+    ariaCurrentWhenActive="page"
+    data-tour="admin-nav-roles"
+    >Roles</a
+  >
 </nav>
 
 <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced. -->

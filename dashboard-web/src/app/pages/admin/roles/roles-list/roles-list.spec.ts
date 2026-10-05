@@ -15,6 +15,7 @@ import {
   role,
   team,
 } from '../../../../testing/admin';
+import { GUIDE_ANCHORS, GUIDE_TOURS } from '../../../../components/guide-overlay/guide-tours';
 import { AdminStore } from '../../admin.store';
 import { RolesList } from './roles-list';
 
@@ -186,5 +187,44 @@ describe('RolesList', () => {
       ['Permissions', 'col'],
       ['In use', 'col'],
     ]);
+  });
+
+  describe('the anchors of the guide tour', () => {
+    const anchorsIn = (root: Element) =>
+      Array.from(root.querySelectorAll('[data-tour]'), (e) => e.getAttribute('data-tour'));
+
+    it('marks the table of roles, once, and nothing else', async () => {
+      await create();
+
+      expect(anchorsIn(el())).toEqual(['admin-list']);
+      expect(el().querySelector('table.data-table')?.getAttribute('data-tour')).toBe('admin-list');
+    });
+
+    it('uses a name of the vocabulary, and has the element the administration tour points at on its page', async () => {
+      await create();
+      const wanted = GUIDE_TOURS.admin
+        .filter((step) => step.anchor === 'admin-list')
+        .map((step) => step.anchor);
+
+      expect(wanted).toEqual(['admin-list']);
+      for (const name of anchorsIn(el())) expect(GUIDE_ANCHORS).toContain(name);
+      expect(el().querySelector(`[data-tour="${wanted[0]}"]`)).not.toBeNull();
+    });
+
+    it('names the column, the button and the built-in roles the tour names for roles', async () => {
+      await create();
+      const body = (id: string) => GUIDE_TOURS.admin.find((s) => s.id === id)?.body ?? '';
+
+      expect(Array.from(el().querySelectorAll('th'), (th) => th.textContent?.trim())).toContain(
+        'In use',
+      );
+      expect(el().querySelector('a.new-role')?.textContent?.trim()).toBe('New role');
+      expect(body('admin-list')).toContain('New role');
+      expect(body('admin-list')).toContain('In use');
+      for (const name of ['Administrator', 'Operator', 'Viewer']) {
+        expect(names(), name).toContain(name);
+        expect(body('admin-roles'), name).toContain(name);
+      }
+    });
   });
 });

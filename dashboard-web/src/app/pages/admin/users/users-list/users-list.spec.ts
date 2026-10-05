@@ -15,6 +15,7 @@ import {
   role,
   team,
 } from '../../../../testing/admin';
+import { GUIDE_ANCHORS, GUIDE_TOURS } from '../../../../components/guide-overlay/guide-tours';
 import { createAuthMock, provideAuthMock } from '../../../../testing/auth-mock';
 import { AdminStore } from '../../admin.store';
 import { UsersList } from './users-list';
@@ -431,5 +432,67 @@ describe('UsersList', () => {
     expect(el().querySelector('table')).toBeNull();
     expect(el().querySelector('.empty')?.textContent?.trim()).toBe('There are no users yet.');
     expect(count()).toBe('0 total');
+  });
+
+  describe('the anchors of the guide tour', () => {
+    const anchorsIn = (root: Element) =>
+      Array.from(root.querySelectorAll('[data-tour]'), (e) => e.getAttribute('data-tour'));
+
+    it('marks the table of users, once, and nothing else', async () => {
+      await render();
+
+      expect(anchorsIn(el())).toEqual(['admin-list']);
+      expect(el().querySelector('table.data-table')?.getAttribute('data-tour')).toBe('admin-list');
+    });
+
+    it('has no table to mark when there are no users: the step about it is left out', async () => {
+      await render({ users: [] });
+
+      expect(anchorsIn(el())).toEqual([]);
+    });
+
+    it('has none while the filter matches no one, and marks the table again when it is cleared', async () => {
+      await render();
+      await filter('nobody');
+      expect(el().querySelector('table')).toBeNull();
+      expect(anchorsIn(el())).toEqual([]);
+
+      await filter('');
+
+      expect(anchorsIn(el())).toEqual(['admin-list']);
+    });
+
+    it('uses a name of the vocabulary, and has the element the administration tour points at on its page', async () => {
+      await render();
+      const wanted = GUIDE_TOURS.admin
+        .filter((step) => step.anchor === 'admin-list')
+        .map((step) => step.anchor);
+
+      expect(wanted).toEqual(['admin-list']);
+      for (const name of anchorsIn(el())) expect(GUIDE_ANCHORS).toContain(name);
+      expect(el().querySelector(`[data-tour="${wanted[0]}"]`)).not.toBeNull();
+    });
+
+    it('names the columns and the chips the tour names: Access, the status chips, and New user', async () => {
+      await render();
+      const body = (id: string) => GUIDE_TOURS.admin.find((s) => s.id === id)?.body ?? '';
+
+      const headings = Array.from(el().querySelectorAll('th'), (th) => th.textContent?.trim());
+      expect(headings).toContain('Access');
+      expect(el().querySelector('a.new-user')?.textContent?.trim()).toBe('New user');
+      expect(body('admin-list')).toContain('New user');
+      expect(body('admin-list')).toContain('Access');
+      const chips = Array.from(el().querySelectorAll('.chip'), (c) => c.textContent?.trim());
+      for (const label of ['Disabled', 'Locked', 'Must change password']) {
+        expect(chips, label).toContain(label);
+        expect(body('admin-users'), label).toContain(label);
+      }
+      // A phrase the tour quotes is a phrase the table writes.
+      const phrases = Array.from(el().querySelectorAll('tbody td:nth-child(5) div'), (d) =>
+        d.textContent?.trim(),
+      );
+      expect(phrases).toContain('Operator · all types');
+      expect(body('admin-list')).toContain('Operator · all types');
+    });
   });
 });

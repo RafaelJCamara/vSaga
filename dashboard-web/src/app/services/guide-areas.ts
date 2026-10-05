@@ -10,11 +10,13 @@ export const USER_GUIDE_URL =
   'https://github.com/RafaelJCamara/vSaga/blob/main/docs/dashboard-guide.md';
 
 /**
- * The areas that explain themselves, one row each. The list and the administration pages start when they
- * are opened and the detail page's summary when the detail page is; the map, timeline, data and retry
- * areas start when their page announces them (`GuideService.areaShown`), because they are parts of one
- * page that show at different moments. Where each area's steps are is `guide-tours.ts`; an area whose step
- * list is empty has no tour yet, and a request for it ends at once.
+ * The areas that explain themselves, one row each. The list starts when its route is opened and the detail
+ * page's summary when the detail page is; the map, timeline, data and retry areas start when their page
+ * announces them (`GuideService.areaShown`), because they are parts of one page that show at different
+ * moments. So does the administration area: its shell announces it once its pages show, not when the route
+ * opens, because the tour points at a table that is there only after the shell has read everything. Where
+ * each area's steps are is `guide-tours.ts`; every area has a tour (a spec pins it), so an area that is
+ * offered (Replay, the hint) is one that can be shown.
  *
  * `version` is bumped with the area's tour copy: `seen[area] = version` is what is stored, so a changed
  * tour shows once more to everyone who saw the old one. The type import below is erased: the tour copy
@@ -72,7 +74,7 @@ export const GUIDE_AREAS: readonly GuideArea<GuideAnchor>[] = [
   {
     id: 'admin',
     version: 1,
-    trigger: { on: 'route', match: /^\/admin(\/|$)/ },
+    trigger: { on: 'shown', what: 'the administration pages are shown' },
     readyAnchor: 'admin-nav',
     requires: 'access.manage',
     docsAnchor: '#administration',

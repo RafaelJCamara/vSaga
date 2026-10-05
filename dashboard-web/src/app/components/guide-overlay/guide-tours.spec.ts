@@ -1,6 +1,7 @@
 import { GuideAreaId } from '../../models/guide.model';
 import { GUIDE_AREAS } from '../../services/guide-areas';
 import { ALL_PERMISSIONS } from '../../testing/auth-mock';
+import { LAST_ADMINISTRATOR_ADVICE } from '../../util/admin-failure';
 import { GUIDE_ANCHORS, GUIDE_TOURS } from './guide-tours';
 
 const AREA_IDS = GUIDE_AREAS.map((a) => a.id);
@@ -44,8 +45,20 @@ describe('the guide tours', () => {
   });
 
   describe('the tour table', () => {
-    it('has a tour (possibly still empty) for every area, and no tour for anything else', () => {
+    it('has a tour for every area, and no tour for anything else', () => {
       expect(Object.keys(GUIDE_TOURS).sort()).toEqual([...AREA_IDS].sort());
+    });
+
+    it('has steps for every area, so an area that Replay or the hint offers is one that can be shown', () => {
+      for (const area of GUIDE_AREAS) {
+        const steps = GUIDE_TOURS[area.id];
+        expect(steps.length, area.id).toBeGreaterThan(0);
+        // Anyone who holds the area's permission has a step to see: a step that asks for more is a bonus.
+        expect(
+          steps.some((s) => s.requires === undefined || s.requires === area.requires),
+          area.id,
+        ).toBe(true);
+      }
     });
 
     it('ships the list tour, in the order the page is read', () => {
@@ -60,7 +73,7 @@ describe('the guide tours', () => {
       ]);
     });
 
-    it('ships the five areas of the detail page, and none for administration yet', () => {
+    it('ships the five areas of the detail page and the administration area', () => {
       const ids = (area: GuideAreaId) => GUIDE_TOURS[area].map((s) => s.id);
 
       expect(ids('summary')).toEqual(['summary-glance', 'summary-tabs']);
@@ -68,7 +81,16 @@ describe('the guide tours', () => {
       expect(ids('timeline')).toEqual(['timeline-steps', 'timeline-entry', 'timeline-data']);
       expect(ids('data')).toEqual(['data-bar', 'data-views']);
       expect(ids('retry')).toEqual(['retry-what', 'retry-effects']);
-      expect(GUIDE_TOURS.admin).toEqual([]);
+      expect(ids('admin')).toEqual([
+        'admin-nav',
+        'admin-users',
+        'admin-teams',
+        'admin-roles',
+        'admin-list',
+        'admin-grants',
+        'admin-preview',
+        'admin-last',
+      ]);
     });
 
     it('opens the list tour with a centred welcome and points the last step at the top bar', () => {
@@ -246,6 +268,136 @@ describe('the guide tours', () => {
       expect(body('timeline-data')).toContain('Data button');
       expect(copy('summary')).toContain('Map and Timeline');
       expect(copy('map')).toContain('Play');
+    });
+  });
+
+  describe('the administration tour', () => {
+    const steps = GUIDE_TOURS.admin;
+    const body = (id: string) => steps.find((s) => s.id === id)?.body ?? '';
+    const all = steps.map((s) => `${s.title} ${s.body}`).join(' ');
+
+    it("points at the shell's tabs in the order they are, then at the table of the page", () => {
+      expect(steps.map((s) => s.anchor)).toEqual([
+        'admin-nav',
+        'admin-nav-users',
+        'admin-nav-teams',
+        'admin-nav-roles',
+        'admin-list',
+        null,
+        null,
+        null,
+      ]);
+    });
+
+    it('has no fallback and no reveal: the table step is left out of a page with no table, the rest never wait for one', () => {
+      for (const step of steps) {
+        expect(step.fallbackAnchor, step.id).toBeUndefined();
+        expect(step.reveal, step.id).toBeUndefined();
+      }
+    });
+
+    it('is about managing access, and asks for nothing less', () => {
+      for (const step of steps) expect(step.requires, step.id).toBe('access.manage');
+    });
+
+    it('says who can open the area: Manage access, held for all saga types, and names its three parts', () => {
+      const text = body('admin-nav');
+
+      expect(text).toContain(
+        'Only accounts that hold Manage access for all saga types can open it',
+      );
+      for (const part of ['Users', 'Teams', 'Roles']) expect(text, part).toContain(part);
+    });
+
+    it('names the four permissions as the catalogue labels them, and the three built-in roles', () => {
+      for (const label of ['View sagas', 'View saga data', 'Retry sagas', 'Manage access']) {
+        expect(body('admin-roles') + body('admin-nav'), label).toContain(label);
+      }
+      for (const role of ['Administrator', 'Operator', 'Viewer']) {
+        expect(body('admin-roles'), role).toContain(role);
+      }
+    });
+
+    it('names what the users list and the user page have: the chips, the actions, and what ends sessions', () => {
+      const users = body('admin-users');
+
+      for (const label of ['Disabled', 'Locked', 'Must change password']) {
+        expect(users, label).toContain(label);
+      }
+      expect(users).toContain(
+        'resets the password, unlocks the account, disables it or deletes it',
+      );
+      expect(users).toContain(
+        'Disabling an account or resetting its password ends its open sessions',
+      );
+    });
+
+    it('says a team is saved as a whole, and that its members hold its access on top of their own', () => {
+      expect(body('admin-teams')).toContain('on top of what they hold directly');
+      expect(body('admin-teams')).toContain('saving replaces both');
+    });
+
+    it('says built-in roles are read and duplicated, and that a role in use cannot be deleted', () => {
+      const roles = body('admin-roles');
+
+      expect(roles).toContain('Duplicate as custom role');
+      expect(roles).toContain('cannot be changed or deleted');
+      expect(roles).toContain('A custom role cannot be deleted while a grant uses it');
+    });
+
+    it('names the buttons and columns the lists have', () => {
+      const list = body('admin-list');
+
+      for (const label of ['New user', 'New team', 'New role', 'Access', 'In use']) {
+        expect(list, label).toContain(label);
+      }
+      // The phrases the lists summarise a grant with (`summarizeGrants`).
+      expect(list).toContain('Operator · all types');
+      expect(list).toContain('Viewer · 2 types');
+    });
+
+    it('describes the grants editor as shipped: one grant per role, all or selected saga types, the exact name', () => {
+      const grants = body('admin-grants');
+
+      expect(grants).toContain('one grant per role');
+      expect(grants).toContain('All saga types');
+      expect(grants).toContain('Selected saga types');
+      expect(grants).toContain('exact saga type name');
+      expect(grants).toContain('case matters');
+      // The editor's own sentence: "access.manage is ignored in a scoped grant: it counts only for all saga types."
+      expect(grants).toContain('access.manage is ignored in a scoped grant');
+      expect(grants).toContain('it counts only for all saga types');
+      // Not the blueprint's wording, which is not what the editor says.
+      expect(grants).not.toContain('Manage access counts only');
+    });
+
+    it('describes the effective access preview with its origins, for a user and for a team', () => {
+      const preview = body('admin-preview');
+
+      expect(preview).toContain('Effective access');
+      expect(preview).toContain('saved or not');
+      expect(preview).toContain('direct: Operator');
+      expect(preview).toContain('team Payments: Viewer');
+      expect(preview).toContain('what the team gives its members');
+    });
+
+    it('ends on the last administrator rule, with the advice the page itself gives', () => {
+      const last = steps.at(-1);
+
+      expect(last?.id).toBe('admin-last');
+      expect(last?.anchor).toBeNull();
+      expect(last?.body).toContain(
+        'would leave no enabled user holding access.manage for all saga types',
+      );
+      // The sentence the 409 banner ends with, as a sentence in the middle of this one.
+      const advice = LAST_ADMINISTRATOR_ADVICE.replace(/^G/, 'g').replace(/\.$/, '');
+      expect(last?.body).toContain(advice);
+    });
+
+    it("does not use the blueprint's claims that the shipped pages do not make", () => {
+      // "Create accounts" (it is New user), "Only accounts holding Manage access can open it" without the scope.
+      expect(all).not.toContain('Create accounts');
+      expect(all).not.toContain('refuses to delete, disable or demote');
     });
   });
 

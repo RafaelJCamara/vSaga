@@ -105,8 +105,9 @@ function sagaTypeOf(path: string): string | null {
  * Guide is off until the user switches it on. Switching it on starts the current page's area; while it is
  * on, an area explains itself the first time the user opens it (`seen[area]` is the version of the tour they
  * went through, so a tour whose version was bumped shows once more), and Replay repeats the current area.
- * An area is a page (the list, the administration pages: when its route is opened) or a part of the detail
- * page (the map, the timeline, the saga data, the retry row: when the page calls `areaShown`).
+ * An area is a page (the list: when its route is opened) or a part of a page (the detail page's map, timeline,
+ * saga data and retry row, and the administration pages once the shell has read everything: when the page
+ * calls `areaShown`).
  *
  * The overlay answers to `request`: it waits for the area to be on screen, then calls `started`, and ends
  * with `ended` (with `remember` when the user finished or skipped the tour) or, if there was nothing to
