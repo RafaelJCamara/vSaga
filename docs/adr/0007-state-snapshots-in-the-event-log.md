@@ -1,6 +1,6 @@
 # ADR 0007: Per-step saga state is recorded as StatePersisted entries in the existing event log
 
-**Status:** **Accepted** — 2026-10-02. Not yet implemented.
+**Status:** **Accepted** — 2026-10-02. **Implemented** — 2026-10-05.
 **Date:** 2026-10-02
 **Relates to:** [`0005-saga-state-storage-model.md`](0005-saga-state-storage-model.md) (one opaque state
 blob per instance, which this keeps); [`0003-persistence-contract-clauses.md`](0003-persistence-contract-clauses.md)
@@ -9,6 +9,13 @@ blob per instance, which this keeps); [`0003-persistence-contract-clauses.md`](0
 changes); [`0008-dashboard-retry-reruns-the-failed-step.md`](0008-dashboard-retry-reruns-the-failed-step.md)
 (which adds inbound message payloads to the same log).
 **Design:** [`../design/dashboard-usability-and-access.md`](../design/dashboard-usability-and-access.md)
+**Implemented by** (the numbers are those of the design's §12): the EF Core detach, `3eda0ea` (C15); the
+entry type and `SagaStateSnapshot`, with two conformance cases for all four providers, `e3379f0` (C16);
+the map skipping snapshots, `46dbce4` (C17); the redaction seam and payload-free pushes, `4fce969` (C18);
+recording after the four committing persists, with the options, the budget, the deadline and the samples,
+`507f661` (C21); the dashboard's reset snapshot, `1f1e056` (C22); and in the SPA the fold of a timeline
+into steps with their snapshots, `50c0583` (C11), the per-step data inspector, `f8e91f0` (C25), and the
+Saga data bar, `25385b6` (C26). The measured storage is in [`../persistence.md`](../persistence.md) (`61354b9`).
 
 ---
 
@@ -177,8 +184,10 @@ failure.
 
 These figures are estimates from arithmetic over the sample's shapes, not measurements. The cost review
 estimated about 1 KB per snapshot on Redis for the sample's 400-byte state, roughly half again on a
-completed `OrderSaga`'s 7.3 KB timeline. The measured Redis (`MEMORY USAGE`) and MongoDB (`collStats`)
-figures will be added to [`../persistence.md`](../persistence.md) after live verification.
+completed `OrderSaga`'s 7.3 KB timeline. The live verification then measured both providers on the
+sample, and the figures are in [`../persistence.md`](../persistence.md): per completed `OrderSaga`, the
+four snapshots add 4 216 bytes to the Redis timeline list (`MEMORY USAGE`, 8 312 to 12 528 with the
+message bodies of ADR 0008) and 3 234 bytes to the MongoDB event-log documents (6 806 to 10 040).
 
 ---
 

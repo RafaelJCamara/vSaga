@@ -1,6 +1,6 @@
 # ADR 0006: Dashboard users sign in with a session cookie; access is role and saga-type scoped; identity lives in a dashboard-owned SQLite store
 
-**Status:** **Accepted** — 2026-10-02. Not yet implemented.
+**Status:** **Accepted** — 2026-10-02. **Implemented** — 2026-10-05.
 **Date:** 2026-10-02
 **Supersedes:** the shared-API-key position recorded in
 [`../history/project-origins-and-hardening-pass.md`](../history/project-origins-and-hardening-pass.md)
@@ -10,6 +10,18 @@ The history file stays as written; this record replaces the decision, not the ac
 A retry that re-drives only the retried saga type is what makes a scoped `sagas.retry` grant (decision 3)
 a real boundary; without it a scoped retry reaches every saga type that consumes the replayed message.
 **Implementation plan:** [`../design/dashboard-usability-and-access.md`](../design/dashboard-usability-and-access.md)
+**Implemented by** (the numbers are those of the design's §12, which lists every follow-up too): the
+identity project and services, `e9eea61` and `69c993f` (C31, C32); start-up, migrations and the `identity`
+health check, `e6228c3` (C33); the policy scheme, the fallback policy and `no-store`/`nosniff` on `/api`,
+`8b7a39a` (C34); sign-in, antiforgery, rate limits and lockout, `ed8f939` (C35); the first administrator,
+`82c4797` (C36); the volume, the non-root image and the seeded demo administrator, `f25b1ec` (C37);
+saga permissions, scoped lists, redaction and retry attribution, `e69deb8` (C38), on the redaction seam of
+`4fce969` (C18); the administration endpoints, `8d69429` (C39); the hub, `852a901` (C40) and, closing
+connections for reconnect, `e913282`; the sign-in checks in CI, `64ba0ac` (C41); and in the SPA the hub
+service `fabc67c` (C43), the session `0f3bb28` (C44), the login, setup and account pages `d78d7cc` (C45),
+the session requirement and the removal of the key from the bundle `193e679` (C46), permission-gated pages
+`731b724` (C47) and the administration area `b3b67e1`, `cec2a40` and `7e61f16` (C48 to C50). The design's
+§12 also records where the build departed from the plan, and §13 what is still open.
 
 ---
 
@@ -215,8 +227,10 @@ volume. The repository throws while the store is not ready, and the auth endpoin
 check readiness before any Data Protection call, so an unavailable store yields `503` or `401` and never
 a fresh in-memory key whose cookies die at the next restart. Nothing that needs Data Protection runs
 inside an exclusive write scope, because the key ring uses its own connection. The ring is stored
-unencrypted unless a certificate is configured to protect it; that option is documented, not the
-default.
+unencrypted. vSaga ships no configuration key or code to protect it with a certificate (ASP.NET Core
+logs "No XML encryptor configured" at start); a deployment that wants that adds the framework's
+`ProtectKeysWithCertificate` to the API's composition itself, as `docs/dashboard.md` says, and that
+path is not exercised in this repository.
 
 ### 7. Scoped lists are merged in the API, within bounds
 
@@ -265,12 +279,18 @@ Entry types stay, so a view-only caller still sees that and where a step failed.
   the request's own scheme and host, or the configured `Dashboard:WebOrigin` (empty by default, owned by
   the edge configuration, `Hosting/DashboardEdge.cs`). `Origin: null` is a mismatch. A rejection is
   logged at Warning with the received and expected values.
-- **Abort on change.** A registry records each connection's user. The API aborts that user's
+- **Close on change.** A registry records each connection's user. The API closes that user's
   connections on every security-stamp rotation (self-service password change, administrator reset,
   disable, enable), on delete, on sign-out and on any change to their grants or teams, and every
-  connection on a role change. The client reconnects, authenticates again and resubscribes, so group
-  membership always reflects current access, and a revoked user's negotiate gets `401`. A socket whose
-  cookie ticket has expired is closed.
+  connection on a role change or deletion (the API key may act as a custom role). A connection is closed
+  through `IConnectionLifetimeNotificationFeature.RequestClose()`, the path SignalR itself takes for an
+  expired ticket, so the client receives a close message that allows it to reconnect: it reconnects,
+  authenticates again and resubscribes, so group membership always reflects current access, and a
+  revoked user's negotiate gets `401`. `HubCallerContext.Abort()` sends a close message that forbids
+  reconnecting, which would stop the SPA's client until the page is reloaded, so it is only the fallback
+  for a connection that offers no such feature or whose close failed. A socket whose cookie ticket has
+  expired is closed, and the expiry the hub sees is capped at the sign-in time plus the absolute
+  lifetime.
 
 ### 10. Every `/api` response is `no-store` and `nosniff`
 
@@ -347,8 +367,8 @@ cannot read is strictly better.
 - Retry needs `sagas.retry`, and saga data needs `sagas.data`, each per saga type. With ADR 0008 a
   scoped retry stays inside its saga type.
 - No secret ships in the SPA bundle.
-- Revocation is immediate: the stamp is checked on every request, and live connections are aborted
-  when access changes.
+- Revocation is immediate: the stamp is checked on every request, and live connections are closed,
+  with a close message that lets the client reconnect under its new access, when access changes.
 - Sessions survive API restarts and container recreation, because the key ring is persisted.
 - No persistence contract, schema or engine behaviour changes for this decision; engine hosts are
   unaffected apart from ADR 0008's header.
@@ -361,8 +381,9 @@ cannot read is strictly better.
   stamps and the key ring.
 - **Password handling becomes this project's responsibility:** policy, lockout, resets, recovery. There
   is no multi-factor authentication and no single sign-on.
-- **The key ring is stored unencrypted next to the hashes unless a certificate is configured.** Anyone
-  who can read the file can forge a session for any user.
+- **The key ring is stored unencrypted next to the hashes** unless the deployer adds a certificate to the
+  API's composition, which vSaga does not ship. Anyone who can read the file can forge a session for any
+  user.
 - **Scoped lists cost more than unscoped ones.** At the bounds a page can take on the order of 70
   sequential `ListAsync` calls and tens of thousands of summaries on EF Core or MongoDB. On Redis, list
   shapes that are not served from a rank (a `Status` sort, a status or kind filter, or a search) read
@@ -390,9 +411,11 @@ cannot read is strictly better.
 
 1. **Lockout can be used to lock a known username out.** Five wrong passwords every fifteen minutes keep
    an account locked, and the demo's administrator name is public. A known-device cookie that lets a
-   previously used browser bypass the lock is deferred. The escapes are an administrator unlocking the
-   account, `Dashboard:Admin:ResetOnStart`, or a restart with `Dashboard:Lockout:MaxFailedAttempts=0`,
-   documented in the user guide's troubleshooting section.
+   previously used browser bypass the lock is deferred. What ends a lock is an administrator unlocking
+   the account or `Dashboard:Admin:ResetOnStart` (either at once), or waiting out
+   `Dashboard:Lockout:Minutes`; the user guide's troubleshooting section lists them. A restart with
+   `Dashboard:Lockout:MaxFailedAttempts=0` only stops new locks: the credential check refuses an account
+   whose lock is still in force whatever the setting says.
 2. **Usernames are visible on retry entries** to anyone with `sagas.view` on that saga type.
 3. **What `sagas.view` exposes.** Without `sagas.data` a caller still sees correlation ids, statuses and
    timestamps, state names and message type names, service names, the parent saga type and correlation

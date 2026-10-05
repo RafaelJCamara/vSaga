@@ -1,6 +1,6 @@
 # ADR 0008: A dashboard retry re-runs the failed step, targeted at one saga type
 
-**Status:** **Accepted** — 2026-10-02, by the maintainer. Not yet implemented.
+**Status:** **Accepted** — 2026-10-02, by the maintainer. **Implemented** — 2026-10-05.
 **Date:** 2026-10-02
 **Relates to:** [`0006-dashboard-authentication-and-identity-store.md`](0006-dashboard-authentication-and-identity-store.md)
 (a `sagas.retry` grant scoped to saga types is only a boundary if a retry stays inside the type);
@@ -8,6 +8,15 @@
 now carries a payload too, so the log grows further, and a retry reset records a snapshot).
 **Design:** [`../design/dashboard-usability-and-access.md`](../design/dashboard-usability-and-access.md),
 section "Retry from the failed step".
+**Implemented by** (the numbers are those of the design's §12): `SagaCompleted` and `TimeoutScheduled`
+carrying the inbound message id, `899dd9f` (C20); the dashboard's reset snapshot, `1f1e056` (C22); the
+target header, the check in `HandleCoreAsync` and the message body on every `MessageReceived`, with the
+header round-trip tests of every wire adapter, `417a64e` (C23); the planner, the `retry-plan` endpoint and
+the rewritten `POST .../retry` with its restore, `3a817e6` (C24); and the failed-step marker, the map's
+focus and the retry confirmation in the SPA, `f28636e` (C28). The retry's actor and its `sagas.retry`
+permission come with `e69deb8` (C38) and ADR 0006. There is still no version number for the minimum
+engine release: the repository has no release tags and the dashboard cannot see which engine a host runs,
+so `docs/dashboard.md` and the user guide name the change (`MessageEnvelope.TargetSagaTypeHeader`) instead.
 
 ---
 

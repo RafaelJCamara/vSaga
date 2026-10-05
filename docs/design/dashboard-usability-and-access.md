@@ -1,8 +1,13 @@
 # Design: dashboard usability and access
 
-**Status: accepted, not yet implemented, 2026-10-02.** Nothing in this document has been built yet;
-every "the API answers", "the SPA shows" or "the engine records" below describes intended behaviour.
-§12 tracks progress commit by commit. Three decisions are recorded separately:
+**Status: implemented, 2026-10-05** (accepted 2026-10-02). The work is the 91 commits on the branch
+`dashboard-usability-and-access` from `22f04bf` (a prerequisite) to the commit that marks it implemented
+and deletes the working plan (C58). Of the 90 after the prerequisite, `6f44c8b` (C01) added this document
+and the three ADRs, `c99a547` (C02) was the first to change code, and `31c4f06` (C57) is the parent of
+C58. Every "the API answers", "the SPA shows" or "the engine records" below describes behaviour that was
+built; §12 lists every commit, states where the build departed from the plan and names the statements
+of this document that were corrected when it was marked implemented, §13 lists what is still open, and
+`docs/history/` records how each part was verified. Three decisions are recorded separately:
 [`../adr/0006-dashboard-authentication-and-identity-store.md`](../adr/0006-dashboard-authentication-and-identity-store.md)
 (sign-in, access control and the identity store),
 [`../adr/0007-state-snapshots-in-the-event-log.md`](../adr/0007-state-snapshots-in-the-event-log.md)
@@ -11,13 +16,22 @@ every "the API answers", "the SPA shows" or "the engine records" below describes
 (a targeted retry that re-runs the failed step). An ADR links here for the reasoning rather than
 repeating it.
 
-This document stands alone. It replaces a temporary working plan (six workstream blueprints and three
-reviews: security, consistency, feasibility) that is deleted when the work is done. Where a blueprint
-and a review disagreed, only the review's answer is written here; where the user decided something
-after the blueprints were written, that decision is written here.
+This document stands alone. It replaced a temporary working plan (six workstream blueprints and three
+reviews: security, consistency, feasibility), which C58 deleted when the work was done, as the plan
+itself required; its files stay in the branch's history, as they were at `31c4f06`.
+Where a blueprint and a review disagreed, only the review's answer is written here; where the user
+decided something after the blueprints were written, that decision is written here. The durable records
+of the work are this document, the three ADRs, the reference docs ([`../dashboard.md`](../dashboard.md),
+[`../configuration.md`](../configuration.md), [`../observability.md`](../observability.md) and the user guide
+[`../dashboard-guide.md`](../dashboard-guide.md)) and four history files:
+[`dashboard-ui-in-compose.md`](../history/dashboard-ui-in-compose.md),
+[`timeline-labels-map-jump-and-state-snapshots.md`](../history/timeline-labels-map-jump-and-state-snapshots.md),
+[`dashboard-sign-in-and-access.md`](../history/dashboard-sign-in-and-access.md) and
+[`dashboard-guide-mode-and-user-guide.md`](../history/dashboard-guide-mode-and-user-guide.md).
 
-Every claim about the current code carries a repo-relative path. Line numbers are accurate at commit
-`22f04bf`; re-grep rather than trusting them once the tree moves.
+§2 and §3 describe the code as it was at commit `22f04bf`, before the work, and every claim in them
+carries a repo-relative path; their line numbers are accurate at that commit, so re-grep rather than
+trusting them. The sections after them describe what was built.
 
 ---
 
@@ -67,7 +81,7 @@ Second round (the user, 2026-10-02):
 | --- | --- |
 | Retry | A retry re-drives only the retried saga, from the step that failed onwards. The redrive carries a target-saga-type header (`MessageEnvelope`), and `SagaOrchestrator.HandleCoreAsync` ignores a targeted message addressed to another saga type. The failed step is obvious in the UI: marked in the timeline and on the map, and named in the retry confirmation. |
 | Retry without an exception | Re-run the failing step. The engine records `PayloadJson` on every `MessageReceived` entry. For a business failure the failing step is the last handled inbound message before the terminal entry; for a timeout it is the step that entered the timed-out state. Retry resets `CurrentState`/`Status` to what they were before that step (`ISagaAdminStore.ResetStateAsync`, contract unchanged; business fields are not rolled back) and replays only that message, targeted at that saga type. A saga recorded before payloads existed is refused (422) with an explanation. The reset-to-start path is removed. |
-| Commits | A feature branch off `main`, one local commit per logical change, nothing pushed. |
+| Commits | A feature branch off `main`, one local commit per logical change, nothing pushed. [2026-10-03: the maintainer then asked for the branch to be pushed; see §12.] |
 | Setup screen | Requires a one-time code the API logs at start when no users exist (`Dashboard:Setup:Code` may preset it). No time window. |
 | User guide | Text and tables, no screenshots. A written rule in `CONTRIBUTING.md`, a header note in `docs/dashboard-guide.md` and one in the tour step definitions: a change to the dashboard UI updates the guide and the tour in the same change; anchor-contract specs fail when a tour anchor disappears. |
 | Guide mode | When switched on it follows the user: each page or area they open explains itself once (list, detail, map, timeline, data, retry, administration), with Replay available. |
@@ -84,7 +98,8 @@ Second round (the user, 2026-10-02):
 - A login page, a user menu, and an Administration area (users, teams, roles, grants per saga type).
   Retry and data are shown only to those permitted; a retry records who asked.
 - The step a failed saga failed in is marked; a retry re-runs that step for that saga only.
-- A Guide toggle in the top bar explains each page and area the first time it is opened.
+- A Guide toggle in the top bar explains each page and area as it is shown, once for each time Guide is
+  switched on (§9.1).
 
 ---
 
@@ -103,8 +118,8 @@ forever. `api-config.ts` hard-codes `API_BASE_URL = 'http://localhost:5080'` and
 every request and the hub sends it through `accessTokenFactory`. There is no browser storage, no lazy
 route and no `src/app/util/` folder. The production build has about 96 kB of headroom under the 500 kB
 initial-bundle warning; component styles warn at 4 kB (`angular.json` budgets). [2026-10-03: after the
-earlier SPA commits and the move to Angular 22 the headroom is about 18.7 kB; see the note under
-§12's Progress.]
+earlier SPA commits and the move to Angular 22 the headroom was about 18.7 kB, and it is 46.45 kB at the
+end of the work; see §12, "Where the build departed from the plan".]
 
 **The API** (`dotnet/src/VSaga.Dashboard.Api/`). Minimal API endpoints in `Endpoints/SagaEndpoints.cs`:
 list, detail (`SagaDetail(summary, dataJson)`), timeline, map, children, retry, saga types, and
@@ -379,9 +394,12 @@ skipped as a duplicate) and a timeout that was claimed but not handled.
   your role. It needs the sagas.data permission." and the timeline shows no Data toggles.
 - `SagaMap` gains `focusSequence` (input), `focusCleared` and `timelineRequested` (outputs) and a
   `role="status"` banner: "As of entry #12 of 34: StepSucceeded, recorded at 14:03:07.140 (+1.224 s)",
-  with "Nothing moved between services at this entry" for a plain event, "Entry 57 is not on the map
-  yet; showing the closest earlier entry" for a fallback, and a "Back to this entry in the timeline"
-  button. `resolveFocusIndex(events, sequence)` in `saga-map-layout.ts` picks the exact event, else the
+  with "Nothing moved between services at this entry, so OrderSaga is highlighted." for a plain event,
+  "The selected entry is not on the map yet; showing the closest earlier entry." for a fallback to an
+  earlier event, "The selected entry is not on this saga's map; showing its first entry." for a fallback
+  to the first, and a "Back to this entry in the timeline" button. The fallback sentences name no entry
+  number: stored sequence numbers are global on a shared store and appear nowhere on the timeline.
+  `resolveFocusIndex(events, sequence)` in `saga-map-layout.ts` picks the exact event, else the
   last earlier one, else index 0. Focus renders as its own `node--focus` outline class;
   `computeNodeStates` is unchanged, so a failed node stays failed and ordinary playback is untouched.
   Play, restart, step and scrub release the focus.
@@ -402,7 +420,8 @@ skipped as a duplicate) and a timeout that was claimed but not handled.
   `banner banner--warning` above it. Every reconnect after the first connect runs one live refresh
   (pushes sent while the hub was down are lost), which retries both; after a failed detail load it
   runs `load()` instead.
-- `canViewData` is a constant `true` until the permission wiring lands (§12, C47).
+- `canViewData` was a constant `true` until the permission wiring landed (C47); since then the detail page
+  derives it from `auth.can('sagas.data', sagaType)` and passes it down (§8.11).
 
 Shared global classes in `src/styles.scss`: `.sr-only`, `.muted`, `.micro-label`, `.json-block`, `.btn`
 with `.btn--quiet`, and `.banner` with `--warning`/`--error` (the base class carries the padding). No
@@ -506,8 +525,9 @@ snapshot.
 | 200 × 32 KB, without the budget | 6.4 MB | about 640 MB |
 
 The budget caps the third row at about 1 MiB of full snapshots plus markers. Redis is the exposed
-provider (§3); the redis and mongo overlays are measured live and the figures go into
-`docs/persistence.md`. The real fix, a payload-free timeline read for visited states and the map, is a
+provider (§3); the redis and mongo overlays were measured live and the figures are in
+`docs/persistence.md` (per completed `OrderSaga`, snapshots add 4 216 bytes on Redis and 3 234 on
+MongoDB). The real fix, a payload-free timeline read for visited states and the map, is a
 contract addition and is deferred (§14).
 
 ### 6.6 Sequence numbers and message ids
@@ -892,8 +912,11 @@ correlation id, and the username on a retry entry; ADR 0006 lists this.
   recreated API keeps sessions. The XML repository throws while the store is not ready, and the auth
   endpoints and cookie events check readiness first, so an unavailable store yields 503 or 401, never a
   new in-memory key. The database file holds hashes, stamps and the unencrypted key ring: the directory
-  is 0700, the file 0600, and the docs say a backup of the volume is a credential backup and describe
-  `ProtectKeysWithCertificate` as the way to encrypt the ring at rest.
+  is 0700, the file 0600, and the docs say a backup of the volume is a credential backup and that
+  encrypting the ring at rest is a hardening the deployer adds to the API's composition (the framework's
+  `ProtectKeysWithCertificate`). vSaga ships no configuration key or code for it, so the ring is stored
+  unencrypted and ASP.NET Core logs "No XML encryptor configured" at start; that path is not exercised
+  in this repository (`docs/dashboard.md`, "The identity store").
 
 ### 8.4 Sign-in, passwords and throttling
 
@@ -915,8 +938,11 @@ correlation id, and the username on a retry entry; ADR 0006 lists this.
   concurrency limiter around password hashing (permits `max(2, cores/2)`, short queue, 429 when full)
   keeps hashing from starving the API. 429 carries `Retry-After`.
 - Lockout stays. An attacker who knows a username can keep it locked; the OWASP device-cookie bypass is a
-  follow-up (§14). The residual risk is recorded in ADR 0006 and the guide's Troubleshooting section
-  documents the escape: restart with `Dashboard:Lockout:MaxFailedAttempts=0`.
+  follow-up (§14). The residual risk is recorded in ADR 0006, and the guide's Troubleshooting section
+  lists what ends a lock: an administrator's Unlock, `Dashboard:Admin:ResetOnStart` (both at once), or
+  waiting out `Dashboard:Lockout:Minutes`. Restarting with `Dashboard:Lockout:MaxFailedAttempts=0` only
+  stops new locks: `CredentialVerifier` refuses an account whose lock is still in force whatever the
+  setting says.
 - Security stamp (128 random bits) rotates on password change, administrator reset, disable and enable,
   and when a wrong current password on a password change locks the account.
   The hub connections of the affected user are closed on every rotation and on sign-out, with a close
@@ -1105,17 +1131,31 @@ lists every `Dashboard:*` key in one table.
   stays in memory. Injected through `GUIDE_STORAGE` and `GUIDE_PERMISSION_CHECK` tokens; the first guide
   commit provides the permission check from `AuthService.can`.
 - Areas, each a short tour with a version: list, detail summary, map, timeline, data, retry,
-  administration. While Guide is on, an area explains itself the first time the user opens it: the list
-  and administration pages on navigation, the map and timeline when their tab shows, data when a step
-  inspector or the Saga data bar opens, retry when the retry row shows on a `Failed`/`TimedOut` saga.
-  `seen[area] = version`; bumping a version shows a changed tour once more. Replay repeats the current
-  area. Switching Guide on starts the current page's area; off by default, with a non-modal hint once.
+  administration. While Guide is on, an area explains itself when it is shown, unless the user has been
+  through its current version: the list when its route opens and the detail summary when a saga's page
+  opens (both triggered by the route; the page also announces the summary once the saga shows), the map
+  and timeline when their tab shows, data when a step inspector or the Saga data bar opens, retry when
+  the retry row shows on a `Failed`/`TimedOut` saga (the detail page announces these parts from effects,
+  through `GuideService.areaShown`). The administration area starts when its pages show, not when the
+  route opens: its shell announces it once it has read everything, because the tour points at a table
+  that exists only then, and again after each navigation inside `/admin`; the trigger's `within` field
+  (the paths the pages live on) keeps Replay and the hint from being removed and put back between two
+  of them. `seen[area] = version`; bumping a version shows a changed tour once more. Switching Guide on
+  clears `seen` (a person who switches it on wants the walkthrough), so every switch-on explains each
+  area again as it is shown; a reload with Guide already on repeats nothing. It then starts the page's
+  own area (the list; a saga's summary) and, when that is another area, the part shown last (the map
+  the page opened on; on an administration page, the administration tour). An area announced while a
+  tour runs waits in a queue: Done starts the next, Escape and Skip drop it, as do a page change and
+  switching Guide off. Replay repeats the last part announced (the page's own area until another part
+  of the page is shown). Guide is off by default, with a non-modal hint once.
 - `GuideToggle` in `.topbar-end` (`data-tour="topbar-guide"`), a `<button aria-pressed>` "Guide",
   "Replay tour", and a "User guide" link.
 - `GuideOverlay`, loaded with `@defer (when guide.enabled())`: waits for the area's ready anchor (250 ms
   polls, 20 tries); drops steps whose permission fails or whose anchor, reveal control and fallback are
-  all missing at begin, so "Step n of m" is true; a centred popover is used only for an anchor that
-  disappears mid-tour. Pure geometry in `guide-geometry.ts` (`spotlightBox`, `placePopover`); a
+  all missing at begin, so "Step n of m" is true; a centred popover is used for an anchor that
+  disappears mid-tour and, when a step has no fallback anchor, for one that is wholly off screen and
+  cannot be scrolled to (a step with a fallback highlights that instead). Pure geometry in
+  `guide-geometry.ts` (`spotlightBox`, `placePopover`); a
   `requestAnimationFrame` loop tracks the anchor. Modal while active: siblings get `inert`, a full-screen
   layer cancels `mousedown`, Escape ends, arrows move, Tab wraps; focus returns to where it was. No
   animation under `prefers-reduced-motion`.
@@ -1123,22 +1163,29 @@ lists every `Dashboard:*` key in one table.
   `topbar-guide`; `list-filters`, `list-table`, `list-sort`, `list-row`, `list-pagination`;
   `detail-summary`, `detail-data`, `detail-retry`, `detail-tab-map`, `detail-tab-timeline`;
   `map-canvas`, `map-controls`; `timeline`, `timeline-entry`, `timeline-step-data`; `admin-nav`,
-  `admin-nav-users`, `admin-nav-teams`, `admin-nav-roles`, `admin-list`. The list's sort headings
-  become buttons and rows open on Enter and Space in the list commit.
+  `admin-nav-users`, `admin-nav-teams`, `admin-nav-roles`, `admin-list`. In the list commit the sort
+  headings became buttons and each row opens through a link in its first cell (one tab stop per row;
+  Enter opens it, and a click anywhere else in the row still does).
 - Tour copy is written against the shipped labels ("Recorded at", "At start", "At end", "Compare",
   "Re-run step N") and the retry semantics of §7: the retry area says a retry re-runs the step that
   failed, for this saga only, and that other services consuming that message still receive it.
 
 ### 9.2 The user guide and the rule
 
-`docs/dashboard-guide.md`, text and tables only, with fixed H2 headings the app links to: Opening the
+`docs/dashboard-guide.md`, text and tables only, with fixed headings the app links to: Opening the
 dashboard; Signing in (the seeded administrator, the setup code, lockout, forced password change, idle
 and absolute timeouts, sign out); Guide mode; The saga list; The saga detail page (Summary, Map,
 Timeline, Saga data, Retrying a saga: the failed-step marker, what is re-run, side effects, the
 202/409/422/502 outcomes in user terms, attribution); Administration (users, teams, built-in roles
 against the four permissions, grants with a worked scope example, the last-administrator rule); Your
-account; Troubleshooting (two stacks in one browser, lockout escape, the minimum engine version for a
-targeted retry). The in-app link uses `USER_GUIDE_URL`, the guide on GitHub's `main` branch.
+account; Troubleshooting (locked accounts and what ends a lock, two stacks in one browser, the engine
+version a targeted retry needs: the repository has no release tags, so there is no number to give and the
+guide names the change and how to see it on a host). The in-app link uses `USER_GUIDE_URL`, the guide on
+GitHub's `main` branch. The app links to seven headings (`docsAnchor` in `guide-areas.ts`): three H2
+(The saga list, The saga detail page, Administration) and four H3 under the detail page (Map, Timeline,
+Saga data, Retrying a saga). Opening the dashboard, Signing in, Guide mode, Your account and
+Troubleshooting have no tour that opens them; the toggle's own "User guide" link opens the top of the
+document.
 
 The rule, written in `CONTRIBUTING.md`, in a header note of `docs/dashboard-guide.md` and in a comment
 at the top of the tour step definitions: a change to the dashboard UI updates the guide and the tour in
@@ -1167,7 +1214,7 @@ edited.
 | Identity path unset in a container | Same | No fallback under `/app`; the health check names the missing key |
 | Seed password rejected | No setup screen, a problem code | Setup stays closed when seed keys are set; health Degraded with the reason |
 | Only administrator's password lost | Cannot sign in | `Dashboard:Admin:ResetOnStart=true` with the seed keys |
-| Lockout used against a known username | "Sign-in failed" for 15 minutes | Lockout is temporary; limiter keyed on address and username; restart with `MaxFailedAttempts=0`; device cookie is a follow-up |
+| Lockout used against a known username | "Sign-in failed" for 15 minutes | Lockout is temporary; limiter keyed on address and username; an administrator's Unlock or `ResetOnStart` ends a lock at once (`MaxFailedAttempts=0` only stops new locks); device cookie is a follow-up |
 | Proxy hides client addresses | Limiter shares one bucket per username | Key includes the username; Warning when forwarded headers arrive from an untrusted peer |
 | TLS in front without a forwarded scheme | Hub never connects; cookies not Secure | `RequireHttps` validates forwarded-header trust at start; the origin guard logs both values |
 | Two stacks in one browser | First unsafe request on the other stack fails once | Per-project session cookie; antiforgery 400 refetches the session and retries once |
@@ -1215,10 +1262,14 @@ rebuilds, runs the named tests, confirms that exactly those fail, and restores.
 
 ## 12. Commit sequence and progress
 
-One local commit per logical change on `dashboard-usability-and-access`; nothing pushed. LIVE marks a
-commit verified against `docker compose up -d --build` before the next slice starts. Brackets name the
-source workstream: P packaging, D detail UX, E engine snapshots, R retry, B auth backend, F auth
-frontend, G guidance and docs; "feasibility 9" is that review's finding on message-id stamping.
+One commit per logical change on `dashboard-usability-and-access`. The commits were local until the
+maintainer asked, on 2026-10-03, for the branch to be pushed; from `7bf2e4f` on it is on the remote, and
+a fix to an earlier commit is a follow-up commit, not an amend. The table is the plan's sequence of 58
+numbered commits; Progress below lists what landed. LIVE marks a commit that the plan wanted verified
+against `docker compose up -d --build` before the next slice starts (the history files record which live
+runs were made, and against which commit). Brackets name the source workstream: P packaging, D detail UX,
+E engine snapshots, R retry, B auth backend, F auth frontend, G guidance and docs; "feasibility 9" is that
+review's finding on message-id stamping.
 
 | # | Commit | Live |
 | --- | --- | --- |
@@ -1288,21 +1339,294 @@ C34 registers the cookie scheme with its problem-writing events, so credential-l
 passing; C37 lands the volume, the chown and `USER` together; C46 updates the hub and app specs that
 assume the key.
 
-**Progress:** nothing has landed yet beyond `22f04bf` ("Override piscina to 5.3.2 and patch
-brace-expansion for npm audit"), which made `npm audit --audit-level=low` pass on `main` again, a gate
-every commit above must clear. [2026-10-03: this sentence predates the work. Progress is recorded in
-the history files under `docs/history/` as each part lands, and the final commit (C58) rewrites this
-line; the commits are not listed here meanwhile.]
+**Progress: complete.** Every row of the table above landed, 2026-10-02 to 2026-10-05, as 91 commits: the
+prerequisite `22f04bf`, the 58 numbered commits, 28 follow-ups and other corrections (a follow-up names
+the commit it corrects and lists the review, live-check or mutation findings it fixes; none amends a
+commit that had been pushed) and four more commits outside the numbering (`a8bbac3`, `39a622a`, `dd37bd1`
+and the handoff record `7bf2e4f`). The last commit that changed code is `425910f`; after it only
+documentation changed (`31c4f06`, C57, and C58). At `425910f`: `dotnet build` 0 warnings and 0 errors,
+`dotnet test` 1644 passed in 16 assemblies, `npm audit` 0 vulnerabilities, `ng build` with no warning and an
+Initial total of 453.55 kB, and `ng test` 2344 passed in 58 files, the SPA gates under Node 22.23.3
+(`docs/history/` has the runs). The commits, by slice, with each follow-up under the commit it corrects:
 
-*Note, 2026-10-03:* a second prerequisite landed between C36 and C37, "Move the dashboard SPA to
-Angular 22 for the http-cache-semantics advisory". A high advisory in every version of
-`http-cache-semantics` (GHSA-ch52-4w7c-c8xp), reached only through the Angular 21 CLI's `pacote` chain,
-failed the same audit gate, and the only fix is Angular CLI 22. The SPA is now on Angular 22.2.1 with
-TypeScript 6.0, and the piscina override from `22f04bf` is gone (`@angular/build` 22 depends on 5.3.2
-itself). Where §1 and §2 say Angular 21 or 21.2.24, read 22.2.1; the components keep the pre-22 change
-detection (`ChangeDetectionStrategy.Eager`) and the XHR backend (`withXhr()`). The initial bundle is now
-481.34 kB, about 18.7 kB under the 500 kB warning budget, so the remaining SPA commits keep new pages and
-services in lazy chunks and their eager additions minimal.
+**Outside the plan's numbering**
+
+- `22f04bf` Override piscina to 5.3.2 and patch brace-expansion for npm audit
+- `a8bbac3` Move the dashboard SPA to Angular 22 for the http-cache-semantics advisory
+- `39a622a` Pin the Node 22 patch Angular 22 needs and keep generated components eager
+- `dd37bd1` Isolate the unit test files so a spec's module mock cannot be bypassed
+- `7bf2e4f` Record the remaining dashboard usability and access work for handoff
+
+**Records**
+
+- C01 `6f44c8b` Add the dashboard usability and access design and ADRs 0006, 0007 and 0008
+
+**Packaging**
+
+- C02 `c99a547` Make the dashboard SPA same-origin: relative URLs, a dev proxy and the dev server on port 4201
+- C03 `9d79b93` Make the dashboard API's CORS policy opt-in through DashboardEdge
+- C04 `d242292` Add the dashboard-web container image and guard the built index.html against inline handlers in CI
+- C05 `2fd08a9` Run the dashboard UI from compose, with every overlay on its own UI port and the dashboard ports bound to loopback
+- C06 `899ce75` Honour forwarded headers from the dashboard's trusted proxies
+- C07 `736a76d` Build the compose images and smoke-test the dashboard UI origin in CI
+- C08 `ef9e09a` Document the one-command demo and how the dashboard UI is served
+- C09 `509ad0f` Record the dashboard UI joining compose
+
+**Timeline, map jump, snapshots and targeted retry**
+
+- C10 `f2cbe38` Extract the detail page's pure helpers: state JSON, JSON diff, time formatting and entry-type labels
+- C11 `50c0583` Fold the saga timeline into steps with their state snapshots, and exclude test helpers from the app build
+- C12 `feae3d1` Show the timeline as steps with labelled local times
+- C13 `b38752d` Jump from a timeline entry to the saga map positioned on that entry
+- C14 `bbf3dcf` Add direct unit tests for SagaMapBuilder
+- C15 `3eda0ea` Detach a failed event-log append from EF Core's change tracker
+- C16 `e3379f0` Add the StatePersisted entry type and the shared snapshot entry builder
+- C17 `46dbce4` Skip StatePersisted entries in the saga map
+- C18 `4fce969` Add a timeline and map redaction seam and stop pushing payloads and error messages over SignalR
+- C19 `129115e` Stamp the stored sequence number on timeline entries pushed to the dashboard
+- C20 `899dd9f` Stamp the inbound message id on step bookkeeping entries and on entries logged through the saga context
+- C21 `507f661` Record a StatePersisted snapshot after every committed saga transition
+- C22 `1f1e056` Record the state a dashboard retry reset leaves behind
+- C23 `417a64e` Target a redriven message at one saga type and record every inbound message's payload
+- C24 `3a817e6` Retry a failed saga from the step that failed, addressed to that saga type only
+- C25 `f8e91f0` Show each step's saga data: what changed and the full state after the step
+- C26 `25385b6` Replace the Data tab with a Saga data bar: data at start, at end, and a comparison
+- C27 `c633055` Coalesce live updates into one refresh that also re-reads the saga, and show load errors
+- C28 `f28636e` Mark the failed step in the timeline and on the map, and name it in the retry confirmation
+- C29 `61354b9` Document state snapshots, the labelled timeline, the map jump and the targeted retry
+  - follow-up `73cbce6` Correct the retry, budget and upgrade-order wording in the snapshot docs
+- C30 `231688a` Record the timeline, map jump, state snapshot and targeted retry slice
+
+**Authentication and access**
+
+- C31 `e9eea61` Add the dashboard identity project: model, store contract and EF Core store
+- C32 `69c993f` Add the dashboard identity services: passwords, sign-in verification, access evaluation and administration
+- C33 `e6228c3` Create the identity database at start-up and report it in the health check
+  - follow-up `1d6b87f` Make the stale-lock test fail when the health check ignores the probe's token
+- C34 `8b7a39a` Authenticate dashboard requests through a cookie-or-key policy scheme and protect every endpoint by default
+  - follow-up `83d99eb` Read identity readiness before resolving a session and pin the sign-in time across sliding renewal
+- C35 `ed8f939` Add dashboard sign-in: session, login, logout and password change, with antiforgery, rate limits and lockout
+- C36 `82c4797` Create the first dashboard administrator from configuration or a one-time setup code
+- C37 `f25b1ec` Persist the dashboard identity on a volume, run the API as non-root and seed the demo administrator
+  - follow-up `c0a1ca4` Leave framing headers to nginx: stop antiforgery adding X-Frame-Options to API responses
+- C38 `e69deb8` Enforce saga permissions on the dashboard endpoints: scoped lists, redaction and retry attribution
+  - follow-up `5e1bd67` Name a blank route type in the 403 and correct the scoped-list bounds wording
+- C39 `8d69429` Add the dashboard access administration endpoints
+- C40 `852a901` Check access on hub subscriptions, guard the hub's origin and drop connections when access changes
+  - follow-up `e913282` Close hub connections for reconnect instead of aborting them, and finish the hub tests
+  - follow-up `35abb82` Follow-up to e913282: abort a connection that cannot be closed, cut the Host in the origin log, pin renewal, reword the design
+- C41 `64ba0ac` Smoke-test dashboard sign-in, the hub origin guard and identity health in CI
+  - follow-up `4dde4b1` Harden the compose job's sign-in smoke step and describe it in CONTRIBUTING.md
+- C42 `81e3006` Promote the shared banner, button, form and table styles to the global stylesheet
+- C43 `fabc67c` Let the hub service stop and reset, resume, and give up when the session is gone
+  - follow-up `a244d33` Follow-up to fabc67c: pin the hub's reset checks with specs, stop without waiting for the socket, end the loops on destroy
+- C44 `0f3bb28` Add the SPA session model, the auth service and an auth test helper
+  - follow-up `2a2a64b` Follow-up to 0f3bb28: drop session reads that predate an identity change, bound logout, harden the session and error parsing, align the auth mock
+- unnumbered `1adee09` Pin unknown-member rejection on the setup, password and reset bodies and the setup code in the identity service
+- C45 `d78d7cc` Add the login, setup and account pages as lazy routes
+  - follow-up `94d6c40` Follow-up to d78d7cc: keep long setup codes, close setup on a 409 at once, end a lockout on a notice, and bound the identity POSTs
+- C46 `193e679` Require a dashboard session in the SPA and remove the API key from the bundle
+  - follow-up `91068d9` Follow-up to 193e679: first-paint placeholder, no second wait on an unreachable API, same-origin interceptor, and menu keyboard fixes
+- C47 `731b724` Show retry and saga data only to users permitted for that saga type, with no-access states
+  - follow-up `952269e` Follow-up to 731b724: re-read the list on reconnect, drop stale list answers, gate the map's error text, keep the hub out of forbidden pages
+  - follow-up `4ac938d` Follow-up to 952269e: no hub join after the page is left, stale 403s by send order, a list that cannot navigate after leaving, and the lost-access reconnect
+  - follow-up `c4720c6` Follow-up to 4ac938d: read the session when live updates reconnect, so a grant that widens access shows without a reload
+- C48 `b3b67e1` Add the administration area: shell, API service, store and role management
+  - follow-up `e89a1ef` Follow-up to b3b67e1: keep pages on a failed refresh, never overwrite typing, never load for ever, and close the admin a11y and test gaps
+- C49 `cec2a40` Add user management with a grants editor and an effective-access preview
+  - follow-up `c6ca8ca` Follow-up to cec2a40: focus on a grant after a 400 is real now, stale answers stay off the fields, Locked follows the clock, and the grants editor reads the catalogue
+  - follow-up `fdc1685` Follow-up to c6ca8ca: the keyboard keeps its place while a form is saved, a refusal puts it on the banner, a page left for a list puts it on the heading, and Escape closes the reset panel
+- C50 `7e61f16` Add team management to the administration area
+  - follow-up `537134e` Follow-up to 7e61f16: focus the grant a 400 names, read the lists after a bad member, say Save replaces, focus failure banners, and close the member-list gaps
+- C51 `1c7e7aa` Document dashboard sign-in, access control and the identity store
+  - follow-up `a441e75` Follow-up to 1c7e7aa: correct nine inaccuracies in the sign-in docs and state what the two-stack check observed
+- C52 `00f1ee8` Record the dashboard sign-in and access slice
+- unnumbered `71430ac` Drop the unused RouterLink import from the admin shell spec's edit stub
+- unnumbered `71965b9` Say which authentication problems point at the documentation
+
+**Guidance**
+
+- C53 `de8744f` Add guide mode to the dashboard: a top-bar toggle and the saga list area
+  - follow-up `0419f6f` Follow-up to de8744f: a running tour is not queued behind itself, the hint keeps the keyboard focus, a tall popover scrolls, and the focus return respects the next page
+  - follow-up `425910f` Follow-up to de8744f: the overlay scrolls an element that is off screen sideways and gives up one that cannot be scrolled to, and the list tour says how to get it back
+- C54 `94d67b6` Explain the saga detail page in guide mode: summary, map, timeline, data and retry
+  - follow-up `2c9ad9e` Follow-up to 94d67b6: the data area announces only a view that is on screen, the retry answer is heard, the retry, data and summary copy say what the page does, and a router-based spec holds the announcements
+- C55 `e4e62d6` Explain the administration area in guide mode
+  - follow-up `adcf234` Follow-up to e4e62d6: Replay and the hint stay put between two administration pages, the tour's copy is pinned to the pages it quotes, a real-app spec holds "Step 1 of 8", and the corrections to e4e62d6's message
+- C56 `f154593` Add the dashboard user guide and link it from the app, the README and the docs index
+  - follow-up `02451d5` Follow-up to f154593: say in dashboard.md and the SPA README that guide mode and the guide exist, and correct ten statements in the guide
+- C57 `31c4f06` Record guide mode and the dashboard user guide
+- C58 this commit: Mark the dashboard usability and access design and ADRs implemented, and delete the working plan
+
+**Where the build departed from the plan.** Taken from the commit bodies and the four history files, which
+have the evidence; each bullet names the commits it rests on.
+
+*Throughout*
+
+- **The branch was pushed.** The plan said "nothing pushed" (§1.2 and this section's opening sentence
+  before C58). The maintainer asked on 2026-10-03 for the branch to be pushed, so from `7bf2e4f` on it is
+  on the remote and a fix to an earlier commit is a follow-up commit, never an amend. One local amend of a
+  pushed commit (the message of `731b724`, C47) was undone before it was pushed, and the pushed message is
+  the original; `docs/history/dashboard-sign-in-and-access.md` tells it.
+- **Defaults and ranges.** Every default in §4.8, §6.2 and §8.10 is the one built. The ranges the design
+  left open are those of the `Dashboard:*` table in `docs/configuration.md`: for example a password
+  length of 8 to 128, at most 100 failed attempts before a lock, a lock of 1 to 1440 minutes, a setup
+  code of 16 to 128 characters and a cookie name of 1 to 128 characters (the name carries the compose
+  project name, which defaults to the checkout folder's, and a limit of 64 failed composition for a
+  folder name of 51 characters or more).
+
+*Prerequisites*
+
+- **`22f04bf`** made `npm audit` pass on `main` again, the gate every commit has to clear. Its `piscina`
+  override was removed by `a8bbac3`.
+- **The Angular 22 move** (`a8bbac3` between C36 and C37, `39a622a` just after C37; at the maintainer's
+  choice). A high
+  advisory in every version of `http-cache-semantics` (GHSA-ch52-4w7c-c8xp), reached only through the
+  Angular 21 CLI's `pacote` chain, failed the same gate, and only Angular CLI 22 drops that chain. The SPA
+  is on Angular 22.2.1 and TypeScript 6.0.3: where §1 and §2 say Angular 21 or 21.2.24, read 22.2.1. The
+  components declare `ChangeDetectionStrategy.Eager` (22 defaults to OnPush) and `provideHttpClient` keeps
+  the XHR backend (`withXhr()`, 3.4 kB of the Initial total). `39a622a` pinned the web image to
+  `node:22.23-bookworm-slim` (§4.1 says `node:22-bookworm-slim`: a floating tag can resolve to a cached
+  22.x below the 22.22.3 that CLI 22 needs), set `check-latest` in CI and made the component schematic
+  generate Eager components.
+- **Test isolation** (`dd37bd1`). Under Vitest's `isolate: false` a worker that had already loaded the
+  real hub service kept it in its module cache, and the hub spec's `vi.mock` was registered too late:
+  12 of 20 full runs failed before, none of 24 after. The fix is `"splitting": false` in the `test`
+  options of `angular.json`, which makes the builder print a deprecation notice on every run; `isolate:
+  true` was the alternative (about 77 % slower). The option goes when Vitest 5 lands.
+
+*Packaging (C02 to C09)*
+
+- **nginx's error log** (`2fd08a9`). The access log format uses `$uri` (§4.2), but the error log quotes
+  the request line and the upstream URL on an upstream failure, and the first live run found
+  `access_token=...` in it. The server block sets `error_log ... crit`, so nginx no longer says why a 502
+  happened. This is not in the §4.2 table.
+- **Forwarded headers** (`899ce75`). `Dashboard:TrustedProxies` accepts IPv4 entries only in canonical
+  dotted-decimal form (the parser would read `10` as `0.0.0.10`), and the untrusted-peer Warning of
+  §4.4 is rate limited: once per peer every five minutes and at most 20 per window.
+
+*Timeline, map jump, snapshots and targeted retry (C10 to C30)*
+
+- **The retry planner picks the failure by recency** (`3a817e6`), as §7.2 says, not by the working
+  plan's fixed precedence (the last `StepFailed`, else the business failure, else the timeout), so a
+  business failure after a technical failure that a retry had fixed re-runs the later step. A
+  `DeliveryExhausted` without a message id is skipped, and MongoDB's `$vsagaPayloadOmitted` marker counts as
+  no body (the step is refused as too large to replay).
+- **The restore after a failed publish** (`3a817e6`) runs after any exception from the publish, not only
+  a `MessageTransportPublishException`, and everything after the reset ignores the request's token: the
+  first live run paused RabbitMQ, `RabbitMqTransport` threw `TaskCanceledException` from opening a
+  channel, and the saga was left Running with no redrive. A restore that fails for another reason than a
+  concurrent write is logged as an Error and answered as a 502 saying the saga is Running in the step's
+  from-state, instead of escaping as a 500 (§7.3 does not say so).
+- **Not run live.** A `DeliveryExhausted` retry (no saga had that plan in the runs) and a targeted retry
+  over the HTTP, Brighter, MassTransit and Wolverine transports (every live retry ran on RabbitMQ).
+- **The map's fallback banners** name no entry number (§5.3 corrected): stored sequence numbers are
+  global on a shared store and appear nowhere on the timeline.
+- **Storage was measured** (`61354b9` put the figures into `docs/persistence.md`): per completed
+  `OrderSaga`, snapshots add 4 216 bytes on Redis and 3 234 on MongoDB. The figures in ADR 0007 stay
+  what they are, estimates from arithmetic over the sample's shapes.
+
+*Authentication and access (C31 to C52)*
+
+- **Hub connections are closed for reconnect, not aborted** (`e913282`, `35abb82`). C40 closed them with
+  `HubCallerContext.Abort()`, which sets `allowReconnect` to false, so the JavaScript client stops for
+  good instead of running its reconnect policy; the design and the commit had assumed the opposite and
+  the tests only counted `Abort()` calls. The correctness review found it, and the registry now uses
+  `IConnectionLifetimeNotificationFeature.RequestClose()` (the path SignalR takes for an expired ticket),
+  with `Abort()` as the fallback (events 7320 to 7322). Among the same review's other fixes: a role
+  deletion notifies every connection, the hub's view of the ticket expiry is capped at the absolute
+  lifetime and the origin Warning truncates what the client sent.
+- **The SPA hub service ignores the booleans** the subscribe methods return (`fabc67c`): the record of a
+  subscription is kept whatever the hub answered, because resubscribing on reconnect is how a refused
+  subscription becomes an accepted one after a grant. Its session probe answers false only when a refresh
+  finds the session anonymous (`0f3bb28`), so an API that is unreachable at start does not stop the hub.
+  An identity epoch (`2a2a64b`) drops a session read that predates a sign-out or an identity change.
+- **Forms avoid `NgForm`** (`d78d7cc`): the pages are template-driven but carry `ngNoForm` and check
+  their own fields, because `NgForm` and its validators cost 6.8 kB of the Initial total and put it over
+  the budget.
+- **The saga detail page is a lazy route** (`193e679`). After the Angular 22 move the Initial total was
+  481.34 kB, under the 500 kB warning budget by 18.7 kB; C45 (the login, setup and account pages and the
+  eager auth service) and its follow-up brought it to 496.75 kB, and the interceptor, initializer, top
+  bar and guards would have made it 506.18 kB, so the heaviest page became `loadComponent` (430.97 kB).
+  `authGuard` still runs before the chunk is requested. Every later page of the administration area and
+  the guide overlay are lazy chunks, the budget was never raised, and the Initial total at the end is
+  453.55 kB.
+- **Smaller choices that keep a decision's intent.** The retry hint shows only for a saga a retry would
+  accept (`731b724`). A new grant starts as the role that holds the fewest permissions, so "Add grant,
+  then All saga types" is not one click from an administrator grant (`cec2a40`). A 404 on an
+  administration page shows a message and a link, because the message would not survive a navigation
+  (`b3b67e1`). The team page has an effective-access preview and shares a grants editor with the user
+  page (`7e61f16`; not in the plan). `util/session-access.ts`, `failure-text.ts`, `page-lifecycle.ts`
+  and `lockout-clock.ts` are not in the plan's file list.
+- **Antiforgery and framing.** The first live check of C37 found two `X-Frame-Options` headers: antiforgery
+  adds `SAMEORIGIN` to any response it issues a token on, and nginx sends `DENY`. `c0a1ca4` suppresses the
+  API's header, so the edge owns the framing policy. The same run saw `X-Content-Type-Options: nosniff`
+  twice (nginx and the API, the same value), which was left.
+- **The slice's mutation pass** ran the nine mutations of the plan against `e913282`, reading "remove the
+  retry policy" as the `sagas.retry` requirement on `POST .../retry` (the other reading, the SPA hub's
+  reconnect policy, was mutated in C43). All nine failed only their own tests, and the pass found two
+  gaps: the request records of the setup, password-change and password-reset bodies could drop
+  `Disallow` unseen, and the setup-code decision was held by four HTTP tests only. `1adee09` closed both.
+- **The documentation** (`1c7e7aa`, `a441e75`): `docs/dashboard.md` "Live updates (SignalR)" was rewritten
+  because it had been stale since C40, and nine statements of the first version were corrected after an
+  accuracy review.
+
+*Guidance (C53 to C58)*
+
+- **A guide switch-on explains everything again.** `setEnabled(true)` clears `seen` on purpose, because a
+  person who switches Guide on wants the walkthrough; §9.1 had said an area explains itself "the first
+  time" the user opens it (it now says what the code does).
+- **The administration area starts when its pages show, not on the route** (`e4e62d6`, `adcf234`). On the
+  route trigger the tour began while the shell still said "Loading..." and always left out the step about
+  the table ("Step 1 of 7" at every read delay from 0 to 1.5 s, against "Step 1 of 8" once the shell
+  announces it). The trigger gained a `within` field so that a navigation between two administration pages
+  does not remove and re-create Replay and the hint.
+- **Seven `docsAnchor` values, not one per H2** (`de8744f`, `f154593`): three H2 and four H3 (§9.2 now says
+  so). The guide's other five sections have no tour that opens them.
+- **Smaller choices.** `GUIDE_ANCHORS` holds all 21 names from the first commit. `detail-data` is on the
+  Saga data group in `saga-data-overview.html`, not in `saga-detail.html`. The service has a queue of
+  announced areas, which the plan did not name. Switching Guide on from a detail page starts the
+  summary and then the part shown last. The Retry button became `aria-disabled` with a guard (C54):
+  a natively disabled button that holds the focus loses it. A step's `reveal` control is implemented
+  and specified and no tour uses one. Area versions were not bumped for the copy corrections of
+  `2c9ad9e` and `425910f`, by the rule that a bump is for shipped tours and the branch was unmerged.
+- **The guide was written from the code** (`f154593`): there is no minimum engine version number to
+  state (the repository has no release tags and the dashboard cannot see an engine's version; the
+  guide names the targeted redrive of `417a64e` and how to see it on a host); the setup code has no time
+  window; and the lockout escape of the plan is not one (below).
+- **C55's live check ran after the commit, on the real stack** (`e4e62d6` was committed with a mock-API
+  browser run and a stated "not verified" for the compose stack). All passed but one step: at 360 px the
+  list tour's sort step was off screen sideways, so the page was dimmed with no spotlight. `425910f`
+  fixed it (the scroll test is two-dimensional, and an element that cannot be brought on screen is given
+  up for the step's fallback anchor).
+- **The plan's guidance mutation checks** did not behave as expected, and each found a guard in a
+  different place: renaming `list-table` fails the list page's three anchor-contract cases and not
+  `guide-tours.spec.ts` (it reads no template); the retry area's permission is held by
+  `GuideService.allowed(area)` and not by the overlay's `requires` filter; deleting the `inert` toggle
+  fails 11 cases, not one. Ten mutations ran in all.
+
+*Statements of this document that were wrong or stale and were corrected when it was marked implemented
+(C58)*
+
+- §8.4 and §10 called a restart with `Dashboard:Lockout:MaxFailedAttempts=0` the escape from a lock. It
+  only stops new locks: `CredentialVerifier` refuses an account whose lock is still in force whatever the
+  setting says. An administrator's Unlock, `Dashboard:Admin:ResetOnStart` or waiting ends a lock
+  (`docs/dashboard.md` and the user guide already said so). ADR 0006's first residual risk is
+  corrected the same way.
+- §8.3 said the docs describe `ProtectKeysWithCertificate` as the way to encrypt the key ring at rest.
+  vSaga ships no configuration key or code for it: it is a hardening a deployer adds to the API's
+  composition, and the ring is stored unencrypted. ADR 0006 is corrected the same way.
+- §9.1 said the list and administration pages explain themselves on navigation, that an area explains
+  itself the first time the user opens it, that Replay repeats the current area, that switching Guide on
+  starts the current page's area, that a centred popover is used only for an anchor that disappears, and
+  that rows open on Enter and Space; §1.3 said the toggle explains each page the first time it is
+  opened. §9.2 said the app links to the H2 headings and listed a lockout escape. All now say what the
+  code does.
+- §5.3 gave the map's fallback banner as "Entry 57 is not on the map yet..." and said `canViewData` is a
+  constant `true`; §6.5 said the measured figures would go into `docs/persistence.md`; §1.2 and the
+  opening of this section said nothing is pushed.
+- ADR 0006 said hub connections are aborted (sub-decision 9 and the positive consequences); they are
+  closed with a close message that allows reconnecting.
 
 ---
 
@@ -1320,13 +1644,69 @@ Most questions the blueprints raised were answered by the second round of decisi
 | How is a retry contained to the saga type it was authorised for? | A targeted redrive (§7.4), not a check of every saga type tracking the correlation id. |
 | Erase or retention path for snapshots? | Deferred (§14). |
 
-Still open:
+Still open. The first item is a question for the maintainer; the rest are limits the build left as they
+are, each with the commit that noted it. The lists headed "Unverified and open" or "Not verified" in the
+four history files have the evidence and what was never exercised.
 
 - **Where the in-app "User guide" link points.** It opens `docs/dashboard-guide.md` on GitHub's `main`
-  branch. A fork or an installation without GitHub access gets upstream content or nothing. Serving the
-  guide from the dashboard itself would need a Markdown renderer or a pre-rendered page in the image.
-  The link stays one constant (`USER_GUIDE_URL`) so the choice can change later without touching the
-  tours.
+  branch. A fork or an installation without GitHub access gets upstream content or nothing, and the copy
+  can be newer than the build in use (the guide says so). Serving the guide from the dashboard itself
+  would need a Markdown renderer or a pre-rendered page in the image. The link stays one constant
+  (`USER_GUIDE_URL`) so the choice can change later without touching the tours.
+
+Limits of the SPA, left as they are:
+
+- **A deep-linked forbidden detail page recovers late.** A detail page opened by URL straight into a 403
+  never starts the hub, so it notices a grant made later only when the session is read again (the tab
+  shown again, or a 403), not at once (`4ac938d`).
+- **The hub service's unsubscribe-before-start race.** `subscribeToSaga` writes its record after awaiting
+  the connection, so an `unsubscribeFromSaga` made before the very first start finishes is overtaken and
+  leaves a record (`4ac938d` did not change the hub service).
+- **The list's saga-type filter is fetched once.** A widened scope adds its types to the dropdown only when
+  the page is opened again (`c4720c6`).
+- **Administration writes have no timeout of their own.** The store bounds its reads at 30 s; a hung write
+  keeps the form busy, and a typed password stays in the draft until the store has answered the save
+  (`cec2a40`, `c6ca8ca`).
+- **The team page applies a server 400 to its fields whatever was typed while the request ran.** The user
+  page does not; the team page compares its draft's revision on success only (`c6ca8ca`, not taken up by
+  `537134e`).
+- **Enter in a saga-type box, or on a radio, of the grants editor can submit the page's form**, which on
+  the team page is a `PUT` that replaces the whole team (`537134e`).
+- **`.btn--danger` is white on `#ef5566`, about 3.4:1**, below the 4.5:1 that WCAG AA asks of normal text.
+  It inherited the retry button's red (C42).
+- **An administration tab with no live hub ends on `/login` late after the identity volume is wiped:** at
+  its first write, which answers 401, or when the tab is shown again (a session read, at most once a
+  minute). A tab with a live hub ends there by itself, after about 17 seconds in the runs (the C50 run).
+- **The retry's success message may not be heard.** The retry answer is a `role="status"` region inside
+  the retry row, so every refusal is heard because the row stays; but when the saga's own update removes
+  the row before or with the answer, the message goes with the row and the status badge is not a live
+  region (`2c9ad9e`, corrected by `adcf234`).
+- **Two stacks in one browser cost one healed `400 antiforgery` per switch**, because they share the
+  `XSRF-TOKEN` cookie: the SPA retries once and the user sees nothing, but it shows in the network log and
+  as one console error in Chromium (the C50 run).
+- **At 360 px the saga list, users and roles tables are wider than the viewport**, so those pages scroll
+  sideways with Guide off (the teams page does not). Pre-existing; the list tour scrolls to what it points
+  at (`425910f`).
+- **`GuideService.areaHidden` was not built.** Replay after the part it repeats has gone (the Saga data
+  bar closed, a Failed saga running again) waits five seconds for the anchor and does nothing, and a
+  queued retry for a saga that stops being retryable waits five seconds and is dropped, which delays the
+  next queued tour by as much (`2c9ad9e`). Switching Guide on from a detail page explains only the summary
+  and the part shown last (§9.1), and no tour uses a step's `reveal` control.
+
+Limits elsewhere:
+
+- **The identity key ring is stored unencrypted.** `ProtectKeysWithCertificate` is a hardening a deployer
+  adds; vSaga ships no configuration key or code for it (§8.3).
+- **Two `X-Content-Type-Options: nosniff` headers**, nginx's and the API's, with the same value, were seen
+  in the C37 run and left.
+- **`"splitting": false`** in the `test` options of `angular.json` makes `ng test` print a deprecation
+  notice on every run; it goes when Vitest 5 lands (`dd37bd1`).
+
+Never exercised in a recorded run, so resting on tests alone: a screen reader, and any browser but
+headless Chromium; the first-run setup flow on a live stack that was not seeded; TLS (`RequireHttps`) and
+time-based session limits; the scoped list on Redis or MongoDB with a scoped caller; a `DeliveryExhausted`
+retry and a targeted retry over the HTTP, Brighter, MassTransit and Wolverine transports; the age window
+that turns a "pending" snapshot into "missing" and the 1500 ms follow-up fetch.
 
 ---
 
@@ -1343,7 +1723,7 @@ Still open:
   for the snapshot read cost; the trigger is a saga type whose steps × state size passes about 1 MB.
 - **The device-cookie lockout bypass** (a Data-Protected, HttpOnly "known device" cookie that lets a
   browser that has signed in before skip a shared lock). Until then lockout can deny a known username;
-  the escape is documented.
+  what ends a lock is documented (§8.4).
 - **Expiry of temporary passwords** (an administrator-set password that must be changed stays valid until
   used).
 - **Single sign-on.**

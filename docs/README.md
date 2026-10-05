@@ -61,7 +61,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
   *reasoning* behind a decision; read the reference docs above for the shipped shape. Each carries its
   own **Status** line at the top. Two of them plan work that was never built: the release-automation half of
   `production-readiness.md` §3, and `sub-saga-composition.md`'s Slice 3, closed by a recorded decision
-  rather than left open. The three persistence plans are all implemented. `production-readiness.md`
+  rather than left open. The three persistence plans and the dashboard usability and access plan are all
+  implemented. `production-readiness.md`
   also plans an npm/TypeScript-SDK half; that SDK was removed on 2026-09-27, and a status note at the
   top of the plan says which parts no longer apply.
   - [`design/http-based-sagas.md`](design/http-based-sagas.md)
@@ -80,10 +81,11 @@ new here; the rest of this index is organized by topic, roughly in the order you
     it. It also authored the two seams it shared with the MongoDB plan (the `Persistence:Provider`
     switch and the provider-neutral `persistence` health check), which that plan now consumes.
   - [`design/dashboard-usability-and-access.md`](design/dashboard-usability-and-access.md) —
-    **accepted, not yet implemented, 2026-10-02.** The dashboard UI in compose, a labelled timeline
-    with a jump to the map, per-step state snapshots, a retry that re-runs only the failed step, sign-in
-    with role and saga-type scoped access, and a guide mode with a user guide. ADRs 0006, 0007 and 0008
-    record its three decisions.
+    **implemented, 2026-10-05.** The dashboard UI in compose, a labelled timeline with a jump to the
+    map, per-step state snapshots, a retry that re-runs only the failed step, sign-in with role and
+    saga-type scoped access, and a guide mode with a user guide. ADRs 0006, 0007 and 0008 record its
+    three decisions. It lists every commit (91, 2026-10-02 to 2026-10-05), where the build departed from
+    the plan and what is still open; the working plan itself was deleted by the last commit.
 
 - [`adr/`](adr/) — architecture decision records: one decision per file, numbered, stating the context,
   the options weighed, and the consequences accepted. Newer and narrower than `design/`, which holds
@@ -101,15 +103,15 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0005-saga-state-storage-model.md`](adr/0005-saga-state-storage-model.md) — **Accepted**,
     retroactive: one shared table, one opaque state blob, and the promotion rule.
   - [`adr/0006-dashboard-authentication-and-identity-store.md`](adr/0006-dashboard-authentication-and-identity-store.md)
-    — **Accepted** 2026-10-02, not yet implemented: session-cookie sign-in, role and saga-type scoped
-    access, and a dashboard-owned SQLite identity store, replacing the shared API key as the way people
-    sign in.
+    — **Accepted** 2026-10-02 and **implemented** 2026-10-05: session-cookie sign-in, role and saga-type
+    scoped access, and a dashboard-owned SQLite identity store, replacing the shared API key as the way
+    people sign in.
   - [`adr/0007-state-snapshots-in-the-event-log.md`](adr/0007-state-snapshots-in-the-event-log.md) —
-    **Accepted** 2026-10-02, not yet implemented: per-step saga state recorded as `StatePersisted`
-    entries in the existing event log, with a per-snapshot cap and a per-saga budget.
+    **Accepted** 2026-10-02 and **implemented** 2026-10-05: per-step saga state recorded as
+    `StatePersisted` entries in the existing event log, with a per-snapshot cap and a per-saga budget.
   - [`adr/0008-dashboard-retry-reruns-the-failed-step.md`](adr/0008-dashboard-retry-reruns-the-failed-step.md)
-    — **Accepted** 2026-10-02, not yet implemented: a dashboard retry resets the saga to the state
-    before the failed step and republishes that step's message, targeted at the retried saga type.
+    — **Accepted** 2026-10-02 and **implemented** 2026-10-05: a dashboard retry resets the saga to the
+    state before the failed step and republishes that step's message, targeted at the retried saga type.
 
 ## History
 
