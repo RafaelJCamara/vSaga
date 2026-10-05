@@ -18,6 +18,8 @@ import {
 } from '../../testing/timeline-fixtures';
 import { PENDING_SNAPSHOT_MS, foldTimeline } from '../../util/saga-transitions';
 import { formatRecordedAt, timezoneLabel } from '../../util/time-format';
+import { GUIDE_ANCHORS, GUIDE_TOURS } from '../guide-overlay/guide-tours';
+import { guideAreaOf } from '../../services/guide-areas';
 import { SagaTimeline } from './saga-timeline';
 
 // Local texts depend on the zone of the machine running the spec (CI runs in UTC, developer
@@ -473,5 +475,45 @@ describe('SagaTimeline', () => {
       });
     });
   });
-});
 
+  describe('the anchors of the guide tour', () => {
+    const anchors = (el: Element) => Array.from(el.querySelectorAll('[data-tour]'), (e) => e.getAttribute('data-tour'));
+    const count = (el: Element, name: string) => anchors(el).filter((a) => a === name).length;
+
+    it('marks the list of steps once, every entry row and every Data button', () => {
+      const el: HTMLElement = render(twoSteps()).nativeElement;
+
+      expect(el.querySelector('ol.tl')?.getAttribute('data-tour')).toBe('timeline');
+      expect(count(el, 'timeline')).toBe(1);
+      expect(el.querySelectorAll('button.tl-row')).toHaveLength(5);
+      expect(Array.from(el.querySelectorAll('button.tl-row')).every((b) => b.getAttribute('data-tour') === 'timeline-entry')).toBe(true);
+      expect(count(el, 'timeline-entry')).toBe(5);
+      expect(el.querySelectorAll('.tl-data')).toHaveLength(2);
+      expect(Array.from(el.querySelectorAll('.tl-data')).every((b) => b.getAttribute('data-tour') === 'timeline-step-data')).toBe(true);
+      expect(count(el, 'timeline-step-data')).toBe(2);
+      expect(new Set(anchors(el))).toEqual(new Set(['timeline', 'timeline-entry', 'timeline-step-data']));
+    });
+
+    it('marks no step title or snapshot: only the entries are the entry anchor', () => {
+      const el: HTMLElement = render(twoSteps()).nativeElement;
+
+      expect(el.querySelectorAll('.tl-title[data-tour]')).toHaveLength(0);
+      expect(count(el, 'timeline-entry')).toBe(el.querySelectorAll('.tl-rows button').length);
+    });
+
+    it('has no Data anchors for a viewer without sagas.data, because it has no Data buttons', () => {
+      const el: HTMLElement = render(twoSteps(), { canViewData: false }).nativeElement;
+
+      expect(count(el, 'timeline-step-data')).toBe(0);
+      expect(count(el, 'timeline-entry')).toBe(5);
+    });
+
+    it('uses names of the vocabulary, and has every element the timeline tour and the timeline area point at', () => {
+      const el: HTMLElement = render(twoSteps()).nativeElement;
+      const wanted = [guideAreaOf('timeline')?.readyAnchor, ...GUIDE_TOURS.timeline.flatMap((s) => [s.anchor, s.fallbackAnchor, s.reveal])];
+
+      for (const name of anchors(el)) expect(GUIDE_ANCHORS).toContain(name);
+      for (const name of new Set(wanted.filter((n) => !!n))) expect(el.querySelector(`[data-tour="${name}"]`), `${name}`).not.toBeNull();
+    });
+  });
+});

@@ -1,5 +1,5 @@
 <div class="saga-map">
-  <svg class="canvas" [attr.viewBox]="'0 0 ' + layout().width + ' ' + layout().height" role="img" aria-label="Saga service map">
+  <svg class="canvas" data-tour="map-canvas" [attr.viewBox]="'0 0 ' + layout().width + ' ' + layout().height" role="img" aria-label="Saga service map">
     <defs>
       <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
         <path d="M0,0 L8,4 L0,8 z" class="arrow-head" />
@@ -53,7 +53,7 @@
     <span class="legend-item"><span class="legend-swatch legend-swatch--failed"></span>Failed hop</span>
   </div>
 
-  <div class="controls">
+  <div class="controls" data-tour="map-controls">
     <button type="button" (click)="restart()" title="Restart" aria-label="Restart">&#8676;</button>
     @if (playing()) {
       <button type="button" (click)="pause()" title="Pause" aria-label="Pause">&#10074;&#10074;</button>

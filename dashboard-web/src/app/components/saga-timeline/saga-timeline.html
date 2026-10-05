@@ -2,7 +2,7 @@
   Times show when the engine recorded each entry, in your local time ({{ zone() }}).
   Hover a time for UTC. The offset counts from the saga's first entry.
 </p>
-<ol class="tl">
+<ol class="tl" data-tour="timeline">
   @for (t of history().transitions; track t.ordinal) {
     @let failedHere = t.key === failedKey();
     <li class="tl-step" [class]="'tl-step--' + t.outcome" [class.tl-step--failed-here]="failedHere">
@@ -25,6 +25,7 @@
           <button
             type="button"
             class="btn btn--quiet tl-data"
+            data-tour="timeline-step-data"
             [attr.aria-expanded]="isOpen(t.key)"
             [attr.aria-controls]="'step-data-' + t.key"
             [attr.aria-label]="'Data after step ' + t.ordinal + ': ' + t.title"
@@ -42,6 +43,7 @@
               <button
                 type="button"
                 class="tl-row"
+                data-tour="timeline-entry"
                 [class.tl-row--error]="isFailure(e)"
                 [class.tl-row--focused]="focused"
                 [attr.aria-current]="focused ? 'true' : null"

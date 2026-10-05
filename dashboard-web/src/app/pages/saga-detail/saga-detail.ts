@@ -8,6 +8,7 @@ import {
   afterNextRender,
   computed,
   effect,
+  inject,
   signal,
   untracked,
   viewChild,
@@ -15,6 +16,7 @@ import {
 import { ActivatedRoute, ParamMap, Router, RouterLink } from '@angular/router';
 import { Subject, Subscription, auditTime } from 'rxjs';
 import { AuthService } from '../../services/auth.service';
+import { GuideService } from '../../services/guide.service';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import {
@@ -25,6 +27,7 @@ import {
   SagaStatus,
   SagaSummary,
 } from '../../models/saga.model';
+import { GuideAreaId } from '../../models/guide.model';
 import { KindBadge } from '../../components/kind-badge/kind-badge';
 import { StatusBadge } from '../../components/status-badge/status-badge';
 import { SagaMap } from '../../components/saga-map/saga-map';
@@ -230,6 +233,20 @@ export class SagaDetail implements OnInit, OnDestroy {
   private readonly retryCancelButton = viewChild<ElementRef<HTMLElement>>('retryCancelButton');
   private readonly sagaHeading = viewChild<ElementRef<HTMLElement>>('sagaHeading');
 
+  private readonly guide = inject(GuideService);
+  /** Whether the page shows a saga: not loading, not forbidden, not an error (the template's own chain). */
+  private readonly showing = computed(() => this.signedIn() && !this.loading() && !this.forbidden() && !this.error());
+  /** Which parts of the page are on screen, as guide mode's areas. Booleans, so an announcement is made when a
+   *  part appears and not at every live refresh of what it shows. */
+  private readonly retryRowShown = computed(() => this.showing() && this.retryShown());
+  private readonly mapShown = computed(() => this.showing() && this.tab() === 'map' && this.map() !== null);
+  /** The timeline view is rendered: its tab, with entries (the template shows "Loading…" or "No events" instead). */
+  private readonly timelineShown = computed(() => this.showing() && this.tab() === 'timeline' && this.history().rowCount > 0);
+  /** A Saga data view is open, or a step's inspector (which only the timeline view shows). */
+  private readonly dataShown = computed(
+    () => this.showing() && this.canViewData() && (this.dataView() !== null || (this.timelineShown() && this.openKeys().size > 0)),
+  );
+
   private subs: Subscription[] = [];
   /** Whether the route has emitted yet — a later emission is the same instance reused for another saga,
    *  whose predecessor's content is dropped. */
@@ -265,6 +282,19 @@ export class SagaDetail implements OnInit, OnDestroy {
     private readonly auth: AuthService,
     private readonly injector: Injector,
   ) {
+    // Guide mode: each part of the page says when it is on screen. From effects, never from here: the router
+    // resets what the guide knows about a page when the navigation ends, which is after this runs. The order is
+    // the order the tours run in: the summary, the retry row under it, the data, then the tab.
+    const announce = (shown: () => boolean, area: GuideAreaId) =>
+      effect(() => {
+        if (shown()) untracked(() => this.guide.areaShown(area));
+      });
+    announce(this.showing, 'summary');
+    announce(this.retryRowShown, 'retry');
+    announce(this.dataShown, 'data');
+    announce(this.mapShown, 'map');
+    announce(this.timelineShown, 'timeline');
+
     // A retried saga runs again, and its status hides the retry row with the focused button in it.
     // The effect runs before the view drops the row, so it can still tell whether focus was there.
     effect(() => {
@@ -801,7 +831,9 @@ export class SagaDetail implements OnInit, OnDestroy {
   }
 
   askRetryConfirmation(): void {
-    if (this.retryRefusal() !== null) return;
+    // The button is aria-disabled while the retry runs or when the plan refuses it: it stays focusable, so
+    // the page, not the browser, refuses the click.
+    if (this.retrying() || this.retryRefusal() !== null) return;
     this.retryMessage.set(null);
     this.confirmingRetry.set(true);
     // Cancel, not "Yes, retry": a held or repeated Enter must not run the retry it just asked about.
@@ -814,12 +846,16 @@ export class SagaDetail implements OnInit, OnDestroy {
   }
 
   retry(): void {
+    if (this.retrying()) return;
     this.confirmingRetry.set(false);
     this.retrying.set(true);
     this.retryMessage.set(null);
+    // "Yes, retry" is removed by the swap, and the busy Retry button that replaces it is aria-disabled, not
+    // disabled, so it can hold the focus while the request runs.
+    this.moveFocus(false, this.retryButton);
 
-    // The Retry button is disabled while the request runs, so it can take focus back only after;
-    // when the saga already runs again the row is gone, and the heading above it takes focus.
+    // When the saga already runs again once the request is answered the row is gone, and the heading
+    // above it takes the focus (unless the viewer moved it meanwhile).
     const settle = (message: string) => {
       this.retrying.set(false);
       this.retryMessage.set(message);

@@ -24,7 +24,7 @@
 } @else if (error(); as message) {
   <div class="banner banner--error" role="alert">{{ message }}</div>
 } @else if (detail(); as d) {
-  <div class="card summary-card">
+  <div class="card summary-card" data-tour="detail-summary">
     <div class="summary-top">
       <div>
         <h1 #sagaHeading tabindex="-1">{{ d.summary.sagaType }}</h1>
@@ -105,7 +105,7 @@
     }
 
     @if (retryShown()) {
-      <div #retryRow class="retry-row">
+      <div #retryRow class="retry-row" data-tour="detail-retry">
         @if (confirmingRetry() && retryRefusal() === null) {
           <!-- The swap removes whichever button had focus, so the page moves it (see saga-detail.ts):
                to Cancel when the prompt opens, back to the Retry button when it closes, and to the
@@ -133,10 +133,12 @@
             Cancel
           </button>
         } @else {
+          <!-- aria-disabled, not disabled: while the retry runs the button keeps the keyboard focus (a
+               disabled button drops it), and the page refuses the click itself. -->
           <button
             #retryButton
             type="button"
-            [disabled]="retrying() || retryRefusal() !== null"
+            [attr.aria-disabled]="retrying() || retryRefusal() !== null ? 'true' : null"
             [attr.aria-describedby]="retryRefusal() !== null ? 'retry-refusal' : null"
             (click)="askRetryConfirmation()"
           >
@@ -169,8 +171,8 @@
   />
 
   <div class="subtabs">
-    <button type="button" [class.active]="tab() === 'map'" (click)="setTab('map')">Map</button>
-    <button type="button" [class.active]="tab() === 'timeline'" (click)="setTab('timeline')">Timeline</button>
+    <button type="button" data-tour="detail-tab-map" [class.active]="tab() === 'map'" (click)="setTab('map')">Map</button>
+    <button type="button" data-tour="detail-tab-timeline" [class.active]="tab() === 'timeline'" (click)="setTab('timeline')">Timeline</button>
   </div>
 
   <!-- A failed fetch with nothing to show is an error in place of the tab; over content loaded

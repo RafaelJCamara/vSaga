@@ -92,6 +92,7 @@ describe('GuideOverlay', () => {
         provideRouter([
           { path: 'sagas', component: PageStub },
           { path: 'sagas/:sagaType/:id', component: PageStub },
+          { path: 'admin', component: PageStub },
           { path: 'account', component: PageStub },
         ]),
         provideGuideStorage(storage),
@@ -299,13 +300,13 @@ describe('GuideOverlay', () => {
 
     it('abandons an area that has no tour at once, without waiting for its page', async () => {
       await setup('/account', { v: 1, enabled: true, seen: {}, hintDismissed: true });
-      await router.navigateByUrl('/sagas/OrderSaga/abc'); // no anchor on the page: a tour would wait for it
+      await router.navigateByUrl('/admin'); // no anchor on the page: a tour would wait for it
       flush();
 
-      expect(GUIDE_TOURS.summary).toEqual([]);
+      expect(GUIDE_TOURS.admin).toEqual([]);
       expect(guide.request()).toBeNull();
       expect(popover()).toBeNull();
-      expect(guide.isSeen('summary')).toBe(false);
+      expect(guide.isSeen('admin')).toBe(false);
     });
 
     it('stops looking when Guide is switched off meanwhile', async () => {
@@ -1472,6 +1473,307 @@ describe('GuideOverlay', () => {
       expect(clear).toHaveBeenCalledWith(timer);
       expect(instance['revealTimer']).toBeNull();
       vi.advanceTimersByTime(3000); // nothing is left to run against the destroyed view
+    });
+  });
+
+  // The detail page's parts are areas of their own: the summary starts with the page, the others when the page
+  // announces them (a tab shown, an inspector or the data bar opened, the retry row rendered).
+  describe('the areas of the detail page', () => {
+    const on = { v: 1, enabled: true, seen: {}, hintDismissed: true };
+
+    /** The elements of the detail page the five tours point at (the page shows one tab at a time; a tour only needs its own). */
+    function detailPage(): Record<string, FakeAnchor> {
+      return {
+        summary: addAnchor('detail-summary', { top: 70, height: 160 }),
+        retry: addAnchor('detail-retry', { top: 190, height: 40 }),
+        data: addAnchor('detail-data', { top: 250, height: 36 }),
+        tabMap: addAnchor('detail-tab-map', { top: 300, left: 50, width: 60, height: 30 }),
+        tabTimeline: addAnchor('detail-tab-timeline', {
+          top: 300,
+          left: 120,
+          width: 80,
+          height: 30,
+        }),
+        canvas: addAnchor('map-canvas', { top: 340, height: 300 }),
+        controls: addAnchor('map-controls', { top: 650, height: 40 }),
+        timeline: addAnchor('timeline', { top: 340, height: 300 }),
+        entry: addAnchor('timeline-entry', { top: 380, height: 30 }),
+        stepData: addAnchor('timeline-step-data', { top: 350, left: 700, width: 50, height: 24 }),
+      };
+    }
+
+    /** Opens the detail page of an OrderSaga with Guide on and every anchor in place. */
+    async function openDetail(stored: unknown = on) {
+      await setup('/account', stored);
+      const anchors = detailPage();
+      await router.navigateByUrl('/sagas/OrderSaga/abc');
+      flush();
+      return anchors;
+    }
+
+    /** Goes through the tour on screen to its end. */
+    function finishTour(): void {
+      while (button('Next')) press('Next');
+      press('Done');
+    }
+
+    it('explains the summary when the page opens, then each tab the first time it is shown, and never again', async () => {
+      await openDetail();
+      expect(title()).toBe('The saga at a glance');
+      expect(progress()).toBe('Step 1 of 2');
+      finishTour();
+      expect(popover()).toBeNull();
+
+      guide.areaShown('map'); // the Map tab is shown
+      flush();
+      expect(title()).toBe('Service map');
+      expect(progress()).toBe('Step 1 of 2');
+      finishTour();
+
+      guide.areaShown('timeline'); // the Timeline tab
+      flush();
+      expect(title()).toBe('Timeline');
+      expect(progress()).toBe('Step 1 of 3');
+      finishTour();
+
+      guide.areaShown('map'); // back to a tab that was explained
+      flush();
+      guide.areaShown('timeline');
+      flush();
+      expect(popover()).toBeNull();
+      expect(guide.request()).toBeNull();
+      expect(storedGuide(storage)).toMatchObject({ seen: { summary: 1, map: 1, timeline: 1 } });
+    });
+
+    it('explains a tab once even when it is shown twice while its tour is running', async () => {
+      await openDetail();
+      finishTour();
+      guide.areaShown('map');
+      flush();
+      expect(title()).toBe('Service map');
+
+      guide.areaShown('map'); // the page announces it again
+      finishTour();
+
+      expect(popover()).toBeNull(); // not a second time after Done
+    });
+
+    it('starts each step of a tab tour on its element', async () => {
+      const anchors = await openDetail();
+      finishTour();
+      guide.areaShown('map');
+      flush();
+      runFrame();
+      expect(spot()?.style.top).toBe(`${anchors['canvas'].box.top - 6}px`);
+
+      press('Next');
+      runFrame();
+
+      expect(title()).toBe('Replay the saga');
+      expect(spot()?.style.top).toBe(`${anchors['controls'].box.top - 6}px`);
+    });
+
+    it('queues the parts the page announces behind the summary, in the order they came, and runs them after Done', async () => {
+      await openDetail();
+      guide.areaShown('retry');
+      guide.areaShown('map');
+      expect(title()).toBe('The saga at a glance');
+
+      finishTour();
+      expect(title()).toBe('Retry a failed saga');
+      finishTour();
+      expect(title()).toBe('Service map');
+      finishTour();
+
+      expect(popover()).toBeNull();
+      expect(guide.isSeen('retry')).toBe(true);
+      expect(guide.isSeen('map')).toBe(true);
+    });
+
+    it('drops the queue when the user leaves a tour with Escape or Skip: the parts explain themselves when shown again', async () => {
+      await openDetail();
+      guide.areaShown('retry');
+      guide.areaShown('map');
+
+      key('Escape');
+      expect(popover()).toBeNull();
+      expect(guide.request()).toBeNull();
+      expect(guide.isSeen('summary')).toBe(true);
+      expect(guide.isSeen('map')).toBe(false);
+
+      guide.areaShown('map'); // the Map tab is shown again
+      flush();
+      expect(title()).toBe('Service map');
+      press('Skip tour');
+      guide.areaShown('retry'); // and so is the retry row, later
+      flush();
+      expect(title()).toBe('Retry a failed saga');
+    });
+
+    it('drops the queue on Skip tour as it does on Escape', async () => {
+      await openDetail();
+      guide.areaShown('retry');
+      guide.areaShown('map');
+
+      press('Skip tour');
+
+      expect(popover()).toBeNull();
+      expect(guide.request()).toBeNull();
+      expect(guide.isSeen('summary')).toBe(true);
+      expect(guide.isSeen('retry')).toBe(false);
+      expect(guide.isSeen('map')).toBe(false);
+    });
+
+    it('points the second step of the summary at the Timeline tab when the Map tab is not there', async () => {
+      await setup('/account', on);
+      addAnchor('detail-summary');
+      const timelineTab = addAnchor('detail-tab-timeline', {
+        top: 300,
+        left: 120,
+        width: 80,
+        height: 30,
+      });
+      await router.navigateByUrl('/sagas/OrderSaga/abc');
+      flush();
+
+      press('Next');
+      runFrame();
+
+      expect(title()).toBe('Map and Timeline');
+      expect(progress()).toBe('Step 2 of 2'); // the step is kept: its fallback is on the page
+      expect(spot()?.style.top).toBe(`${timelineTab.box.top - 6}px`);
+    });
+
+    it('does not start a tab tour while its element is not on the page, and starts it when it arrives', async () => {
+      await setup('/account', on);
+      addAnchor('detail-summary');
+      await router.navigateByUrl('/sagas/OrderSaga/abc');
+      flush();
+      finishTour();
+
+      guide.areaShown('map'); // the tab is shown, its map is still loading
+      flush();
+      vi.advanceTimersByTime(500);
+      expect(popover()).toBeNull();
+      expect(guide.request()?.area.id).toBe('map');
+
+      addAnchor('map-canvas');
+      vi.advanceTimersByTime(250);
+      flush();
+
+      expect(title()).toBe('Service map');
+    });
+
+    describe('for a viewer', () => {
+      it('never gets the retry area without sagas.retry, although the row is on the page and announced', async () => {
+        await setup('/account', on);
+        held.set(['sagas.view', 'sagas.data']);
+        detailPage();
+        await router.navigateByUrl('/sagas/OrderSaga/abc');
+        flush();
+        finishTour();
+
+        guide.areaShown('retry');
+        flush();
+        vi.advanceTimersByTime(6000);
+        flush();
+
+        expect(popover()).toBeNull();
+        expect(guide.request()).toBeNull();
+        expect(guide.isSeen('retry')).toBe(false);
+        expect(guide.area()?.id).not.toBe('retry');
+      });
+
+      it('never gets the data area without sagas.data, and a timeline tour without its Data step', async () => {
+        await setup('/account', on);
+        held.set(['sagas.view', 'sagas.retry']);
+        detailPage();
+        await router.navigateByUrl('/sagas/OrderSaga/abc');
+        flush();
+        finishTour();
+
+        guide.areaShown('data');
+        flush();
+        expect(popover()).toBeNull();
+        expect(guide.request()).toBeNull();
+
+        guide.areaShown('timeline');
+        flush();
+        expect(title()).toBe('Timeline');
+        expect(progress()).toBe('Step 1 of 2'); // the Data buttons are not there to explain
+        press('Next');
+        expect(title()).toBe('Recorded at, and jump to the map');
+        expect(button('Done')).toBeTruthy();
+      });
+
+      it('is judged by the saga type of the page: sagas.data for another type is no sagas.data here', async () => {
+        await setup('/account', on);
+        check.mockImplementation(
+          (permission, sagaType) =>
+            permission === 'sagas.view' || (permission === 'sagas.data' && sagaType === 'ShipSaga'),
+        );
+        detailPage();
+        await router.navigateByUrl('/sagas/OrderSaga/abc');
+        flush();
+        finishTour();
+
+        guide.areaShown('data');
+        flush();
+
+        expect(popover()).toBeNull();
+        expect(check).toHaveBeenCalledWith('sagas.data', 'OrderSaga');
+      });
+
+      it('gets the data and retry tours, two steps each on their own elements, with the permissions', async () => {
+        const anchors = await openDetail();
+        finishTour();
+
+        guide.areaShown('data');
+        flush();
+        runFrame();
+        expect(title()).toBe('Saga data');
+        expect(progress()).toBe('Step 1 of 2');
+        expect(spot()?.style.top).toBe(`${anchors['data'].box.top - 6}px`);
+        finishTour();
+
+        guide.areaShown('retry');
+        flush();
+        runFrame();
+        expect(title()).toBe('Retry a failed saga');
+        expect(progress()).toBe('Step 1 of 2');
+        expect(spot()?.style.top).toBe(`${anchors['retry'].box.top - 6}px`);
+        press('Next');
+        expect(title()).toBe('What a retry does not undo');
+      });
+    });
+
+    it('starts with the summary and then the part that was shown, when Guide is switched on from the detail page', async () => {
+      await setup('/account');
+      detailPage();
+      await router.navigateByUrl('/sagas/OrderSaga/abc');
+      flush();
+      guide.areaShown('map'); // Guide is off: nothing starts, the map is what is on screen
+
+      guide.setEnabled(true);
+      flush();
+      expect(title()).toBe('The saga at a glance');
+      finishTour();
+
+      expect(title()).toBe('Service map');
+    });
+
+    it('can replay the part that was shown last', async () => {
+      await openDetail();
+      finishTour();
+      guide.areaShown('timeline');
+      flush();
+      finishTour();
+      expect(popover()).toBeNull();
+
+      guide.replay();
+      flush();
+
+      expect(title()).toBe('Timeline');
     });
   });
 });

@@ -119,7 +119,7 @@ export class GuideOverlay implements OnDestroy {
   // ---- the template's actions
 
   protected next(): void {
-    if (this.isLast()) this.finish(true);
+    if (this.isLast()) this.finish(true, true);
     else this.show(this.index() + 1);
   }
 
@@ -387,13 +387,13 @@ export class GuideOverlay implements OnDestroy {
   // ---- ending
 
   /** Ends the tour on screen: everything it did to the page is undone, focus goes back, and the service is
-   *  told whether to remember it. */
-  private finish(remember: boolean): void {
+   *  told whether to remember it and whether the next queued area may start (only after Done). */
+  private finish(remember: boolean, startNext = false): void {
     const run = this.run();
     if (!run) return;
     this.release();
     this.restoreFocus();
-    this.guide.ended(run.area.id, remember);
+    this.guide.ended(run.area.id, remember, startNext);
   }
 
   /** Cancels the timers and the frame, takes the key listener off and gives the page back: every way a tour

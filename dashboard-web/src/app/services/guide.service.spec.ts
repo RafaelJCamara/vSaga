@@ -409,17 +409,49 @@ describe('GuideService', () => {
       const { guide } = await create('/sagas');
       guide.setEnabled(true);
       guide.started('list');
-      guide.areaShown('map'); // both queued behind the running tour; the timeline is what is shown now
+      guide.areaShown('map'); // both queued behind the running tour
       guide.areaShown('timeline');
 
       guide.setEnabled(false);
       guide.ended('list', false); // the overlay ends the tour it was showing
       guide.setEnabled(true);
-      expect(guide.request()?.area.id).toBe('timeline'); // switching on explains what is shown
+      expect(guide.request()?.area.id).toBe('list'); // the page's own area first, then what was shown last
+      guide.started('list');
+      guide.ended('list', true);
+      expect(guide.request()?.area.id).toBe('timeline');
       guide.started('timeline');
       guide.ended('timeline', true);
 
       expect(guide.request()).toBeNull(); // the map was forgotten with the first session
+    });
+
+    it('starts the page area first and then the part that was shown last, when Guide is switched on from the detail page', async () => {
+      const { guide } = await create('/sagas/OrderSaga/abc');
+      guide.areaShown('map'); // Guide is off: the map is what is on screen
+      expect(guide.request()).toBeNull();
+
+      guide.setEnabled(true);
+
+      expect(guide.request()?.area.id).toBe('summary');
+      guide.started('summary');
+      guide.ended('summary', true);
+      expect(guide.request()?.area.id).toBe('map');
+      guide.started('map');
+      guide.ended('map', true);
+      expect(guide.request()).toBeNull();
+    });
+
+    it('starts the part that was shown alone when the session may not see the page area', async () => {
+      const { guide } = await create('/sagas/OrderSaga/abc');
+      check.mockImplementation((permission) => permission === 'sagas.data'); // not sagas.view: no summary
+      guide.areaShown('data');
+
+      guide.setEnabled(true);
+
+      expect(guide.request()?.area.id).toBe('data');
+      guide.started('data');
+      guide.ended('data', true);
+      expect(guide.request()).toBeNull(); // the summary was not queued behind it
     });
 
     it('toggles', async () => {
@@ -885,6 +917,35 @@ describe('GuideService', () => {
       guide.ended('timeline', true);
 
       expect(guide.request()).toBeNull(); // the map was not left in the queue
+    });
+
+    it('leaving a tour (remember without starting the next) drops the queue, and the dropped areas wait to be shown again', async () => {
+      const { guide } = await onDetailPage();
+      guide.areaShown('map');
+      guide.started('map');
+      guide.areaShown('retry');
+      guide.areaShown('timeline');
+
+      guide.ended('map', true, false); // Escape or Skip
+
+      expect(guide.isSeen('map')).toBe(true);
+      expect(guide.request()).toBeNull();
+      guide.areaShown('retry'); // the retry row is shown again: it is not lost
+      expect(guide.request()?.area.id).toBe('retry');
+      guide.started('retry');
+      guide.ended('retry', true); // Done: nothing is left over from before
+      expect(guide.request()).toBeNull();
+    });
+
+    it('starts the next queued area after a tour that was gone through to its end', async () => {
+      const { guide } = await onDetailPage();
+      guide.areaShown('map');
+      guide.started('map');
+      guide.areaShown('retry');
+
+      guide.ended('map', true, true);
+
+      expect(guide.request()?.area.id).toBe('retry');
     });
 
     it('queues an area once however often it is announced, which an abandoned request shows', async () => {

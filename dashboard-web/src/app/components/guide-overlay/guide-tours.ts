@@ -100,11 +100,92 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
       anchor: 'topbar-guide',
     },
   ],
-  // The detail page's areas and the administration area: no steps yet.
-  summary: [],
-  map: [],
-  timeline: [],
-  data: [],
-  retry: [],
+  // The detail page. Its parts are areas of their own, each explained the first time the page shows it.
+  summary: [
+    {
+      id: 'summary-glance',
+      title: 'The saga at a glance',
+      body: 'Its type, correlation id, kind and status, then the current state, the version, and when it was created and last updated, in your local time. Links below lead to other sagas that share this correlation id, to the saga that started this one and to the sub-sagas it started.',
+      anchor: 'detail-summary',
+    },
+    {
+      id: 'summary-tabs',
+      title: 'Map and Timeline',
+      body: "Map and Timeline are two views of the same history: the map draws the messages between services and replays them, the timeline lists the engine's entries step by step. Each explains itself the first time you open it.",
+      anchor: 'detail-tab-map',
+      fallbackAnchor: 'detail-tab-timeline',
+    },
+  ],
+  map: [
+    {
+      id: 'map-canvas',
+      title: 'Service map',
+      body: 'Boxes are the parties to this saga: whoever started it, the saga itself and each participant. Arrows are the messages between them. Solid arrows were answered, dashed ones got no response, dotted ones are compensations, and a red one is the hop that failed.',
+      anchor: 'map-canvas',
+    },
+    {
+      id: 'map-controls',
+      title: 'Replay the saga',
+      body: 'Restart, Play and Step forward move through the recorded history one entry at a time; drag the slider to jump. The speed buttons run it at 0.5×, 1×, 2× or 4×, and playback stops at the failure. The line under the controls names the entry shown and when it was recorded.',
+      anchor: 'map-controls',
+      placement: 'top',
+    },
+  ],
+  timeline: [
+    {
+      id: 'timeline-steps',
+      title: 'Timeline',
+      body: "The engine's record of the saga, grouped into steps. A step shows what started it (a message, a timeout, a retry), how it ended and the entries it recorded. On a failed saga, the step where it failed is marked Failed here. A step's title opens the map as of the end of that step.",
+      anchor: 'timeline',
+    },
+    {
+      id: 'timeline-entry',
+      title: 'Recorded at, and jump to the map',
+      body: "Recorded at is when the engine wrote the entry, in your local time. Hover the time for UTC; the small offset counts from the saga's first entry. Select an entry to open the map as of it.",
+      anchor: 'timeline-entry',
+      fallbackAnchor: 'timeline',
+    },
+    {
+      id: 'timeline-data',
+      title: 'Data after each step',
+      body: "A step's Data button opens the saga's data as it was saved when that step finished, and what changed since the earlier recorded state.",
+      anchor: 'timeline-step-data',
+      fallbackAnchor: 'timeline',
+      requires: 'sagas.data',
+    },
+  ],
+  data: [
+    {
+      id: 'data-bar',
+      title: 'Saga data',
+      body: 'At start shows the message that started the saga and the first saved state. At end shows the data as it is now (it reads Current until the saga finishes). Compare sets the two side by side, field by field.',
+      anchor: 'detail-data',
+      requires: 'sagas.data',
+    },
+    {
+      id: 'data-views',
+      title: 'Reading the data',
+      body: "Changes lists the fields that differ from the earlier recorded state, Full state shows all of it, Message shows the message that ran the step, and Copy JSON copies the raw text. A step's Data button on the Timeline opens the same views.",
+      anchor: 'detail-data',
+      requires: 'sagas.data',
+    },
+  ],
+  retry: [
+    {
+      id: 'retry-what',
+      title: 'Retry a failed saga',
+      body: 'For a Failed or TimedOut saga, Retry this saga re-runs the step that failed, for this saga only. It asks first: Re-run step N (message type, state) for this saga only? Yes, retry goes ahead; Cancel leaves the saga alone. The Timeline marks the failure Failed here, and Re-run starts here when a timeout means an earlier step runs again.',
+      anchor: 'detail-retry',
+      requires: 'sagas.retry',
+    },
+    {
+      id: 'retry-effects',
+      title: 'What a retry does not undo',
+      body: 'Other services that consume the same message still receive it, so their side effects can repeat. A failure decided by the message alone, such as a business rule saying no, fails again. The timeline records the retry as a step, with who asked for it.',
+      anchor: 'detail-retry',
+      requires: 'sagas.retry',
+    },
+  ],
+  // The administration area: no steps yet.
   admin: [],
 };

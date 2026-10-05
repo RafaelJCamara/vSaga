@@ -1,6 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 import { SagaMap as SagaMapModel } from '../../models/saga.model';
+import { GUIDE_ANCHORS, GUIDE_TOURS } from '../guide-overlay/guide-tours';
+import { guideAreaOf } from '../../services/guide-areas';
 import { formatRecordedAt } from '../../util/time-format';
 import { SagaMap } from './saga-map';
 
@@ -442,6 +444,42 @@ describe('SagaMap', () => {
 
       expect(fixture.componentInstance.currentIndex()).toBe(3);
       expect(banner(fixture)).not.toBeNull();
+    });
+  });
+
+  describe('the anchors of the guide tour', () => {
+    const anchors = (el: Element) => Array.from(el.querySelectorAll('[data-tour]'), (e) => e.getAttribute('data-tour')).sort();
+
+    it('marks the canvas and the controls, once each, and nothing else', () => {
+      const el: HTMLElement = createComponent().nativeElement;
+
+      expect(anchors(el)).toEqual(['map-canvas', 'map-controls']);
+      expect(el.querySelector('svg.canvas')?.getAttribute('data-tour')).toBe('map-canvas');
+      expect(el.querySelector('.controls')?.getAttribute('data-tour')).toBe('map-controls');
+    });
+
+    it('keeps them through a focus on an entry and the banner that comes with it', () => {
+      const el: HTMLElement = createComponent(makeMap(), 2).nativeElement;
+
+      expect(el.querySelector('.focus-banner')).not.toBeNull();
+      expect(anchors(el)).toEqual(['map-canvas', 'map-controls']);
+    });
+
+    it('uses names of the vocabulary, and has every element the map tour and the map area point at', () => {
+      const el: HTMLElement = createComponent().nativeElement;
+      const wanted = [guideAreaOf('map')?.readyAnchor, ...GUIDE_TOURS.map.flatMap((s) => [s.anchor, s.fallbackAnchor, s.reveal])];
+
+      for (const name of anchors(el)) expect(GUIDE_ANCHORS).toContain(name);
+      for (const name of new Set(wanted.filter((n) => !!n))) expect(el.querySelector(`[data-tour="${name}"]`), `${name}`).not.toBeNull();
+    });
+
+    it('names the controls the tour names: Restart, Play, Step forward, the slider and the speeds', () => {
+      const el: HTMLElement = createComponent().nativeElement;
+      const controls = el.querySelector('.controls') as HTMLElement;
+
+      expect(Array.from(controls.querySelectorAll('button[aria-label]'), (b) => b.getAttribute('aria-label'))).toEqual(['Restart', 'Play', 'Step forward']);
+      expect(controls.querySelector('input[type="range"]')).not.toBeNull();
+      expect(Array.from(controls.querySelectorAll('.speeds button'), (b) => b.textContent?.trim())).toEqual(['0.5×', '1×', '2×', '4×']);
     });
   });
 });

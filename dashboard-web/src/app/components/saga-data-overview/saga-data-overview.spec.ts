@@ -299,4 +299,25 @@ describe('SagaDataOverview', () => {
       expect(buttons(fixture).map((b) => b.getAttribute('aria-describedby'))).toEqual([null, null, null]);
     });
   });
+
+  describe('the anchor of the guide tour', () => {
+    it('marks the Saga data group, which holds the three buttons, once, with a permission or without', () => {
+      for (const canViewData of [true, false]) {
+        const el: HTMLElement = render({ canViewData }).nativeElement;
+
+        const marked = Array.from(el.querySelectorAll('[data-tour]'));
+        expect(marked.map((e) => e.getAttribute('data-tour'))).toEqual(['detail-data']);
+        expect(marked[0].getAttribute('role')).toBe('group');
+        expect(marked[0].getAttribute('aria-label')).toBe('Saga data');
+        expect(marked[0].querySelectorAll('button')).toHaveLength(3);
+      }
+    });
+
+    it('does not mark the panel that opens under the group', () => {
+      const el: HTMLElement = render({ view: 'start' }).nativeElement;
+
+      expect(el.querySelector('.ov-panel')).not.toBeNull();
+      expect(el.querySelectorAll('[data-tour]')).toHaveLength(1);
+    });
+  });
 });

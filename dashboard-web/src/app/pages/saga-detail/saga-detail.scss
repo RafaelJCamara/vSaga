@@ -119,7 +119,8 @@
   flex: none;
 }
 
-.retry-row button:disabled {
+.retry-row button:disabled,
+.retry-row button[aria-disabled='true'] {
   opacity: 0.6;
   cursor: default;
 }

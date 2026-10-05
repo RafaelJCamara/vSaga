@@ -1,3 +1,4 @@
+import { GuideAreaId } from '../../models/guide.model';
 import { GUIDE_AREAS } from '../../services/guide-areas';
 import { ALL_PERMISSIONS } from '../../testing/auth-mock';
 import { GUIDE_ANCHORS, GUIDE_TOURS } from './guide-tours';
@@ -47,7 +48,7 @@ describe('the guide tours', () => {
       expect(Object.keys(GUIDE_TOURS).sort()).toEqual([...AREA_IDS].sort());
     });
 
-    it('ships the list tour, in the order the page is read, and no other yet', () => {
+    it('ships the list tour, in the order the page is read', () => {
       expect(GUIDE_TOURS.list.map((s) => s.id)).toEqual([
         'list-welcome',
         'list-filters',
@@ -57,8 +58,17 @@ describe('the guide tours', () => {
         'list-pagination',
         'list-guide',
       ]);
-      const others = AREA_IDS.filter((id) => id !== 'list');
-      expect(others.flatMap((id) => GUIDE_TOURS[id])).toEqual([]);
+    });
+
+    it('ships the five areas of the detail page, and none for administration yet', () => {
+      const ids = (area: GuideAreaId) => GUIDE_TOURS[area].map((s) => s.id);
+
+      expect(ids('summary')).toEqual(['summary-glance', 'summary-tabs']);
+      expect(ids('map')).toEqual(['map-canvas', 'map-controls']);
+      expect(ids('timeline')).toEqual(['timeline-steps', 'timeline-entry', 'timeline-data']);
+      expect(ids('data')).toEqual(['data-bar', 'data-views']);
+      expect(ids('retry')).toEqual(['retry-what', 'retry-effects']);
+      expect(GUIDE_TOURS.admin).toEqual([]);
     });
 
     it('opens the list tour with a centred welcome and points the last step at the top bar', () => {
@@ -148,6 +158,94 @@ describe('the guide tours', () => {
         if (step.placement !== undefined)
           expect(['bottom', 'top', 'right', 'left']).toContain(step.placement);
       }
+    });
+  });
+
+  describe('the detail page tours', () => {
+    const steps = (area: GuideAreaId) => GUIDE_TOURS[area];
+    const copy = (area: GuideAreaId) =>
+      steps(area)
+        .map((s) => `${s.title} ${s.body}`)
+        .join(' ');
+
+    it('start on the element the area is about: every area has a first step anchored on its ready anchor, or a centred one', () => {
+      for (const area of GUIDE_AREAS.filter(
+        (a) => GUIDE_TOURS[a.id].length > 0 && a.id !== 'list',
+      )) {
+        expect(GUIDE_TOURS[area.id][0].anchor, area.id).toBe(area.readyAnchor);
+      }
+    });
+
+    it('ask for the permission of the data and the retry they explain', () => {
+      expect(steps('data').map((s) => s.requires)).toEqual(['sagas.data', 'sagas.data']);
+      expect(steps('retry').map((s) => s.requires)).toEqual(['sagas.retry', 'sagas.retry']);
+      expect(steps('timeline').find((s) => s.id === 'timeline-data')?.requires).toBe('sagas.data');
+    });
+
+    it('ask for nothing beyond viewing the saga for the summary, the map and the rest of the timeline', () => {
+      const unrestricted = [
+        ...steps('summary'),
+        ...steps('map'),
+        ...steps('timeline').filter((s) => s.id !== 'timeline-data'),
+      ];
+
+      expect(unrestricted.map((s) => s.requires)).toEqual(
+        Array(unrestricted.length).fill(undefined),
+      );
+    });
+
+    it('never use a reveal control: each area starts when its part is on screen', () => {
+      for (const area of ['summary', 'map', 'timeline', 'data', 'retry'] as const) {
+        for (const step of steps(area)) expect(step.reveal, step.id).toBeUndefined();
+      }
+    });
+
+    it('say what a retry is: the step that failed, for this saga only, and that others still receive the message', () => {
+      const text = copy('retry');
+
+      expect(text).toContain('re-runs the step that failed, for this saga only');
+      expect(text).toContain('Other services that consume the same message still receive it');
+      expect(text).toContain('A failure decided by the message alone');
+      expect(text).toContain('fails again');
+      // Not the blueprint's: a retry does not reset the saga or replay its first message.
+      expect(text).not.toMatch(/resets the saga|first message|replays? the whole|every step/i);
+    });
+
+    it('name the labels the retry row and its confirmation have', () => {
+      const text = copy('retry');
+
+      for (const label of [
+        'Retry this saga',
+        'Re-run step N (message type, state) for this saga only?',
+        'Yes, retry',
+        'Cancel',
+        'Failed here',
+        'Re-run starts here',
+      ]) {
+        expect(text, label).toContain(label);
+      }
+    });
+
+    it('name the labels the Saga data group, its views and the timeline have', () => {
+      const data = copy('data');
+      for (const label of [
+        'At start',
+        'At end',
+        'Current',
+        'Compare',
+        'Changes',
+        'Full state',
+        'Message',
+        'Copy JSON',
+      ]) {
+        expect(data, label).toContain(label);
+      }
+      const body = (id: string) => GUIDE_TOURS.timeline.find((s) => s.id === id)?.body ?? '';
+      expect(body('timeline-steps')).toContain('Failed here');
+      expect(body('timeline-entry')).toContain('Recorded at');
+      expect(body('timeline-data')).toContain('Data button');
+      expect(copy('summary')).toContain('Map and Timeline');
+      expect(copy('map')).toContain('Play');
     });
   });
 

@@ -3,6 +3,8 @@ import { By } from '@angular/platform-browser';
 import { ActivatedRoute, ParamMap, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { BehaviorSubject, EMPTY, Observable, Subject, of, throwError } from 'rxjs';
 import { vi } from 'vitest';
+import { GUIDE_ANCHORS, GUIDE_TOURS, GuideAnchor } from '../../components/guide-overlay/guide-tours';
+import { GuideService } from '../../services/guide.service';
 import { SagaApiService } from '../../services/saga-api.service';
 import { SagaHubConnectionState, SagaHubService } from '../../services/saga-hub.service';
 import {
@@ -93,6 +95,8 @@ describe('SagaDetail', () => {
   /** The session setup() signs in with: by default every permission for every saga type. */
   let authOptions: AuthMockOptions = {};
   let auth: AuthMock;
+  /** Stands in for guide mode: the page's announcements are what a spec reads. */
+  let guideMock: { areaShown: ReturnType<typeof vi.fn> };
 
   // Only the tests that push use fake timers (the refresh waits REFRESH_AUDIT_MS); none may leak.
   afterEach(() => {
@@ -133,11 +137,13 @@ describe('SagaDetail', () => {
     };
 
     auth = createAuthMock(authOptions);
+    guideMock = { areaShown: vi.fn() };
     TestBed.configureTestingModule({
       imports: [SagaDetail],
       providers: [
         provideRouter([]),
         provideAuthMock(auth),
+        { provide: GuideService, useValue: guideMock },
         { provide: SagaApiService, useValue: apiMock },
         { provide: SagaHubService, useValue: hubMock },
         {
@@ -483,7 +489,7 @@ describe('SagaDetail', () => {
     it.each([
       ['accepted', () => of(undefined)],
       ['refused', () => throwError(() => ({ error: { error: 'Saga cannot be retried' } }))],
-    ])('gives focus back to the Retry button once the POST is %s', (_, answer) => {
+    ])('keeps the focus on the Retry button while the POST runs, and once it is %s', (_, answer) => {
       const fixture = setup(makeDetail({ status: 'Failed' }));
       const el: HTMLElement = fixture.nativeElement;
       const response = new Subject<void>();
@@ -491,17 +497,59 @@ describe('SagaDetail', () => {
       fixture.componentInstance.askRetryConfirmation();
       fixture.detectChanges();
 
-      (el.querySelector('.retry-confirm') as HTMLButtonElement).click();
+      const yes = el.querySelector('.retry-confirm') as HTMLButtonElement;
+      yes.focus();
+      expect(focused()).toBe(yes);
+      yes.click();
       fixture.detectChanges();
-      // The Retry button is back but disabled while the request runs, so focus has nowhere to go.
-      expect((el.querySelector('.retry-row button') as HTMLButtonElement).disabled).toBe(true);
+      // The Retry button is back but busy: aria-disabled, not disabled, so it holds the focus the removed
+      // "Yes, retry" had, instead of the focus dropping to the page for the length of the request.
+      const busy = el.querySelector('.retry-row button') as HTMLButtonElement;
+      expect(busy.getAttribute('aria-disabled')).toBe('true');
+      expect(busy.disabled).toBe(false);
+      expect(focused()).toBe(busy);
 
       answer().subscribe({ next: () => response.next(), error: (e: unknown) => response.error(e) });
       fixture.detectChanges();
 
       const button = el.querySelector('.retry-row button') as HTMLButtonElement;
-      expect(button.disabled).toBe(false);
+      expect(button.getAttribute('aria-disabled')).toBeNull();
       expect(focused()).toBe(button);
+    });
+
+    it('does nothing when the busy Retry button is pressed again, and asks once', () => {
+      const fixture = setup(makeDetail({ status: 'Failed' }));
+      const el: HTMLElement = fixture.nativeElement;
+      apiMock.retry.mockReturnValue(new Subject<void>());
+      fixture.componentInstance.askRetryConfirmation();
+      fixture.detectChanges();
+      (el.querySelector('.retry-confirm') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      (el.querySelector('.retry-row button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      fixture.componentInstance.retry(); // nor does a second confirmation reach the API
+
+      expect(el.querySelector('.retry-confirm')).toBeNull();
+      expect(fixture.componentInstance.confirmingRetry()).toBe(false);
+      expect(apiMock.retry).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a keyboard reach the Retry button the plan refuses, and does not open the prompt from it', () => {
+      const reason = 'No failed step could be identified in this saga\'s timeline.';
+      retryPlanResponse = of({ retryable: false, reason, failureKind: null, failureSequenceNumber: null, step: null });
+      const fixture = setup(makeDetail({ status: 'Failed' }));
+      const el: HTMLElement = fixture.nativeElement;
+      const button = el.querySelector('.retry-row button') as HTMLButtonElement;
+      (document.body as HTMLElement).focus();
+
+      button.focus();
+      button.click();
+      fixture.detectChanges();
+
+      expect(focused()).toBe(button);
+      expect(el.querySelector('.retry-confirm')).toBeNull();
+      expect(fixture.componentInstance.confirmingRetry()).toBe(false); // the page refused the click itself
     });
 
     it('leaves focus where the viewer moved it while the POST ran', () => {
@@ -1728,7 +1776,7 @@ describe('SagaDetail', () => {
       );
     });
 
-    it('disables Retry and shows the reason when the plan refuses a retry', () => {
+    it('marks Retry disabled and shows the reason when the plan refuses a retry', () => {
       const reason =
         'This saga was recorded before vSaga stored the message of every step, so the InvoiceIssued message that ran the step to re-run cannot be replayed.';
       retryPlanResponse = of(timeoutPlan({ retryable: false, reason }));
@@ -1736,7 +1784,9 @@ describe('SagaDetail', () => {
 
       const el: HTMLElement = fixture.nativeElement;
       const button = el.querySelector('.retry-row button') as HTMLButtonElement;
-      expect(button.disabled).toBe(true);
+      // aria-disabled, not disabled: the reason is described by the button, which a keyboard can reach.
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      expect(button.disabled).toBe(false);
       expect(text(el.querySelector('.retry-refusal'))).toBe(reason);
       expect(button.getAttribute('aria-describedby')).toBe('retry-refusal');
 
@@ -2648,6 +2698,343 @@ describe('SagaDetail', () => {
           expect(el.querySelector('.error-card strong')).not.toBeNull();
           expect(text(el.querySelector('.error-card'))).not.toContain('unroutable');
         });
+      });
+    });
+  });
+
+  // Guide mode points at elements by their data-tour anchor, and the page tells it when a part is on screen.
+  describe('guide mode', () => {
+    const anchorsIn = (el: Element) => Array.from(el.querySelectorAll('[data-tour]'), (e) => e.getAttribute('data-tour')).sort();
+    const shown = () => guideMock.areaShown.mock.calls.map((c) => c[0]);
+    /** The anchors the tours of these areas name, apart from the top bar's. */
+    const named = (...areas: Array<keyof typeof GUIDE_TOURS>): GuideAnchor[] =>
+      [
+        ...new Set(
+          areas.flatMap((area) =>
+            GUIDE_TOURS[area].flatMap((step) => [step.anchor, step.fallbackAnchor, step.reveal]),
+          ),
+        ),
+      ].filter((name): name is GuideAnchor => !!name && name !== 'topbar-guide');
+    const timelineEntries = () => timedOutInvoice();
+    const invoicePlan = (): SagaRetryPlan => ({
+      retryable: true,
+      reason: null,
+      failureKind: 'TimedOut',
+      failureSequenceNumber: 66,
+      step: { sequenceNumber: 61, messageType: 'InvoiceIssued', messageId: 'e5', fromState: 'Requested' },
+    });
+
+    describe('the anchors', () => {
+      it('marks the summary card, the Saga data group, the retry row and the two tabs, and the map on the Map tab', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        const el: HTMLElement = fixture.nativeElement;
+
+        expect(anchorsIn(el)).toEqual(['detail-data', 'detail-retry', 'detail-summary', 'detail-tab-map', 'detail-tab-timeline', 'map-canvas', 'map-controls']);
+        expect(el.querySelector('.summary-card')?.getAttribute('data-tour')).toBe('detail-summary');
+        expect(el.querySelector('.retry-row')?.getAttribute('data-tour')).toBe('detail-retry');
+        expect(el.querySelector('.ov-bar')?.getAttribute('data-tour')).toBe('detail-data');
+        const tabs = Array.from(el.querySelectorAll('.subtabs button'));
+        expect(tabs.map((t) => [t.textContent?.trim(), t.getAttribute('data-tour')])).toEqual([
+          ['Map', 'detail-tab-map'],
+          ['Timeline', 'detail-tab-timeline'],
+        ]);
+      });
+
+      it('marks the timeline, its entries and its Data buttons on the Timeline tab instead of the map', () => {
+        const fixture = setup(makeDetail({ status: 'TimedOut' }), timelineEntries());
+        fixture.componentInstance.setTab('timeline');
+        fixture.detectChanges();
+        const el: HTMLElement = fixture.nativeElement;
+
+        const anchors = anchorsIn(el);
+        expect(anchors.filter((a) => a === 'timeline')).toHaveLength(1);
+        expect(anchors.filter((a) => a === 'timeline-entry').length).toBe(el.querySelectorAll('.tl-row').length);
+        expect(anchors.filter((a) => a === 'timeline-step-data').length).toBe(el.querySelectorAll('.tl-step').length);
+        expect(anchors).not.toContain('map-canvas');
+      });
+
+      it('has no retry row anchor on a saga that is not retryable, nor for a viewer without sagas.retry', () => {
+        expect(anchorsIn(setup(makeDetail({ status: 'Running' })).nativeElement)).not.toContain('detail-retry');
+        TestBed.resetTestingModule();
+        authOptions = { access: { permissions: ['sagas.view', 'sagas.data'], scoped: [] } };
+        const el: HTMLElement = setup(makeDetail({ status: 'Failed' })).nativeElement;
+
+        expect(el.querySelector('.retry-hint')).not.toBeNull(); // the row that says why, with nothing to explain
+        expect(anchorsIn(el)).not.toContain('detail-retry');
+      });
+
+      it('uses only names of the vocabulary', () => {
+        const fixture = setup(makeDetail({ status: 'TimedOut' }), timelineEntries());
+        for (const tab of ['map', 'timeline'] as const) {
+          fixture.componentInstance.setTab(tab);
+          fixture.detectChanges();
+          for (const name of anchorsIn(fixture.nativeElement)) expect(GUIDE_ANCHORS).toContain(name);
+        }
+      });
+
+      it('has every element the tours of the five areas point at, on the tab the part is on', () => {
+        const fixture = setup(makeDetail({ status: 'TimedOut' }), timelineEntries());
+        const el: HTMLElement = fixture.nativeElement;
+        const has = (name: string) => el.querySelector(`[data-tour="${name}"]`) !== null;
+
+        const onEveryTab = named('summary', 'data', 'retry');
+        expect(onEveryTab.length).toBeGreaterThan(0);
+        for (const name of onEveryTab) expect(has(name), name).toBe(true);
+        for (const name of named('map')) expect(has(name), name).toBe(true);
+
+        fixture.componentInstance.setTab('timeline');
+        fixture.detectChanges();
+        for (const name of named('timeline')) expect(has(name), name).toBe(true);
+      });
+
+      it('has no Data buttons to point at without sagas.data, which is why the tours drop those steps', () => {
+        authOptions = { access: { permissions: ['sagas.view'], scoped: [] } };
+        const fixture = setup(makeDetail({ status: 'TimedOut' }), timelineEntries());
+        fixture.componentInstance.setTab('timeline');
+        fixture.detectChanges();
+
+        expect(anchorsIn(fixture.nativeElement)).not.toContain('timeline-step-data');
+        expect(GUIDE_TOURS.timeline.find((s) => s.anchor === 'timeline-step-data')?.requires).toBe('sagas.data');
+      });
+
+      it('names the labels the tours name: the tabs, the data group, the timeline and the retry row', () => {
+        retryPlanResponse = of(invoicePlan());
+        const fixture = setup(makeDetail({ status: 'TimedOut' }), timelineEntries());
+        const el: HTMLElement = fixture.nativeElement;
+        const label = (e: Element | null) => (e?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+        expect(Array.from(el.querySelectorAll('.subtabs button'), label)).toEqual(['Map', 'Timeline']);
+        expect(Array.from(el.querySelectorAll('.ov-bar button'), label)).toEqual(['At start', 'At end', 'Compare']);
+        expect(label(el.querySelector('.retry-row button'))).toBe('Retry this saga');
+        (el.querySelector('.retry-row button') as HTMLButtonElement).click();
+        fixture.detectChanges();
+        expect(Array.from(el.querySelectorAll('.retry-row button'), label)).toEqual(['Yes, retry', 'Cancel']);
+        expect(label(el.querySelector('.retry-confirm-prompt'))).toMatch(/^Re-run step \d+ \(InvoiceIssued, Requested\) for this saga only\?$/);
+
+        // The end button reads Current until the saga is finished.
+        TestBed.resetTestingModule();
+        const running: HTMLElement = setup(makeDetail({ status: 'Running' })).nativeElement;
+        expect(Array.from(running.querySelectorAll('.ov-bar button'), label)).toEqual(['At start', 'Current', 'Compare']);
+        TestBed.resetTestingModule();
+        retryPlanResponse = of(invoicePlan());
+        const again = setup(makeDetail({ status: 'TimedOut' }), timelineEntries());
+        const el2: HTMLElement = again.nativeElement;
+
+        again.componentInstance.setTab('timeline');
+        again.detectChanges();
+        expect(label(el2.querySelector('.tl-marker--failed'))).toBe('Failed here');
+        expect(label(el2.querySelector('.tl-marker:not(.tl-marker--failed)'))).toBe('Re-run starts here');
+        expect(el2.textContent).toContain('Recorded at');
+        expect(label(el2.querySelector('.tl-data'))).toBe('Data');
+      });
+    });
+
+    describe('what the page announces', () => {
+      it('says nothing while it is being created: an announcement belongs to an effect, not to a constructor', () => {
+        setup(makeDetail({ status: 'Failed' }));
+        guideMock.areaShown.mockClear();
+
+        const another = TestBed.createComponent(SagaDetail);
+        expect(guideMock.areaShown).not.toHaveBeenCalled(); // created, not yet checked
+
+        another.detectChanges();
+        expect(shown()).toEqual(['summary', 'retry', 'map']); // announced from its effects
+      });
+
+      it('announces the summary, the retry row under it and the map, in that order, for a Failed saga', () => {
+        setup(makeDetail({ status: 'Failed' }));
+
+        expect(shown()).toEqual(['summary', 'retry', 'map']);
+      });
+
+      it('announces no retry row for a saga that cannot be retried, or to a viewer who may not retry', () => {
+        setup(makeDetail({ status: 'Running' }));
+        expect(shown()).toEqual(['summary', 'map']);
+
+        TestBed.resetTestingModule();
+        authOptions = { access: { permissions: ['sagas.view', 'sagas.data'], scoped: [] } };
+        setup(makeDetail({ status: 'Failed' }));
+        expect(shown()).toEqual(['summary', 'map']);
+      });
+
+      it('announces the retry row for a retry permission held for this saga type only', () => {
+        authOptions = { access: { permissions: ['sagas.view'], scoped: [{ sagaType: 'OrderSaga', permissions: ['sagas.retry'] }] } };
+        setup(makeDetail({ status: 'Failed' }));
+
+        expect(shown()).toContain('retry');
+      });
+
+      it('announces nothing while the saga loads', () => {
+        setup(makeDetail(), [], makeMap(), undefined, [], new Subject<ParamMap>()); // the route has not answered
+
+        expect(guideMock.areaShown).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['a saga the API refuses the viewer', () => httpError(403, problem('forbidden', 'No access.')), 'forbidden'],
+        ['a saga that could not be read', () => httpError(500, null), 'error'],
+      ] as const)('announces nothing for %s', (_name, failure, flag) => {
+        const paramMap$ = new Subject<ParamMap>();
+        const fixture = setup(makeDetail({ status: 'Failed' }), [], makeMap(), undefined, [], paramMap$);
+        apiMock.get.mockReturnValue(throwError(() => failure()));
+        apiMock.getTimeline.mockReturnValue(throwError(() => failure()));
+        apiMock.getMap.mockReturnValue(throwError(() => failure()));
+
+        paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+        fixture.detectChanges();
+
+        expect(flag === 'forbidden' ? fixture.componentInstance.forbidden() : fixture.componentInstance.error() !== null).toBe(true);
+        expect(guideMock.areaShown).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['a read that fails', () => httpError(500, null)],
+        ['a read the API refuses the viewer', () => httpError(403, problem('forbidden', 'No access.'))],
+      ] as const)('announces nothing more when a later read of a saga that was shown ends in %s: the old content is behind the message', (_name, failure) => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        guideMock.areaShown.mockClear();
+        apiMock.get.mockReturnValue(throwError(() => failure()));
+
+        fixture.componentInstance.load();
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.detail()).not.toBeNull(); // still held, not shown
+        expect(guideMock.areaShown).not.toHaveBeenCalled();
+      });
+
+      it('announces the parts again when the session returns after the page was hidden by its ending', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        auth.status.set('anonymous'); // the session is ending: the page shows nothing
+        fixture.detectChanges();
+        guideMock.areaShown.mockClear();
+
+        auth.status.set('authenticated');
+        fixture.detectChanges();
+
+        expect(shown()).toEqual(['summary', 'retry', 'map']);
+      });
+
+      it('announces the map when it has arrived, not while it loads', () => {
+        const paramMap$ = new Subject<ParamMap>();
+        const fixture = setup(makeDetail({ status: 'Running' }), [], makeMap(), undefined, [], paramMap$);
+        const pending = new Subject<SagaMapModel>();
+        apiMock.getMap.mockReturnValue(pending);
+
+        paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+        fixture.detectChanges();
+        expect(shown()).toEqual(['summary']);
+
+        pending.next(makeMap());
+        pending.complete();
+        fixture.detectChanges();
+        expect(shown()).toEqual(['summary', 'map']);
+      });
+
+      it('does not announce the data for an inspector that is open on the other tab', () => {
+        const fixture = setup(makeDetail({ status: 'Running' }), timelineEntries());
+        guideMock.areaShown.mockClear();
+
+        fixture.componentInstance.openKeys.set(new Set([60])); // opened on the Timeline tab earlier; the Map tab shows now
+        fixture.detectChanges();
+
+        expect(fixture.componentInstance.tab()).toBe('map');
+        expect(shown()).not.toContain('data');
+      });
+
+      it('announces the timeline when the Timeline tab is shown with entries, once, and the map again when the Map tab returns', () => {
+        const fixture = setup(makeDetail({ status: 'Running' }), timelineEntries());
+        expect(shown()).toEqual(['summary', 'map']);
+
+        fixture.componentInstance.setTab('timeline');
+        fixture.detectChanges();
+        expect(shown()).toEqual(['summary', 'map', 'timeline']);
+
+        fixture.componentInstance.setTab('map');
+        fixture.detectChanges();
+        expect(shown()).toEqual(['summary', 'map', 'timeline', 'map']); // the guide knows it was explained
+      });
+
+      it('does not announce the Timeline tab while there is nothing on it yet', () => {
+        const fixture = setup(makeDetail({ status: 'Running' }), []);
+
+        fixture.componentInstance.setTab('timeline');
+        fixture.detectChanges();
+
+        expect(shown()).not.toContain('timeline');
+      });
+
+      it('does not announce the map again for a live refresh', () => {
+        vi.useFakeTimers();
+        const fixture = setup(makeDetail({ status: 'Running' }));
+        guideMock.areaShown.mockClear();
+
+        hubMock.sagaUpdated$.next({ ...makeDetail({ status: 'Running' }).summary, version: 3 });
+        vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+        fixture.detectChanges();
+
+        expect(guideMock.areaShown).not.toHaveBeenCalled();
+      });
+
+      it('announces the data when a Saga data view is opened, and again when it is reopened', () => {
+        const fixture = setup(makeDetail({ status: 'Running' }));
+        guideMock.areaShown.mockClear();
+
+        fixture.componentInstance.setDataView('start');
+        fixture.detectChanges();
+        expect(shown()).toEqual(['data']);
+
+        fixture.componentInstance.setDataView('end'); // another view of the same bar
+        fixture.detectChanges();
+        expect(shown()).toEqual(['data']);
+
+        fixture.componentInstance.setDataView(null);
+        fixture.detectChanges();
+        fixture.componentInstance.setDataView('compare');
+        fixture.detectChanges();
+        expect(shown()).toEqual(['data', 'data']);
+      });
+
+      it('announces the data when a step inspector is opened on the Timeline tab', () => {
+        const fixture = setup(makeDetail({ status: 'Running' }), timelineEntries());
+        fixture.componentInstance.setTab('timeline');
+        fixture.detectChanges();
+        guideMock.areaShown.mockClear();
+
+        (fixture.nativeElement.querySelector('.tl-data') as HTMLButtonElement).click();
+        fixture.detectChanges();
+
+        expect(shown()).toEqual(['data']);
+      });
+
+      it('does not announce the data to someone without sagas.data, who has no data to open', () => {
+        authOptions = { access: { permissions: ['sagas.view'], scoped: [] } };
+        const fixture = setup(makeDetail({ status: 'Running' }), timelineEntries());
+
+        fixture.componentInstance.setDataView('start');
+        fixture.componentInstance.openKeys.set(new Set([1]));
+        fixture.componentInstance.setTab('timeline');
+        fixture.detectChanges();
+
+        expect(shown()).not.toContain('data');
+      });
+
+      it('announces the parts again for the next saga when the route reuses the instance', () => {
+        const paramMap$ = new Subject<ParamMap>();
+        const fixture = setup(makeDetail({ status: 'Failed' }), [], makeMap(), [makeDetail().summary], [], paramMap$);
+        paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+        fixture.detectChanges();
+        const first = shown().length;
+        expect(shown()).toEqual(['summary', 'retry', 'map']);
+
+        const next = new Subject<SagaDetailModel>();
+        apiMock.get.mockReturnValue(next);
+        paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-2' }));
+        fixture.detectChanges(); // the next saga is loading: nothing of the last one is on screen
+        next.next(makeDetail({ correlationId: 'saga-2', status: 'Failed' }));
+        next.complete();
+        fixture.detectChanges();
+
+        expect(shown().slice(first)).toEqual(['summary', 'retry', 'map']);
       });
     });
   });

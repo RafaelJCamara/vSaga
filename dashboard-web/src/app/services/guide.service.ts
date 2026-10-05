@@ -199,8 +199,12 @@ export class GuideService {
       this.hintDismissedState.set(true);
       this.seenState.set({});
       this.save();
-      const area = this.area();
-      if (area) this.enqueue(area);
+      // The page's own area first (the detail page's summary), then the part of it that was shown last, when
+      // that is another one (the map the page opened on).
+      const page = guideAreaForPath(this.pathState());
+      const current = this.area();
+      if (page && this.allowed(page)) this.enqueue(page);
+      if (current && current.id !== page?.id) this.enqueue(current);
     } else {
       this.requestState.set(null);
       this.save();
@@ -251,11 +255,13 @@ export class GuideService {
   }
 
   /**
-   * The tour ended. `remember` (the user went through it, or skipped it on purpose) stores the area's version
-   * as seen and lets the next queued area start; ending because Guide was switched off, the page changed or the
-   * session lost the area is not remembered.
+   * The tour ended. `remember` (the user went through it, or left it on purpose) stores the area's version as
+   * seen; ending because Guide was switched off, the page changed or the session lost the area is not
+   * remembered. `startNext` (the user went through it to the end) lets the next queued area start; a user who
+   * left it (Escape, Skip) has had enough for now, so the queue is dropped and those areas wait for the next
+   * time they are shown.
    */
-  ended(id: GuideAreaId, remember: boolean): void {
+  ended(id: GuideAreaId, remember: boolean, startNext = true): void {
     if (this.runningState() !== id) return;
     this.runningState.set(null);
     if (!remember) return;
@@ -264,7 +270,8 @@ export class GuideService {
       this.seenState.update((seen) => ({ ...seen, [id]: area.version }));
       this.save();
     }
-    this.advance();
+    if (startNext) this.advance();
+    else this.pending = [];
   }
 
   /** The overlay gave up on the request: the area never came on screen, or it has no steps for this user. */
