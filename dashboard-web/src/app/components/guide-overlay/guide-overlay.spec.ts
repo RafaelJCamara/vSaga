@@ -1225,6 +1225,188 @@ describe('GuideOverlay', () => {
       expect(anchors['pagination'].el.scrollIntoView).not.toHaveBeenCalled();
     });
 
+    describe('on a screen as narrow as a phone', () => {
+      const wide = window.innerWidth;
+      beforeEach(() => {
+        window.innerWidth = 360;
+      });
+      afterEach(() => {
+        window.innerWidth = wide;
+      });
+
+      /** Goes to the sort step (the fourth) of the list tour, the one whose element a narrow table pushes off screen. */
+      async function toSortStep(box: Partial<Box>) {
+        const anchors = await startList();
+        Object.assign(anchors['sort'].box, box);
+        for (let i = 0; i < 3; i++) press('Next');
+        expect(title()).toBe('Sort by status or last update');
+        return anchors;
+      }
+
+      it('scrolls an element that is off screen to the right into view, as it does one that is below', async () => {
+        const anchors = await toSortStep({ left: 574, width: 106 });
+
+        expect(anchors['sort'].el.scrollIntoView).toHaveBeenCalledWith({
+          block: 'center',
+          inline: 'nearest',
+          behavior: 'smooth',
+        });
+      });
+
+      it('scrolls an element that starts on screen and ends past the right edge', async () => {
+        const anchors = await toSortStep({ left: 300, width: 100 });
+
+        expect(anchors['sort'].el.scrollIntoView).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not scroll an element that is inside the width', async () => {
+        const anchors = await toSortStep({ left: 200, width: 100 });
+
+        expect(anchors['sort'].el.scrollIntoView).not.toHaveBeenCalled();
+      });
+
+      it('counts an element wider than the screen as in view when its left edge is', async () => {
+        const anchors = await toSortStep({ left: 0, width: 768 });
+
+        expect(anchors['sort'].el.scrollIntoView).not.toHaveBeenCalled();
+      });
+
+      it('scrolls to the left edge of an element wider than the screen that starts off screen', async () => {
+        const anchors = await toSortStep({ left: -200, width: 768 });
+
+        expect(anchors['sort'].el.scrollIntoView).toHaveBeenCalledWith({
+          block: 'center',
+          inline: 'start',
+          behavior: 'smooth',
+        });
+      });
+
+      it('highlights the element once the scroll has brought it in, and shows nothing on it while it is on its way', async () => {
+        const anchors = await toSortStep({ left: 574, width: 106 });
+        runFrame();
+        expect(spot()?.style.display).toBe('none'); // on its way: nothing is highlighted yet
+
+        anchors['sort'].box.left = 254; // the scroll has brought it to the right edge
+        runFrame();
+
+        expect(spot()?.style.display).toBe('block');
+        expect(spot()?.style.left).toBe('248px');
+      });
+
+      it("takes the step's fallback when the element stays off screen: the page cannot scroll to it", async () => {
+        const anchors = await toSortStep({ left: 574, width: 106 }); // scrollIntoView is a stub: nothing moves
+        for (let i = 0; i < 11; i++) runFrame();
+        expect(spot()?.style.display).toBe('none'); // not yet: it might still be on its way
+
+        runFrame();
+
+        expect(spot()?.style.display).toBe('block');
+        expect(spot()?.style.top).toBe(`${anchors['table'].box.top - 6}px`); // the table, this step's fallback
+      });
+
+      it('does not take the fallback while the element keeps moving, however long the scroll takes', async () => {
+        const anchors = await toSortStep({ left: 1500, width: 106 });
+
+        for (let i = 0; i < 40; i++) {
+          anchors['sort'].box.left -= 20; // a long scroll: 1500 -> 700, still off screen throughout
+          runFrame();
+        }
+
+        expect(spot()?.style.display).toBe('none');
+        for (let i = 0; i < 20; i++) {
+          anchors['sort'].box.left -= 20; // and on, until it arrives
+          runFrame();
+        }
+        expect(spot()?.style.display).toBe('block');
+        expect(spot()?.style.left).toBe(`${anchors['sort'].box.left - 6}px`);
+      });
+
+      it('scrolls the fallback into view when it takes it', async () => {
+        const anchors = await toSortStep({ left: 574, width: 106 });
+        anchors['table'].box.top = 2000;
+        (anchors['table'].el.scrollIntoView as Mock).mockClear();
+
+        for (let i = 0; i < 12; i++) runFrame();
+
+        expect(anchors['table'].el.scrollIntoView).toHaveBeenCalledWith(
+          expect.objectContaining({ block: 'center' }),
+        );
+      });
+
+      it('keeps a step that has no fallback centred, with nothing highlighted, when its element stays off screen', async () => {
+        const anchors = await startList();
+        anchors['filters'].box.left = 574; // the filters step has no fallback
+        press('Next');
+        expect(title()).toBe('Narrow the list');
+
+        for (let i = 0; i < 30; i++) runFrame();
+
+        expect(spot()?.style.display).toBe('none');
+        expect(shield()?.classList).toContain('guide-shield--dim');
+        expect(popover()?.style.visibility).toBe('visible');
+      });
+
+      it('keeps an element that is on screen and still, however many frames pass: only one wholly off screen is given up', async () => {
+        const anchors = await toSortStep({ left: 200, width: 100 });
+
+        for (let i = 0; i < 60; i++) runFrame();
+
+        expect(spot()?.style.display).toBe('block');
+        expect(spot()?.style.left).toBe('194px'); // the heading, not the table behind it
+        expect(spot()?.style.width).toBe(`${anchors['sort'].box.width + 12}px`);
+      });
+
+      it('does not keep scrolling a fallback it is already on', async () => {
+        await setup('/sagas');
+        addAnchor('list-filters');
+        const table = addAnchor('list-table', { left: 574, width: 106 }); // the sort anchor is missing: the table is shown
+        guide.setEnabled(true);
+        flush();
+        for (let i = 0; i < 3; i++) press('Next');
+        expect(title()).toBe('Sort by status or last update');
+        const calls = (table.el.scrollIntoView as Mock).mock.calls.length;
+
+        for (let i = 0; i < 60; i++) runFrame();
+
+        expect((table.el.scrollIntoView as Mock).mock.calls.length).toBe(calls);
+      });
+
+      it('forgets how long an element stood still when the next step begins, even when the next step is on the same element', async () => {
+        await setup('/account');
+        addAnchor('detail-summary', { left: 574, width: 106 }); // off screen to the right
+        addAnchor('detail-tab-map', { top: 300 }); // in view: the fallback of both steps
+        tourFor('summary', [
+          {
+            id: 'summary-a',
+            title: 'First',
+            body: 'a',
+            anchor: 'detail-summary',
+            fallbackAnchor: 'detail-tab-map',
+          },
+          {
+            id: 'summary-b',
+            title: 'Second',
+            body: 'b',
+            anchor: 'detail-summary',
+            fallbackAnchor: 'detail-tab-map',
+          },
+        ]);
+        guide.setEnabled(true);
+        await router.navigateByUrl('/sagas/OrderSaga/abc');
+        flush();
+        expect(title()).toBe('First');
+        for (let i = 0; i < 8; i++) runFrame(); // eight frames still, of the twelve that give an element up
+
+        press('Next'); // the same element, a new step: the count starts again
+        for (let i = 0; i < 6; i++) runFrame();
+
+        expect(title()).toBe('Second');
+        expect(spot()?.style.display).toBe('none'); // six frames, not fourteen
+        for (let i = 0; i < 6; i++) runFrame();
+        expect(spot()?.style.display).toBe('block'); // twelve: now it takes the fallback
+      });
+    });
+
     it('scrolls to the top of an element taller than the screen that starts off screen', async () => {
       const anchors = await startList();
       anchors['table'].box.top = 900;

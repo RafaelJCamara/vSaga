@@ -15,7 +15,7 @@ import {
 import { GuideArea, GuideRequest, GuideStep } from '../../models/guide.model';
 import { USER_GUIDE_URL } from '../../services/guide-areas';
 import { GUIDE_PERMISSION_CHECK, GuideService } from '../../services/guide.service';
-import { placePopover, spotlightBox } from './guide-geometry';
+import { Box, isInView, placePopover, spotlightBox } from './guide-geometry';
 import { GUIDE_TOURS } from './guide-tours';
 
 /** How long the overlay waits for an area to come on screen: this many looks, this far apart (about 5 s). */
@@ -24,6 +24,9 @@ const READY_POLL_MS = 250;
 /** How long it waits, after clicking a step's reveal control, for the step's anchor to appear. */
 const REVEAL_POLL_MS = 50;
 const REVEAL_WAIT_MS = 1000;
+/** How many frames an element that is wholly off screen may hold still before the step gives it up for its
+ *  fallback: a smooth scroll moves it every frame, so one that stands still cannot be scrolled to (about 0.2 s). */
+const STILL_FRAMES = 12;
 
 /** The tour on screen. */
 interface Run {
@@ -83,6 +86,9 @@ export class GuideOverlay implements OnDestroy {
   private revealing = false;
   /** The last position written, so a frame that changes nothing writes nothing. */
   private lastWritten = '';
+  /** Where the element was a frame ago, and for how many frames it has stood still while wholly off screen. */
+  private lastRect = '';
+  private stillFrames = 0;
   private returnFocus: HTMLElement | null = null;
   /** The siblings this overlay made inert (and so the ones it restores). */
   private inerted: HTMLElement[] = [];
@@ -198,6 +204,8 @@ export class GuideOverlay implements OnDestroy {
     this.clearReveal();
     this.index.set(index);
     this.lastWritten = '';
+    this.lastRect = '';
+    this.stillFrames = 0;
     const step = run.steps[index];
 
     this.target = null;
@@ -248,16 +256,18 @@ export class GuideOverlay implements OnDestroy {
   private scrollIntoView(element: HTMLElement | null): void {
     if (element === null || typeof element.scrollIntoView !== 'function') return;
     const rect = element.getBoundingClientRect();
-    const height = this.viewport().height;
-    // Visible enough: on screen, or taller than the screen with its top on it.
-    const visible =
-      rect.top >= 0 && rect.top < height && (rect.bottom <= height || rect.height > height);
-    if (visible) return;
+    const viewport = this.viewport();
+    // On screen on both axes (an element bigger than the screen on one has its start on it): nothing to do.
+    if (isInView(this.boxOf(rect), viewport)) return;
     element.scrollIntoView({
-      block: rect.height > height ? 'start' : 'center',
-      inline: 'nearest',
+      block: rect.height > viewport.height ? 'start' : 'center',
+      inline: rect.width > viewport.width ? 'start' : 'nearest',
       behavior: this.reducedMotion() ? 'auto' : 'smooth',
     });
+  }
+
+  private boxOf(rect: DOMRect): Box {
+    return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
   }
 
   private focusPrimary(): void {
@@ -302,12 +312,22 @@ export class GuideOverlay implements OnDestroy {
     }
     const viewport = this.viewport();
     const rect = this.target?.getBoundingClientRect();
-    const box = rect
-      ? spotlightBox(
-          { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
-          viewport,
-        )
-      : null;
+    let box = rect ? spotlightBox(this.boxOf(rect), viewport) : null;
+
+    // An element that is wholly off screen and stands still cannot be scrolled to (a smooth scroll moves it every
+    // frame): the step takes its fallback instead, or, with none, stays centred and highlights nothing.
+    const position = rect ? [rect.top, rect.left, rect.width, rect.height].join(',') : '';
+    this.stillFrames =
+      rect && box === null && position === this.lastRect ? this.stillFrames + 1 : 0;
+    this.lastRect = position;
+    if (this.stillFrames >= STILL_FRAMES) {
+      const fallback = this.query(step.fallbackAnchor);
+      if (fallback !== null && fallback !== this.target) {
+        this.target = fallback;
+        this.scrollIntoView(fallback);
+        box = spotlightBox(this.boxOf(fallback.getBoundingClientRect()), viewport);
+      }
+    }
     const place = placePopover(
       box,
       { width: popover.offsetWidth, height: popover.offsetHeight },

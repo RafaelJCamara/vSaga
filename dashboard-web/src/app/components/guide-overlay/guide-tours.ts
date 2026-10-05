@@ -56,7 +56,7 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
     {
       id: 'list-welcome',
       title: 'Welcome to the saga dashboard',
-      body: 'This page lists the sagas your account can see, across all saga types. The tour takes about a minute. Press Esc to leave it; Guide in the top bar brings it back.',
+      body: 'This page lists the sagas your account can see, across all saga types. The tour takes about a minute. Press Esc to leave it; Replay tour in the top bar runs it again.',
       anchor: null,
     },
     {
@@ -96,7 +96,7 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
     {
       id: 'list-guide',
       title: 'Guide mode',
-      body: 'While Guide is on, a page explains itself the first time you open it. Replay tour runs the current one again; User guide opens the full documentation. Switch Guide off here when you are done.',
+      body: 'While Guide is on, a page explains itself the first time you open it. Replay tour runs the current one again; User guide opens the full documentation. Switch Guide off in the top bar when you are done.',
       anchor: 'topbar-guide',
     },
   ],
@@ -111,7 +111,7 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
     {
       id: 'summary-tabs',
       title: 'Map and Timeline',
-      body: "The Map tab, highlighted here, and the Timeline tab next to it are two views of the same history: the map draws the messages between services and replays them, the timeline lists the engine's entries step by step. Each explains itself the first time you open it.",
+      body: "The Map tab and the Timeline tab next to it are two views of the same history: the map draws the messages between services and replays them, the timeline lists the engine's entries step by step. Each explains itself the first time you open it.",
       anchor: 'detail-tab-map',
       fallbackAnchor: 'detail-tab-timeline',
     },

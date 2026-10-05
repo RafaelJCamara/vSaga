@@ -1,4 +1,4 @@
-import { Box, Size, placePopover, spotlightBox } from './guide-geometry';
+import { Box, Size, isInView, placePopover, spotlightBox } from './guide-geometry';
 
 const viewport: Size = { width: 1000, height: 700 };
 const popover: Size = { width: 300, height: 160 };
@@ -56,6 +56,40 @@ describe('spotlightBox', () => {
   it('is null for an element with no area (hidden)', () => {
     expect(spotlightBox({ top: 10, left: 10, width: 0, height: 40 }, viewport)).toBeNull();
     expect(spotlightBox({ top: 10, left: 10, width: 40, height: 0 }, viewport)).toBeNull();
+  });
+});
+
+describe('isInView', () => {
+  const size = { width: 100, height: 50 };
+
+  it('is true for an element wholly inside the viewport, edges included', () => {
+    expect(isInView({ top: 100, left: 100, ...size }, viewport)).toBe(true);
+    expect(isInView({ top: 0, left: 0, ...size }, viewport)).toBe(true);
+    expect(isInView({ top: 650, left: 900, ...size }, viewport)).toBe(true); // ends on the bottom and right edges
+  });
+
+  it.each([
+    ['above', { top: -10, left: 100 }],
+    ['to the left of', { top: 100, left: -10 }],
+    ['below', { top: 700, left: 100 }],
+    ['to the right of', { top: 100, left: 1000 }],
+    ['past the bottom edge of', { top: 660, left: 100 }],
+    ['past the right edge of', { top: 100, left: 950 }],
+  ])('is false for an element %s the viewport, wholly or in part', (_where, at) => {
+    expect(isInView({ ...at, ...size }, viewport)).toBe(false);
+  });
+
+  it('counts an element bigger than the viewport on an axis as in view when its start is', () => {
+    expect(isInView({ top: 100, left: 0, width: 100, height: 2000 }, viewport)).toBe(true); // taller
+    expect(isInView({ top: 100, left: 0, width: 2000, height: 50 }, viewport)).toBe(true); // wider
+    expect(isInView({ top: 100, left: 0, width: 2000, height: 2000 }, viewport)).toBe(true);
+  });
+
+  it('is false for an element bigger than the viewport whose start is off screen', () => {
+    expect(isInView({ top: -100, left: 0, width: 100, height: 2000 }, viewport)).toBe(false);
+    expect(isInView({ top: 100, left: -100, width: 2000, height: 50 }, viewport)).toBe(false);
+    expect(isInView({ top: 900, left: 0, width: 100, height: 2000 }, viewport)).toBe(false);
+    expect(isInView({ top: 100, left: 1200, width: 2000, height: 50 }, viewport)).toBe(false);
   });
 });
 

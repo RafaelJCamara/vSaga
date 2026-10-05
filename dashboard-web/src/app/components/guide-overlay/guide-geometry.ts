@@ -52,6 +52,22 @@ export function spotlightBox(anchor: Box, viewport: Size, pad = 6): Box | null {
 }
 
 /**
+ * Whether `anchor` is on screen well enough to need no scrolling: on each axis it starts inside the viewport and
+ * ends inside it too, or is bigger than the viewport there (its start is then what shows). Pure.
+ */
+export function isInView(anchor: Box, viewport: Size): boolean {
+  return (
+    fits(anchor.top, anchor.height, viewport.height) &&
+    fits(anchor.left, anchor.width, viewport.width)
+  );
+}
+
+/** One axis of `isInView`. */
+function fits(start: number, length: number, extent: number): boolean {
+  return start >= 0 && start < extent && (start + length <= extent || length > extent);
+}
+
+/**
  * Where a popover of size `popover` goes beside the highlighted `spot`. It tries `preferred`, then that
  * side's opposite, then the other two, and takes the first that fits inside `margin` of the viewport edge;
  * across that axis it is centred on the spot and kept inside the margin. When no side fits it goes to the

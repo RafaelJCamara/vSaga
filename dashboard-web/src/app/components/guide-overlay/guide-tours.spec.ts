@@ -175,6 +175,14 @@ describe('the guide tours', () => {
       }
     });
 
+    it('never say a step is highlighted or point "here": a step is also shown with no spotlight, its element off screen or missing', () => {
+      const labels = /Failed here|Re-run starts here/g; // labels the pages have, not directions
+      for (const { step } of STEPS) {
+        const text = `${step.title} ${step.body}`.replace(labels, '');
+        expect(text, step.id).not.toMatch(/highlight|spotlight|\bhere\b/i);
+      }
+    });
+
     it('prefer only a side the geometry knows', () => {
       for (const { step } of STEPS) {
         if (step.placement !== undefined)
@@ -254,13 +262,11 @@ describe('the guide tours', () => {
       expect(views).toContain('Copy JSON');
     });
 
-    it('say which tab the summary step highlights, and that the other is next to it', () => {
+    it('say which tab comes first and that the other is next to it, without claiming the spotlight covers either', () => {
       const tabs = GUIDE_TOURS.summary.find((s) => s.id === 'summary-tabs');
 
       expect(tabs?.anchor).toBe('detail-tab-map');
-      expect(tabs?.body).toContain(
-        'The Map tab, highlighted here, and the Timeline tab next to it',
-      );
+      expect(tabs?.body).toContain('The Map tab and the Timeline tab next to it');
     });
 
     it('name the labels the retry row and its confirmation have', () => {
@@ -442,6 +448,12 @@ describe('the guide tours', () => {
       );
       expect(copy('list-sort')).toContain('Status or Updated');
       expect(copy('list-pagination')).toContain('rows per page');
+    });
+
+    it('says how to get the tour back as the top bar offers it: Replay tour, since the Guide switch would switch Guide off', () => {
+      expect(copy('list-welcome')).toContain('Replay tour in the top bar runs it again');
+      expect(copy('list-welcome')).not.toContain('brings it back');
+      expect(copy('list-guide')).toContain('Switch Guide off in the top bar');
     });
 
     it('says the rows open from the keyboard through the correlation id', () => {
