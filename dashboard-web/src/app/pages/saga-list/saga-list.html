@@ -13,17 +13,17 @@
   </div>
 } @else {
   <div class="toolbar" data-tour="list-filters">
-    <select class="input" [(ngModel)]="status" (change)="onFilterChange()">
+    <select class="input" aria-label="Filter by status" [(ngModel)]="status" (change)="onFilterChange()">
       <option value="">All statuses</option>
       <option *ngFor="let s of statuses" [value]="s">{{ s }}</option>
     </select>
 
-    <select class="input" [(ngModel)]="kind" (change)="onFilterChange()">
+    <select class="input" aria-label="Filter by kind" [(ngModel)]="kind" (change)="onFilterChange()">
       <option value="">All kinds</option>
       <option *ngFor="let k of kinds" [value]="k">{{ k }}</option>
     </select>
 
-    <select class="input" [(ngModel)]="sagaType" (change)="onFilterChange()">
+    <select class="input" aria-label="Filter by saga type" [(ngModel)]="sagaType" (change)="onFilterChange()">
       <option value="">All saga types</option>
       <option *ngFor="let t of sagaTypes()" [value]="t.sagaType">{{ t.sagaType }}</option>
     </select>

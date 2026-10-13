@@ -386,6 +386,19 @@ describe('SagaList', () => {
     expect(fixture.componentInstance.newSagasAvailable()).toBe(0);
   });
 
+  // A select with no label reads as just "combobox, All statuses": a screen reader user is not told what
+  // it filters. The visible text is the selected option, never a label, so each one carries its own name.
+  it('names each filter in the toolbar for assistive technology', () => {
+    const fixture = setup({ items: [makeSummary()], page: 1, pageSize: 25, totalCount: 1 });
+    const selects = fixture.nativeElement.querySelectorAll('.toolbar > select');
+
+    expect(Array.from<HTMLSelectElement>(selects).map((select) => select.getAttribute('aria-label'))).toEqual([
+      'Filter by status',
+      'Filter by kind',
+      'Filter by saga type',
+    ]);
+  });
+
   // The page's toolbar, controls, table and banners are the shared classes of src/styles.scss, which
   // the unit tests do not load, so the class names are all there is to check. The base `.banner`
   // carries the box: a modifier on its own would show a banner with no padding.
