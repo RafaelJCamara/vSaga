@@ -35,6 +35,16 @@ public interface ISagaSummaryReader
     /// compares byte groups in a different order than <c>Comparer&lt;Guid&gt;.Default</c>. Nothing
     /// consumes a cross-provider-identical order, so the contract deliberately does not require one.
     /// </para>
+    /// <para>
+    /// Every member of <see cref="SagaListFilter"/> is a filter the provider must honour, applied before
+    /// the count, the sort and the page, so that <see cref="PagedResult{T}.TotalCount"/> is over the
+    /// filtered set. That includes <see cref="SagaListFilter.SagaTypes"/>, which was added after the others:
+    /// it has no opt-out and nothing in the dashboard falls back to one call per type, so a reader written
+    /// before it existed must add it. A reader that ignores it never shows a caller a row outside their
+    /// scope (the API drops those), but gives a caller scoped to a few saga types pages that are mostly
+    /// rows of other types, and a total over the wrong set. The <c>VSaga.Persistence.Conformance</c>
+    /// suite fails such a reader.
+    /// </para>
     /// </remarks>
     Task<PagedResult<SagaSummary>> ListAsync(SagaListFilter filter, CancellationToken cancellationToken = default);
 

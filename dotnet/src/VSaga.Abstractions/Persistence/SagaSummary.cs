@@ -38,7 +38,11 @@ public sealed class SagaListFilter
     /// filtered set, and the order of the rows kept is the order they hold in the unfiltered list.
     /// <para>
     /// The dashboard serves a caller whose access names several saga types with one call carrying this, instead
-    /// of one call per type.
+    /// of one call per type, and has no fallback for a reader that ignores it: every
+    /// <see cref="ISagaSummaryReader"/> must honour it. A reader that does not still never shows a caller a row
+    /// outside their scope (the API drops those), but gives them pages that are mostly rows of other types and a
+    /// <see cref="PagedResult{T}.TotalCount"/> over the wrong set. The <c>VSaga.Persistence.Conformance</c>
+    /// suite fails such a reader.
     /// </para>
     /// </summary>
     public IReadOnlyCollection<string>? SagaTypes { get; init; }

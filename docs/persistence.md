@@ -17,7 +17,11 @@ switch (`Postgres`, `Redis` or `MongoDb`); in-memory is not one of its values.
 All four are held to the same written contracts by the cross-provider `VSaga.Persistence.Conformance`
 suite, which a third-party provider can run against itself; its
 [README](../dotnet/tests/VSaga.Persistence.Conformance/README.md) covers the `IProviderFixture` to
-implement and the xUnit v2 requirement. The eight divergences and three shared defects the first two
+implement and the xUnit v2 requirement. Every `ISagaSummaryReader` must honour every member of
+`SagaListFilter`, `SagaTypes` (the rows of any of several saga types, exact) included: the dashboard serves a
+caller scoped to several saga types with one `ListAsync` call carrying it and keeps no per-type fallback, so
+a reader that ignores it fails the suite and, in the dashboard, gives a scoped caller short pages and a
+total over the wrong set (never a row outside their scope: the API still drops those). The eight divergences and three shared defects the first two
 once had are catalogued, with their fixes, in
 [`design/persistence-contracts.md`](design/persistence-contracts.md) §1 and §3; all are fixed.
 
