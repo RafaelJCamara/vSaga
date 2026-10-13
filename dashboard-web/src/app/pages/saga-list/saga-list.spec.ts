@@ -1260,8 +1260,99 @@ describe('SagaList', () => {
 
         expect(auth.refresh).toHaveBeenCalledTimes(1);
         expect(apiMock.list).toHaveBeenCalledTimes(2);
-        expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(1);
+        // The widened scope has its own types, asked for once (see the saga type filter cases below).
+        expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(2);
         expect(fixture.nativeElement.querySelectorAll('.saga-row')).toHaveLength(1);
+      });
+
+      describe('the saga type filter follows the types the session may view', () => {
+        const order = { sagaType: 'OrderSaga', kind: 'Orchestrated' as const };
+        const shipping = { sagaType: 'ShippingSaga', kind: 'Orchestrated' as const };
+        const scopedTo = (...types: string[]) => ({
+          permissions: [],
+          scoped: types.map((sagaType) => ({ sagaType, permissions: ['sagas.view' as const] })),
+        });
+
+        it('asks again when a session read widens the scope, and offers the new types', () => {
+          const { fixture } = open({ access: scopedTo('OrderSaga') }, [of(page([makeSummary()], 1, 1))]);
+          expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(1);
+          apiMock.getSagaTypes.mockReturnValue(of([order, shipping]));
+
+          auth.access.set(scopedTo('OrderSaga', 'ShippingSaga'));
+          fixture.detectChanges();
+
+          expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(2);
+          expect(fixture.componentInstance.sagaTypes()).toEqual([order, shipping]);
+        });
+
+        it('asks again when a session read narrows the scope, and drops the types that went', () => {
+          const { fixture } = open({ access: scopedTo('OrderSaga', 'ShippingSaga') }, [of(page([makeSummary()], 1, 1))]);
+          apiMock.getSagaTypes.mockReturnValue(of([order]));
+
+          auth.access.set(scopedTo('OrderSaga'));
+          fixture.detectChanges();
+
+          expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(2);
+          expect(fixture.componentInstance.sagaTypes()).toEqual([order]);
+        });
+
+        it('asks again when a grant for every saga type replaces the named ones', () => {
+          const { fixture } = open({ access: scopedTo('OrderSaga') }, [of(page([makeSummary()], 1, 1))]);
+
+          auth.access.set({ permissions: ['sagas.view'], scoped: [] });
+          fixture.detectChanges();
+
+          expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(2);
+        });
+
+        it('does not ask again for a session read that views the same types', () => {
+          const { fixture } = open({ access: scopedTo('OrderSaga', 'ShippingSaga') }, [of(page([makeSummary()], 1, 1))]);
+
+          // A new object with the grants in another order and another permission on top: the same types.
+          auth.access.set({
+            permissions: ['sagas.data'],
+            scoped: [
+              { sagaType: 'ShippingSaga', permissions: ['sagas.view', 'sagas.retry'] },
+              { sagaType: 'OrderSaga', permissions: ['sagas.view'] },
+            ],
+          });
+          fixture.detectChanges();
+
+          expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(1);
+        });
+
+        it('applies only the answer to the latest request', () => {
+          const { fixture } = open({ access: scopedTo('OrderSaga') }, [of(page([makeSummary()], 1, 1))]);
+          const slow = new Subject<Array<typeof order>>();
+          apiMock.getSagaTypes.mockReturnValueOnce(slow).mockReturnValueOnce(of([order, shipping]));
+
+          auth.access.set(scopedTo('OrderSaga', 'ShippingSaga'));
+          fixture.detectChanges();
+          auth.access.set(scopedTo('ShippingSaga'));
+          fixture.detectChanges();
+          expect(fixture.componentInstance.sagaTypes()).toEqual([order, shipping]);
+
+          slow.next([order]);
+          expect(fixture.componentInstance.sagaTypes()).toEqual([order, shipping]);
+        });
+
+        it('keeps the options when asking fails, and asks nothing while the session may not list', () => {
+          const { fixture } = open({ access: scopedTo('OrderSaga') }, [of(page([makeSummary()], 1, 1))]);
+          apiMock.getSagaTypes.mockReturnValue(of([order]));
+          auth.access.set(scopedTo('OrderSaga', 'ShippingSaga'));
+          fixture.detectChanges();
+          expect(fixture.componentInstance.sagaTypes()).toEqual([order]);
+          apiMock.getSagaTypes.mockReturnValue(throwError(() => httpError(500, null)));
+
+          auth.access.set(none);
+          fixture.detectChanges();
+          expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(2);
+
+          auth.access.set(scopedTo('ShippingSaga'));
+          fixture.detectChanges();
+          expect(apiMock.getSagaTypes).toHaveBeenCalledTimes(3);
+          expect(fixture.componentInstance.sagaTypes()).toEqual([order]);
+        });
       });
 
       it('shows the no-access state, and asks for no more lists, when the session read brings a narrowed scope with nothing left', () => {

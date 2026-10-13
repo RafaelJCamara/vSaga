@@ -10,6 +10,7 @@ import { SagaKind, SagaSortColumn, SagaStatus, SagaSummary, SagaTypeInfo } from 
 import { KindBadge } from '../../components/kind-badge/kind-badge';
 import { StatusBadge } from '../../components/status-badge/status-badge';
 import { FORBIDDEN_CODE, problemOf } from '../../util/http-error';
+import { viewScopeKey } from '../../util/session-access';
 
 const STATUSES: SagaStatus[] = ['Running', 'Completed', 'Failed', 'Compensating', 'Compensated', 'TimedOut', 'Cancelled'];
 const KINDS: SagaKind[] = ['Orchestrated', 'Choreographed'];
@@ -101,6 +102,12 @@ export class SagaList implements OnInit, OnDestroy {
    *  navigation): the page then shows nothing, not a no-access state that would be a lie. */
   readonly signedIn = computed(() => this.auth.isAuthenticated());
   private started = false;
+  /** The saga types the session may view, as a key (see `viewScopeKey`): what the filter's options follow. */
+  private readonly viewScope = computed(() => viewScopeKey(this.auth.access()));
+  /** The scope the filter's options were last asked for; null before the first request. */
+  private typesScope: string | null = null;
+  /** The latest saga types request; the answer to an earlier one is dropped. */
+  private typesRequest = 0;
   /** Set while a list that had started is shown without access; regaining it reads the list again. */
   private accessLost = false;
 
@@ -146,6 +153,17 @@ export class SagaList implements OnInit, OnDestroy {
         } else this.start();
       });
     });
+
+    // The options of the saga type filter are the types the session may view, so a session read that changes
+    // them (a grant widened or narrowed the scope: the server closes the connection, the reconnect reads the
+    // session) asks for them again. Keyed by the scope, not by the session object, which every read replaces.
+    // A session that may not list at all asks for nothing, and keeps the options it had.
+    effect(() => {
+      const scope = this.viewScope();
+      untracked(() => {
+        if (this.started && this.hasAccess() && scope !== this.typesScope) this.loadTypes();
+      });
+    });
   }
 
   ngOnInit(): void {
@@ -166,8 +184,7 @@ export class SagaList implements OnInit, OnDestroy {
     }
     this.started = true;
 
-    // The types only fill the filter: without them the select offers "All saga types" alone.
-    this.api.getSagaTypes().subscribe({ next: (types) => this.sagaTypes.set(types), error: () => undefined });
+    this.loadTypes();
     this.refresh();
 
     void this.hub.subscribeToList();
@@ -203,9 +220,22 @@ export class SagaList implements OnInit, OnDestroy {
     );
   }
 
+  /** The types only fill the filter: without them (or when asking fails) the select keeps what it had. */
+  private loadTypes(): void {
+    this.typesScope = this.viewScope();
+    const request = ++this.typesRequest;
+    this.api.getSagaTypes().subscribe({
+      next: (types) => {
+        if (request === this.typesRequest) this.sagaTypes.set(types);
+      },
+      error: () => undefined,
+    });
+  }
+
   ngOnDestroy(): void {
     // An answer to a request still in flight must not correct the page or the URL of a list that was left.
     this.listRequest++;
+    this.typesRequest++;
     this.subs.forEach((s) => s.unsubscribe());
   }
 

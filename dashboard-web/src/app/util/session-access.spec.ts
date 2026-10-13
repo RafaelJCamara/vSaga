@@ -1,5 +1,5 @@
 import { SessionAccess } from '../models/auth.model';
-import { holds, holdsAccessManage, holdsAny } from './session-access';
+import { holds, holdsAccessManage, holdsAny, viewScopeKey } from './session-access';
 
 const access: SessionAccess = {
   permissions: ['sagas.view'],
@@ -43,6 +43,37 @@ describe('session access', () => {
       expect(holdsAny(access, 'sagas.retry')).toBe(true);
       expect(holdsAny(access, 'access.manage')).toBe(false);
       expect(holdsAny(null, 'sagas.view')).toBe(false);
+    });
+  });
+
+  describe('viewScopeKey', () => {
+    const scoped = (...types: string[]): SessionAccess => ({
+      permissions: [],
+      scoped: types.map((sagaType) => ({ sagaType, permissions: ['sagas.view'] })),
+    });
+
+    it('is `*` when sagas.view is held for every saga type, whatever the scoped entries say', () => {
+      expect(viewScopeKey(access)).toBe('*');
+      expect(viewScopeKey({ permissions: ['sagas.view'], scoped: [] })).toBe('*');
+    });
+
+    it('names the types sagas.view is scoped to, sorted, so the order of the grants does not matter', () => {
+      expect(viewScopeKey(scoped('ShippingSaga', 'OrderSaga'))).toBe('["OrderSaga","ShippingSaga"]');
+      expect(viewScopeKey(scoped('OrderSaga', 'ShippingSaga'))).toBe(viewScopeKey(scoped('ShippingSaga', 'OrderSaga')));
+    });
+
+    it('leaves out a type that holds some other permission only', () => {
+      expect(viewScopeKey({ permissions: [], scoped: access.scoped })).toBe('[]');
+    });
+
+    it('differs when a type is added, and is the same for another permission being added', () => {
+      expect(viewScopeKey(scoped('OrderSaga'))).not.toBe(viewScopeKey(scoped('OrderSaga', 'ShippingSaga')));
+      expect(viewScopeKey({ permissions: ['sagas.data'], scoped: scoped('OrderSaga').scoped })).toBe(viewScopeKey(scoped('OrderSaga')));
+    });
+
+    it('is the same key for no access as for access without a view', () => {
+      expect(viewScopeKey(null)).toBe('[]');
+      expect(viewScopeKey({ permissions: ['sagas.data'], scoped: [] })).toBe('[]');
     });
   });
 
