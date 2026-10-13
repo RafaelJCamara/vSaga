@@ -905,9 +905,11 @@ correlation id, and the username on a retry entry; ADR 0006 lists this.
   endpoint is validated unless the endpoint carries an explicit exemption marker, which only the hub has.
   An API-key request is exempt only when its key arrived in a header. A failure is 400 with code
   `antiforgery`.
-- `XSRF-TOKEN` stays one name across stacks. A token from another stack fails validation; the SPA then
-  refetches the session and retries once. That path is load-bearing for two stacks in one browser and is
-  tested on both sides.
+- `XSRF-TOKEN` stays one name across stacks. A token from another stack fails validation. The SPA notes
+  the token each answer that issues one left in the cookie, and before an unsafe request that finds another
+  value there it reads the session first and sends the request once with the new token; a cookie replaced
+  after that check is still refused, and the SPA then refetches the session and retries once. That backstop
+  is load-bearing for the window between the check and the send, and is tested on both sides.
 - Data Protection keys live in the identity store (`SetApplicationName("VSaga.Dashboard")`), so a
   recreated API keeps sessions. The XML repository throws while the store is not ready, and the auth
   endpoints and cookie events check readiness first, so an unavailable store yields 503 or 401, never a
@@ -1223,7 +1225,7 @@ edited.
 | Lockout used against a known username | "Sign-in failed" for 15 minutes | Lockout is temporary; limiter keyed on address and username; an administrator's Unlock or `ResetOnStart` ends a lock at once (`MaxFailedAttempts=0` only stops new locks); device cookie is a follow-up |
 | Proxy hides client addresses | Limiter shares one bucket per username | Key includes the username; Warning when forwarded headers arrive from an untrusted peer |
 | TLS in front without a forwarded scheme | Hub never connects; cookies not Secure | `RequireHttps` validates forwarded-header trust at start; the origin guard logs both values |
-| Two stacks in one browser | First unsafe request on the other stack fails once | Per-project session cookie; antiforgery 400 refetches the session and retries once |
+| Two stacks in one browser | First unsafe request on the other stack would fail once | Per-project session cookie; the SPA reads the session before a write that finds another stack's token; antiforgery 400 refetches the session and retries once (backstop) |
 | Session expired or revoked | Redirect to `/login?returnUrl=...` | Hub stops on a dead session; absolute lifetime (the hub's ticket expiry is capped at it); stamp check per request |
 | Access changed while connected | Live updates pause, then resume under new access | Connections closed with a close message that allows reconnecting; the client reconnects, authenticates again (401 for a disabled or rotated session) and resubscribes |
 | API down or being recreated | "Reconnecting...", then recovery; no sign-out | nginx re-resolves within 10 s; keys in the store keep sessions |
@@ -1646,7 +1648,7 @@ Most questions the blueprints raised were answered by the second round of decisi
 | Bind the demo's dashboard ports to all interfaces or to loopback? | Loopback (§4.5). |
 | Ship a seeded administrator or start on the setup screen? | Seeded in compose; setup elsewhere, with a one-time code and no window (§8.8). |
 | Recovery when the only administrator's password is lost? | `Dashboard:Admin:ResetOnStart` (§8.8). |
-| Per-stack cookie names, or one signed-in stack per browser? | `Dashboard:Session:CookieName` per compose project; `XSRF-TOKEN` shared and healed by one retry (§8.3). |
+| Per-stack cookie names, or one signed-in stack per browser? | `Dashboard:Session:CookieName` per compose project; `XSRF-TOKEN` shared, and the SPA reads the session before a write that finds another stack's token, with one retry as the backstop (§8.3). |
 | Screenshots in the user guide? | No; text and tables (§9.2). |
 | How is a retry contained to the saga type it was authorised for? | A targeted redrive (§7.4), not a check of every saga type tracking the correlation id. |
 | Erase or retention path for snapshots? | Deferred (§14). |
@@ -1663,26 +1665,8 @@ four history files have the evidence and what was never exercised.
 
 Limits of the SPA, left as they are:
 
-- **A deep-linked forbidden detail page recovers late.** A detail page opened by URL straight into a 403
-  never starts the hub, so it notices a grant made later only when the session is read again (the tab
-  shown again, or a 403), not at once (`4ac938d`).
-- **The list's saga-type filter is fetched once.** A widened scope adds its types to the dropdown only when
-  the page is opened again (`c4720c6`).
-- **An administration tab with no live hub ends on `/login` late after the identity volume is wiped:** at
-  its first write, which answers 401, or when the tab is shown again (a session read, at most once a
-  minute). A tab with a live hub ends there by itself, after about 17 seconds in the runs (the C50 run).
-- **The retry's success message may not be heard.** The retry answer is a `role="status"` region inside
-  the retry row, so every refusal is heard because the row stays; but when the saga's own update removes
-  the row before or with the answer, the message goes with the row and the status badge is not a live
-  region (`2c9ad9e`, corrected by `adcf234`).
-- **Two stacks in one browser cost one healed `400 antiforgery` per switch**, because they share the
-  `XSRF-TOKEN` cookie: the SPA retries once and the user sees nothing, but it shows in the network log and
-  as one console error in Chromium (the C50 run).
-- **`GuideService.areaHidden` was not built.** Replay after the part it repeats has gone (the Saga data
-  bar closed, a Failed saga running again) waits five seconds for the anchor and does nothing, and a
-  queued retry for a saga that stops being retryable waits five seconds and is dropped, which delays the
-  next queued tour by as much (`2c9ad9e`). Switching Guide on from a detail page explains only the summary
-  and the part shown last (§9.1), and no tour uses a step's `reveal` control.
+- **No tour uses a step's `reveal` control** (the control that opens a tab or panel an anchor is behind).
+  It is implemented and specified, and nothing would restore a tab selected for one (`2c9ad9e`).
 
 Limits elsewhere:
 
