@@ -24,6 +24,8 @@ public sealed class IdentityDatabaseFile : IDisposable
 
     public string DatabasePath { get; }
 
+    private readonly HashSet<string> _otherPaths = new(StringComparer.Ordinal);
+
     public static string ConnectionString(string path) =>
         new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWriteCreate, ForeignKeys = true }.ToString();
 
@@ -39,6 +41,7 @@ public sealed class IdentityDatabaseFile : IDisposable
     public ServiceProvider BuildServices(string? path = null, Action<IServiceCollection>? configure = null)
     {
         var resolved = path ?? DatabasePath;
+        _otherPaths.Add(resolved);
         var services = new ServiceCollection();
         services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Debug));
         configure?.Invoke(services);
@@ -49,14 +52,17 @@ public sealed class IdentityDatabaseFile : IDisposable
     }
 
     /// <summary>
-    /// Releases the pool of this file only. <c>SqliteConnection.ClearAllPools()</c> reaches every database in the
+    /// Releases the pools of this file and of any other path <see cref="BuildServices"/> was given, and of nothing else. <c>SqliteConnection.ClearAllPools()</c> reaches every database in the
     /// process, and test classes run in parallel: it disposed a connection another test had just taken from its
     /// own pool.
     /// </summary>
     public void ClearPool()
     {
-        using var pooled = new SqliteConnection(ConnectionString(DatabasePath));
-        SqliteConnection.ClearPool(pooled);
+        foreach (var path in _otherPaths.Append(DatabasePath))
+        {
+            using var pooled = new SqliteConnection(ConnectionString(path));
+            SqliteConnection.ClearPool(pooled);
+        }
     }
 
     public void Dispose()

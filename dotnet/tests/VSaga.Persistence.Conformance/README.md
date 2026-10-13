@@ -56,7 +56,7 @@ There is no capability flag and no fallback for it, on purpose: the dashboard ma
 carrying the set instead of one call per type, and no vSaga package has been published yet (no tagged
 release exists), so a reader written against an earlier snapshot of the repository has to add the filter,
 not declare that it lacks it. A reader that ignores it still never shows a caller a row outside their scope (the
-API drops those), but gives a scoped caller short pages and a total over the wrong set. The same text is on
+API drops those), but gives a scoped caller short pages and a total over the wrong set. The same rule is stated on
 `ISagaSummaryReader.ListAsync` and `SagaListFilter.SagaTypes`.
 
 ## What a green run does not cover, by design

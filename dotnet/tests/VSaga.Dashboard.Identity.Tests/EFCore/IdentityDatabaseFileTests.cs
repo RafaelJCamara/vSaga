@@ -36,6 +36,28 @@ public sealed class IdentityDatabaseFileTests
         }
     }
 
+    /// <summary>A path other than <see cref="IdentityDatabaseFile.DatabasePath"/> that a test builds services on is released too.</summary>
+    [Fact]
+    public async Task ClearPool_AlsoReleasesAnotherPathTheServicesWereBuiltOn()
+    {
+        using var file = new IdentityDatabaseFile();
+        var other = Path.Combine(file.Directory, "other", "identity.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(other)!);
+        await using var services = file.BuildServices(other);
+
+        await using (var connection = new SqliteConnection(IdentityDatabaseFile.ConnectionString(other)))
+        {
+            await connection.OpenAsync();
+            await ExecuteAsync(connection, $"CREATE TEMP TABLE {Marker} (Id INTEGER)");
+        }
+
+        file.ClearPool();
+
+        await using var again = new SqliteConnection(IdentityDatabaseFile.ConnectionString(other));
+        await again.OpenAsync();
+        Assert.Equal(0L, await ScalarAsync(again, $"SELECT COUNT(*) FROM sqlite_temp_master WHERE name = '{Marker}'"));
+    }
+
     private static async Task<SqliteConnection> OpenAsync(IdentityDatabaseFile file)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(file.DatabasePath)!);

@@ -54,6 +54,20 @@ public sealed class RequireHttpsEdgeTests : IAsyncLifetime, IAsyncDisposable
         Assert.Contains("400", plainUpgrade.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>The origin guard runs before the refusal: a foreign origin is a 403 whether or not the request was plain HTTP.</summary>
+    [Fact]
+    public async Task AForeignOrigin_OnTheHub_IsStill403_BeforeThePlainHttpRefusal()
+    {
+        using var host = RequireHttps();
+        using var plain = host.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://dashboard.example.com") });
+        using var request = Negotiation();
+        request.Headers.Add("Origin", "https://evil.example");
+
+        using var response = await plain.SendAsync(request);
+
+        await AdminApi.AssertProblemAsync(response, HttpStatusCode.Forbidden, AuthProblems.ForbiddenCode);
+    }
+
     /// <summary>
     /// The deployment this setting exists for: the API sees plain HTTP from its proxy, which says https in
     /// <c>X-Forwarded-Proto</c>. Only a trusted peer's header counts.
@@ -90,6 +104,7 @@ public sealed class RequireHttpsEdgeTests : IAsyncLifetime, IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.NoContent, preflight.StatusCode);
         Assert.Equal(WebOrigin, Header(preflight, "Access-Control-Allow-Origin"));
+        Assert.Equal("true", Header(preflight, "Access-Control-Allow-Credentials"));
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
         Assert.Equal(WebOrigin, Header(refused, "Access-Control-Allow-Origin"));
         Assert.Equal("true", Header(refused, "Access-Control-Allow-Credentials"));

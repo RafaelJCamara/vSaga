@@ -10,13 +10,15 @@ adapter must not depend on. One producer serves every publish (sends are seriali
 created per subscription, all over one shared connection descriptor that Brighter's connection pool resolves
 to a single AMQP connection. The producer is long-lived on purpose: Brighter's gateway removes the pooled
 connection when any producer or consumer is disposed, so a producer built and disposed per publish closed the
-connection every consumer was using. Serialising the sends bounds a process to one confirmed publish at a time,
-so its rate is set by the broker's round trip, not by how many tasks publish: against a RabbitMQ container on the
-same machine, 5,000 messages from 1, 8 and 32 concurrent tasks took 1.8 to 2.9 s (about 1,700 to 2,800 a second, none
-failed, in three runs), where the per-publish producer managed 19, 144 and 457 a second and failed 507 and 973
-of the 5,000 at 8 and 32 tasks (one run). A broker 10 ms away would cap a process near 100 a second whatever the
-concurrency; the RabbitMQ adapter, which opens a channel per publish, is not bound that way. For the same reason,
-disposing one subscription closes the connection under the others; that matters at shutdown only. Full build history and live-verification detail: [`../history/transport-adapter-brighter.md`](../history/transport-adapter-brighter.md).
+connection every consumer was using. For the same reason, disposing one subscription closes the connection
+under the others; that matters at shutdown only. Serialising the sends bounds a process to one confirmed publish
+at a time, so its rate is set by the broker's round trip, not by how many tasks publish. Measured with a small
+message to a bound queue on a RabbitMQ 4 container on the same machine, 5,000 messages from 1, 8 and 32
+concurrent tasks took 1.8 to 2.9 s (about 1,700 to 2,800 a second, none failed, in three runs), where the
+per-publish producer managed 19, 144 and 457 a second and failed 507 and 973 of the 5,000 at 8 and 32 tasks
+(one run). By construction, not measured here: a broker 10 ms away would cap a process near 100 a second whatever
+the concurrency, and the RabbitMQ adapter, which opens a channel per publish and has no such gate, is not bound
+that way (it pays a channel open and close per publish instead). Full build history and live-verification detail: [`../history/transport-adapter-brighter.md`](../history/transport-adapter-brighter.md).
 
 - **No default exchange for a direct send.** Brighter's `RmqMessageProducer` is bound to exactly one
   exchange for its whole lifetime and always publishes using the message's `Topic` as the routing key —
