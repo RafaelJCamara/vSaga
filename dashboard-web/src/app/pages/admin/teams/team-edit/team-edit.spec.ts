@@ -1499,6 +1499,74 @@ describe('TeamEdit', () => {
       expect(message('team-description-error')).toBeUndefined();
     });
 
+    it('says what the API said in the banner, not on the fields or the grants, when the draft was changed while the request ran, and leaves the focus', async () => {
+      await filled();
+      type(description(), 'Changed meanwhile');
+      description().focus();
+
+      refuse(
+        write('POST', '/api/admin/teams'),
+        400,
+        problem('validation', 'x', {
+          name: ['Use 1 to 128 characters.'],
+          'grants[0].sagaTypes': ['Name 1 to 100 saga types, or grant all saga types.'],
+        }),
+      );
+      await settle();
+
+      expect(message('team-name-error')).toBeUndefined();
+      expect(name().getAttribute('aria-invalid')).toBeNull();
+      expect(editor().textContent).not.toContain('Name 1 to 100 saga types');
+      const alert = banner('.banner--error[role="alert"]')!;
+      expect(alert.textContent).toContain('Use 1 to 128 characters.');
+      expect(alert.textContent).toContain('Name 1 to 100 saga types, or grant all saga types.');
+      expect(alert.textContent).toContain('About what was sent, which you have changed since.');
+      expect(focused()).toBe(description());
+      expect(description().value).toBe('Changed meanwhile');
+      expect(unavailable(submit())).toBe(false);
+    });
+
+    it('does not put a message about a grant on another grant when a grant was removed while the request ran', async () => {
+      await filled();
+      await removeGrant(0);
+
+      refuse(
+        write('POST', '/api/admin/teams'),
+        400,
+        problem('validation', 'x', { 'grants[1].roleId': ['No role has this id.'] }),
+      );
+      await settle();
+
+      // One grant is left, at position 0; the message was about the one that was at 1.
+      expect(editor().querySelector('.field-error')).toBeNull();
+      expect(banner('.banner--error[role="alert"]')?.textContent).toContain('No role has this id.');
+    });
+
+    it('does not mark the name as taken when it was changed while the request ran', async () => {
+      await filled();
+      type(name(), 'Payments 2');
+
+      refuse(
+        write('POST', '/api/admin/teams'),
+        409,
+        problem('name_taken', "A team named 'Payments' already exists."),
+      );
+      await reloaded();
+
+      expect(banner('.banner--error')?.textContent).toContain('already exists');
+      expect(name().getAttribute('aria-invalid')).toBeNull();
+    });
+
+    it('shows a refusal that is not about fields as it was, whether or not the draft changed', async () => {
+      await filled();
+      type(description(), 'Changed meanwhile');
+
+      refuse(write('POST', '/api/admin/teams'), 500, problem('x', 'server words'));
+      await settle();
+
+      expect(banner('.banner--error[role="alert"]')?.textContent).toContain('HTTP 500');
+    });
+
     it('ends the messages about the grants as soon as the grants change', async () => {
       await filled();
       refuse(

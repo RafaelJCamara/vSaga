@@ -293,7 +293,10 @@ export class TeamEdit {
     try {
       team = await this.store.saveTeam(id, body);
     } catch (err) {
-      this.refused(adminFailure(err, 'The team could not be saved. Try again.'));
+      this.refused(
+        adminFailure(err, 'The team could not be saved. Try again.'),
+        revision === this.revision,
+      );
       this.busy.set(false);
       return;
     }
@@ -325,7 +328,7 @@ export class TeamEdit {
     } catch (err) {
       this.pending.set(null);
       this.deleting.set(false);
-      this.refused(adminFailure(err, 'The team could not be deleted. Try again.'));
+      this.refused(adminFailure(err, 'The team could not be deleted. Try again.'), true);
       return;
     }
     await leaveTo(this.router, '/admin/teams', () => !this.destroyed());
@@ -335,10 +338,29 @@ export class TeamEdit {
     }
   }
 
-  /** Shows a refusal where it belongs. The draft is never touched: the user fixes it or tries again. */
-  private refused(failure: AdminFailure): void {
+  /**
+   * Shows a refusal where it belongs. The draft is never touched: the user fixes it or tries again. `current`
+   * is false when the draft changed after the request was sent (a delete's refusal has no draft: always true).
+   */
+  private refused(failure: AdminFailure, current: boolean): void {
     if (failure.kind === 'gone') {
       this.gone.set(true);
+      return;
+    }
+    if (!current) {
+      // What the API said is about the value that was sent, and a field or a grant position may mean something
+      // else now. It is said once, in the banner; the fields and the focus (the user is typing somewhere) are
+      // left alone, and a name is not marked as taken.
+      const said =
+        failure.kind === 'validation'
+          ? `${Object.values(failure.fieldErrors).flat().join(' ')} (About what was sent, which you have changed since.)`
+          : failure.message;
+      this.failure.set({
+        ...failure,
+        kind: failure.kind === 'validation' ? 'failed' : failure.kind,
+        message: said,
+      });
+      this.refreshUnknownMembers(failure);
       return;
     }
     if (failure.kind !== 'validation') {
@@ -357,13 +379,22 @@ export class TeamEdit {
     // Messages for request paths this form has no field for are not lost: they join the banner.
     if (unplaced.length > 0)
       this.failure.set({ ...failure, kind: 'failed', message: unplaced.join(' ') });
-    // A member the API does not know may be a user deleted since the lists were read: read them again, so that the
-    // page can label the member it is about (the unknown-member row) instead of leaving a bare id unexplained.
-    if (Object.keys(failure.fieldErrors).some((path) => belongsToField(path, 'memberIds'))) {
-      void this.store.refresh();
-    }
+    this.refreshUnknownMembers(failure);
     // With nothing to focus but the banner (only paths the form has no field for), the banner takes it.
     if (!this.focusFirstError() && unplaced.length > 0) this.focusAfterRender(this.failureBanner);
+  }
+
+  /**
+   * A member the API does not know may be a user deleted since the lists were read: read them again, so that the
+   * page can label the member it is about (the unknown-member row) instead of leaving a bare id unexplained.
+   */
+  private refreshUnknownMembers(failure: AdminFailure): void {
+    if (
+      failure.kind === 'validation' &&
+      Object.keys(failure.fieldErrors).some((path) => belongsToField(path, 'memberIds'))
+    ) {
+      void this.store.refresh();
+    }
   }
 
   /** The draft for the page's URL: the team, or an empty one for a new team. */
