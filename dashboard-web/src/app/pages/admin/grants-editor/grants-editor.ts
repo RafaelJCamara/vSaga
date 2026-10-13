@@ -102,6 +102,7 @@ let nextId = 0;
   templateUrl: './grants-editor.html',
   styleUrl: './grants-editor.scss',
   changeDetection: ChangeDetectionStrategy.Eager,
+  host: { '(keydown.enter)': 'refuseImplicitSubmit($event)' },
 })
 export class GrantsEditor {
   private readonly host: HTMLElement = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -293,6 +294,19 @@ export class GrantsEditor {
   }
 
   /** Adds the saga type typed in `input`, trimmed. A blank or unusable name is said so, beside the input, and kept. */
+  /**
+   * Enter on a radio or a checkbox is an implicit submission of the form that holds the editor, which on the
+   * team page is a `PUT` that replaces the whole team. The choice is made with Space, so Enter does nothing
+   * here. The typed name's own Enter adds the name (see the template) and a button's Enter is its click, so
+   * neither is touched.
+   */
+  protected refuseImplicitSubmit(event: Event): void {
+    const target = event.target;
+    if (target instanceof HTMLInputElement && (target.type === 'radio' || target.type === 'checkbox')) {
+      event.preventDefault();
+    }
+  }
+
   protected addTyped(index: number, input: HTMLInputElement): boolean {
     const name = input.value.trim();
     const problem = problemWith(name);

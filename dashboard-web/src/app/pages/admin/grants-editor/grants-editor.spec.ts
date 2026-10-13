@@ -434,6 +434,19 @@ describe('GrantsEditor', () => {
       expect(host.submits).toBe(0);
     });
 
+    it('does not submit the page on Enter pressed on a radio or a checkbox, and leaves a button alone', async () => {
+      await render([grant(OPERATOR_ID, ['OrderSaga'])]);
+      const press = (target: Element) => {
+        const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true });
+        target.dispatchEvent(enter);
+        return enter.defaultPrevented;
+      };
+
+      expect(press(el().querySelector('input[type="radio"]')!)).toBe(true);
+      expect(press(el().querySelector('input[type="checkbox"]')!)).toBe(true);
+      expect(press(el().querySelector('button')!)).toBe(false);
+    });
+
     it('keeps the case it was typed in: saga types are compared ordinally', async () => {
       await render([grant(OPERATOR_ID, [])]);
 
