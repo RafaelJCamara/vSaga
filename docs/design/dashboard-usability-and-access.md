@@ -410,12 +410,16 @@ skipped as a duplicate) and a timeout that was claimed but not handled.
 - Live refresh: `SagaUpdated` patches the summary at once and feeds a subject piped through
   `auditTime(250)`; one refresh reloads timeline, map, related sagas, children and the detail
   (`refreshDetail()` never touches `loading` and keeps the summary with the higher version). Pushed
-  timeline entries trigger the same refresh instead of being appended. One follow-up timeline fetch
+  timeline entries trigger the same refresh instead of being appended. A follow-up timeline fetch
   1500 ms after a push-triggered refresh runs only when the last step has an outcome but no snapshot
   (`missing`), its newest row is younger than `PENDING_SNAPSHOT_MS` (whatever the saga's status, so a
   saga that has just finished is covered), and the timeline already holds at least one
-  `StatePersisted`; the follow-up never schedules another. Overlapping timeline or map fetches apply
-  only the latest answer.
+  `StatePersisted`. Each follow-up that still finds the snapshot missing under the same conditions
+  schedules the next one 1500 ms later, so the chain ends with the window (at most four follow-up fetches, the last
+  just after it): the engine may append a snapshot up to its own five-second deadline after the commit,
+  and a single look at 1500 ms left a snapshot that landed at 3.5 s shown as missing (live run of
+  2026-10-14, `docs/history/2026-10-14-live-verification-round-2.md`). Overlapping timeline or map
+  fetches apply only the latest answer.
 - Load errors: with nothing loaded, `banner banner--error` and Try again; with stale content,
   `banner banner--warning` above it. Every reconnect after the first connect runs one live refresh
   (pushes sent while the hub was down are lost), which retries both; after a failed detail load it
@@ -1231,7 +1235,7 @@ edited.
 | A page that works under `ng serve` violates the CSP | Broken page in the container only | CI greps `index.html`; live browser pass with the console open |
 | Snapshot append fails or exceeds `StateSnapshotTimeout` | Step data "missing" | Warning logged; transition, drain and ack proceed; EF entity detached |
 | Process dies between commit and snapshot, or a step loses its persist race | Step data "missing" | Best effort by design; At end reads the live blob |
-| Poller pushes before the snapshot lands | "pending" for up to five seconds | One follow-up fetch at 1500 ms |
+| Poller pushes before the snapshot lands | "pending" for up to five seconds | Follow-up fetches every 1500 ms until the window ends |
 | State larger than the cap, or saga past its budget | "too large" or "budget used up" note | Markers; failure snapshots still recorded in full |
 | Redis memory pressure from snapshots | Persists refused, messages dead-letter | Per-saga budget; measured figures in `docs/persistence.md`; `RecordStateSnapshots=false` |
 | Dashboard API older than the engine | Entry type `21`, unredacted snapshots | Deploy the dashboard first; compose builds both together |

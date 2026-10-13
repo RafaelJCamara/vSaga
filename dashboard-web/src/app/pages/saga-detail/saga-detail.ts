@@ -46,9 +46,12 @@ import { timezoneLabel, toMillis } from '../../util/time-format';
 export const REFRESH_AUDIT_MS = 250;
 
 /**
- * The delay of the one extra timeline fetch after a push-triggered refresh that found the final
+ * The delay of the extra timeline fetches after a push-triggered refresh that found the final
  * step committed but its snapshot not appended yet: the poller can push between the engine's persist
- * and its StatePersisted append, and for a saga that has just finished no later push would come.
+ * and its StatePersisted append, and for a saga that has just finished no later push would come. Each
+ * fetch that still finds the snapshot missing, inside the pending window, schedules the next one, so
+ * a snapshot the engine appends late (its own deadline is five seconds) is shown when it lands, not
+ * only when the window has run out and the step has already been called missing.
  */
 export const SNAPSHOT_FOLLOW_UP_MS = 1500;
 
@@ -719,13 +722,17 @@ export class SagaDetail implements OnInit, OnDestroy {
     });
   }
 
-  /** One timeline fetch SNAPSHOT_FOLLOW_UP_MS from now, when the final step's snapshot may still land. */
+  /**
+   * One timeline fetch SNAPSHOT_FOLLOW_UP_MS from now, when the final step's snapshot may still land. The fetch
+   * schedules the next one when it still finds the snapshot missing, so the chain ends with the pending
+   * window: at most four follow-up fetches, the last of them just after the window has run out.
+   */
   private scheduleSnapshotFollowUp(): void {
     this.cancelSnapshotFollowUp();
     if (!awaitsSnapshot(this.history(), Date.now())) return;
     this.followUp = setTimeout(() => {
       this.followUp = null;
-      this.loadTimeline();
+      this.loadTimeline(() => this.scheduleSnapshotFollowUp());
     }, SNAPSHOT_FOLLOW_UP_MS);
   }
 

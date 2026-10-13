@@ -1661,10 +1661,51 @@ describe('SagaDetail', () => {
       expect(apiMock.getTimeline).toHaveBeenCalledTimes(2);
       vi.advanceTimersByTime(1);
       expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
+    });
 
-      // Still no snapshot: the follow-up does not schedule another one.
-      vi.advanceTimersByTime(10_000);
+    // The engine may append a snapshot up to its own deadline (five seconds) after the commit, so one look
+    // 1500 ms later is not enough: found live, a snapshot that landed 3.5 s late stayed "No snapshot was
+    // recorded" on screen. Each look that still finds it missing, inside the window, schedules the next.
+    it("keeps looking for the final step's snapshot until the pending window has run out, then stops", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T);
+      const fixture = setup(makeDetail({ status: 'Completed' }), awaitingSnapshot());
+
+      push(fixture);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS + SNAPSHOT_FOLLOW_UP_MS);
       expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
+
+      // Step 2's newest row is at T - 400, so the window ends at T + 4600: the looks come at T + 1750,
+      // T + 3250 and T + 4750 (the last one just after the window), and the chain ends there.
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(4);
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(5);
+
+      vi.advanceTimersByTime(10_000);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(5);
+    });
+
+    it('shows a snapshot that lands after the first follow-up and stops looking', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T);
+      const fixture = setup(makeDetail({ status: 'Completed' }), awaitingSnapshot());
+
+      push(fixture);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS + SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
+
+      const recorded = [
+        ...awaitingSnapshot(),
+        makeEntry({ sequenceNumber: 6, entryType: 'StatePersisted', messageId: 'm1', payloadJson: '{"Paid":true}', occurredAtUtc: at(2500) }),
+      ];
+      apiMock.getTimeline.mockReturnValue(of(recorded));
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(4);
+      expect(fixture.componentInstance.timeline()).toEqual(recorded);
+
+      vi.advanceTimersByTime(10_000);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(4);
     });
 
     it.each([
