@@ -177,6 +177,8 @@ namespace VSaga.Persistence.EFCore.Postgres.Migrations
 
                     b.HasIndex("SagaType", "Status");
 
+                    b.HasIndex("SagaType", "UpdatedAtUtc");
+
                     b.HasIndex("Status", "UpdatedAtUtc");
 
                     b.ToTable("SagaInstances", (string)null);

@@ -110,6 +110,13 @@ public sealed class VSagaDbContext(DbContextOptions<VSagaDbContext> options) : D
             // the poller filters on none, leaving Postgres a sequential scan over an unbounded table.
             // Also covers the list endpoint's unfiltered UpdatedAt sort, either direction.
             b.HasIndex(x => x.UpdatedAtUtc);
+            // A list of one saga type in its UpdatedAt order (the dashboard's type filter, and the one call per
+            // scoped type behind a caller whose access names a single type), in either direction and at any depth:
+            // with only the index above Postgres walks every row of every type in time order and discards those of
+            // other types, and an offset page reads and discards the rows before it the same way. The composite
+            // above (Status, UpdatedAtUtc) cannot serve it, and the unique (SagaType, CorrelationId) key orders
+            // by id.
+            b.HasIndex(x => new { x.SagaType, x.UpdatedAtUtc });
             // Resolving a bare correlation id to the saga instance(s) tracking it — the composite key
             // can't serve this, since its leading column is SagaType.
             b.HasIndex(x => x.CorrelationId);

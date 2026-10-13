@@ -74,8 +74,12 @@ around it, useful if the app might start before Postgres is reachable, and for i
 MongoDB.) See `dotnet/src/VSaga.Persistence.EFCore.Postgres/Migrations/` for the migration history:
 identity scoping to `(SagaType, CorrelationId)`, the Saga Map's service-map fields, sub-saga
 parent-linkage columns, the outbox table (plus its own follow-up index migration), the business-key
-column with its partial unique index, and the `SagaInstances.UpdatedAtUtc` index the dashboard's change
-poller needs (eight migrations in total).
+column with its partial unique index, the `SagaInstances.UpdatedAtUtc` index the dashboard's change
+poller needs, and the `(SagaType, UpdatedAtUtc)` index that serves a list of one saga type in its UpdatedAt
+order at any depth (nine migrations in total). On a 400,400-row table in random physical order the hundredth
+page of 25 for one type read 42,860 buffers and took 55 ms without that index, 2,533 buffers and 4 ms with it;
+a page one for the same type 481 buffers and 1.2 ms against 38 and 0.14 ms. A list across several types keeps
+its plan (the `UpdatedAtUtc` index with a filter), which was already cheap for common types.
 
 **The five tables** `VSagaDbContext` maps, for anyone querying the database directly:
 

@@ -1686,8 +1686,6 @@ that turns a "pending" snapshot into "missing" and the 1500 ms follow-up fetch.
 - **Retention or erasure of recorded snapshots.** Nothing in vSaga removes event-log entries, and saga
   state may hold personal data. An erase path needs a persistence-contract change across all four
   providers.
-- **A `(SagaType, UpdatedAtUtc)` Postgres index** for per-type pages in the scoped merge, following
-  `20260924142250_AddSagaInstanceUpdatedAtUtcIndex`.
 - **A payload-free timeline read** for the engine's visited-states lookup and the map. It is the real fix
   for the snapshot read cost; the trigger is a saga type whose steps × state size passes about 1 MB.
 - **The device-cookie lockout bypass** (a Data-Protected, HttpOnly "known device" cookie that lets a
