@@ -107,7 +107,8 @@ function sagaTypeOf(path: string): string | null {
  * went through, so a tour whose version was bumped shows once more), and Replay repeats the current area.
  * An area is a page (the list: when its route is opened) or a part of a page (the detail page's map, timeline,
  * saga data and retry row, and the administration pages once the shell has read everything: when the page
- * calls `areaShown`).
+ * calls `areaShown`, and no longer when it calls `areaHidden`: a part that goes is no longer asked for, queued,
+ * or the one Replay repeats).
  *
  * The overlay answers to `request`: it waits for the area to be on screen, then calls `started`, and ends
  * with `ended` (with `remember` when the user finished or skipped the tour) or, if there was nothing to
@@ -126,6 +127,9 @@ export class GuideService {
   private readonly pathState = signal('');
   /** The area Replay repeats: the page's own area, then whichever part of the page was shown last. */
   private readonly currentId = signal<GuideAreaId | null>(null);
+  /** The areas the page has announced and not withdrawn, in the order they were last announced: what is on
+   *  screen. The last one is what Replay repeats, and what is left when it goes. */
+  private shown: GuideAreaId[] = [];
   private readonly requestState = signal<GuideRequest | null>(null);
   private readonly runningState = signal<GuideAreaId | null>(null);
   /** Areas announced while a tour was running or asked for, in the order they came. */
@@ -189,8 +193,9 @@ export class GuideService {
   /**
    * Switches Guide on or off. On: everything counts as unseen again (a person who switches Guide on wants the
    * walkthrough, whatever an earlier session of it covered), the hint is answered, and the current page's
-   * area starts, then the part of the page that was shown last when that is another area (the detail page's
-   * map). Off: whatever is wanted or queued is dropped; the overlay ends a tour it is showing,
+   * area starts, then every part of the page that is on screen, in the order they were shown (the detail
+   * page's retry row, saga data and map or timeline: a part that was hidden meanwhile is not on screen, and
+   * is not explained). Off: whatever is wanted or queued is dropped; the overlay ends a tour it is showing,
    * without remembering it.
    */
   setEnabled(on: boolean): void {
@@ -201,12 +206,14 @@ export class GuideService {
       this.hintDismissedState.set(true);
       this.seenState.set({});
       this.save();
-      // The page's own area first (the detail page's summary), then the part of it that was shown last, when
-      // that is another one (the map the page opened on).
+      // The page's own area first (the detail page's summary), then the parts of it that are on screen, in the
+      // order they came (the retry row, the data, the map the page opened on).
       const page = guideAreaForPath(this.pathState());
-      const current = this.area();
       if (page && this.allowed(page)) this.enqueue(page);
-      if (current && current.id !== page?.id) this.enqueue(current);
+      for (const id of this.shown) {
+        const part = guideAreaOf(id);
+        if (part && part.id !== page?.id && this.allowed(part)) this.enqueue(part);
+      }
     } else {
       this.requestState.set(null);
       this.save();
@@ -245,8 +252,37 @@ export class GuideService {
   areaShown(id: GuideAreaId): void {
     const area = guideAreaOf(id);
     if (!area || !this.allowed(area)) return;
+    this.shown = [...this.shown.filter((s) => s !== id), id];
     this.currentId.set(id);
     if (this.enabledState() && !this.isSeen(id)) this.enqueue(area);
+  }
+
+  /**
+   * A page tells the guide that a part it announced is no longer on screen (the tab was switched, the Saga data
+   * bar closed, the retried saga is running and has no retry row). It stops being the area Replay repeats:
+   * Replay falls back on the part shown before it that is still on screen, then on the page's own area. It
+   * is no longer asked for: a request that was waiting for it is dropped (the overlay stops looking for its
+   * anchor, and the next queued area starts at once, instead of five seconds later when the overlay gives
+   * up), and it leaves the queue. A tour that is running is left alone: the overlay centres the popover until
+   * the element is back, so a part that flickers (a refresh, a reload of the page's data) does not cancel it.
+   * One that comes back is announced again, and is asked for again if it was not explained.
+   *
+   * Only for the parts of a page that announce themselves with `areaShown`. A route area (the list, the detail
+   * summary) is asked for by the route before its page has loaded anything, and withdrawing it then would
+   * cancel that request, so it is ignored here.
+   */
+  areaHidden(id: GuideAreaId): void {
+    const area = guideAreaOf(id);
+    if (!area || area.trigger.on !== 'shown') return;
+    this.shown = this.shown.filter((s) => s !== id);
+    this.pending = this.pending.filter((p) => p !== id);
+    if (this.currentId() === id) {
+      this.currentId.set(this.shown.at(-1) ?? guideAreaForPath(this.pathState())?.id ?? null);
+    }
+    if (this.requestState()?.area.id === id) {
+      this.requestState.set(null);
+      this.advance();
+    }
   }
 
   /** The overlay found the area on screen and is showing its tour. */
@@ -298,7 +334,9 @@ export class GuideService {
     // An area that lives on several routes (the administration pages) stays the current one while the navigation
     // stays inside them: its page announces it again after the navigation, and until then Replay and the hint
     // must not be taken away and put back.
-    this.currentId.set(area?.id ?? (this.staysWithin(path) ? this.currentId() : null));
+    const stays = area === null && this.staysWithin(path);
+    this.currentId.set(area?.id ?? (stays ? this.currentId() : null));
+    if (!stays) this.shown = [];
     if (area && this.enabledState() && this.allowed(area) && !this.isSeen(area.id)) {
       this.enqueue(area);
     }

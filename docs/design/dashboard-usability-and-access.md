@@ -1143,11 +1143,17 @@ lists every `Dashboard:*` key in one table.
   of them. `seen[area] = version`; bumping a version shows a changed tour once more. Switching Guide on
   clears `seen` (a person who switches it on wants the walkthrough), so every switch-on explains each
   area again as it is shown; a reload with Guide already on repeats nothing. It then starts the page's
-  own area (the list; a saga's summary) and, when that is another area, the part shown last (the map
-  the page opened on; on an administration page, the administration tour). An area announced while a
+  own area (the list; a saga's summary) and then every part of the page that is on screen, in the order
+  the parts came (the retry row, the Saga data bar when a view is open, the map the page opened on; on an
+  administration page, the administration tour). An area announced while a
   tour runs waits in a queue: Done starts the next, Escape and Skip drop it, as do a page change and
-  switching Guide off. Replay repeats the last part announced (the page's own area until another part
-  of the page is shown). Guide is off by default, with a non-modal hint once.
+  switching Guide off. A part that goes (`GuideService.areaHidden`: the detail page withdraws the retry row,
+  the data, the map and the timeline; the summary and the route areas are never withdrawn) leaves the
+  queue, drops a request that was waiting for it (the overlay stops looking for its anchor, and the next
+  queued area starts at once) and stops being what Replay repeats: Replay falls back on the part shown
+  before it that is still on screen, then on the page's own area. A tour that is running is left alone.
+  Replay repeats the last part announced and not withdrawn (the page's own area until another part of the
+  page is shown). Guide is off by default, with a non-modal hint once.
 - `GuideToggle` in `.topbar-end` (`data-tour="topbar-guide"`), a `<button aria-pressed>` "Guide",
   "Replay tour", and a "User guide" link.
 - `GuideOverlay`, loaded with `@defer (when guide.enabled())`: waits for the area's ready anchor (250 ms

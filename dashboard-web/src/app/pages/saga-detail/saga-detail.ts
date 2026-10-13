@@ -296,14 +296,29 @@ export class SagaDetail implements OnInit, OnDestroy {
     private readonly auth: AuthService,
     private readonly injector: Injector,
   ) {
-    // Guide mode: each part of the page says when it is on screen. From effects, never from here: the router
-    // resets what the guide knows about a page when the navigation ends, which is after this runs. The order is
-    // the order the tours run in: the summary, the retry row under it, the data, then the tab.
-    const announce = (shown: () => boolean, area: GuideAreaId) =>
+    // Guide mode: each part of the page says when it is on screen, and when it is not. From effects, never from
+    // here: the router resets what the guide knows about a page when the navigation ends, which is after this
+    // runs. The order is the order the tours run in: the summary, the retry row under it, the data, then the
+    // tab. The summary never says it is gone: its route asked for its tour before the saga had loaded (it is not
+    // shown until then), and withdrawing it would cancel that request. A part says so on a real change only (a
+    // signal that does not change does not run its effect again), so a refresh that re-renders the map or the
+    // timeline withdraws nothing.
+    const announce = (shown: () => boolean, area: GuideAreaId, withdraws = true) => {
+      let announced = false;
       effect(() => {
-        if (shown()) untracked(() => this.guide.areaShown(area));
+        const on = shown();
+        untracked(() => {
+          if (on) {
+            announced = true;
+            this.guide.areaShown(area);
+          } else if (announced && withdraws) {
+            announced = false;
+            this.guide.areaHidden(area);
+          }
+        });
       });
-    announce(this.showing, 'summary');
+    };
+    announce(this.showing, 'summary', false);
     announce(this.retryRowShown, 'retry');
     announce(this.dataShown, 'data');
     announce(this.mapShown, 'map');

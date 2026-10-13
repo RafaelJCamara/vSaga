@@ -343,6 +343,69 @@ describe('GuideOverlay', () => {
       expect(guide.running()).toBeNull();
     });
 
+    // The part of the page that was asked for goes (the retried saga runs, the data bar is closed): the page tells
+    // the guide, which clears the request, and the overlay has to stop looking for an anchor that will not come.
+    describe('when the part it is waiting for goes', () => {
+      const seenSummary = { v: 1, enabled: true, seen: { summary: 1 }, hintDismissed: true };
+
+      it('stops looking at once: no look is left to find the anchor later, or to give up on it', async () => {
+        await setup('/sagas/OrderSaga/abc', seenSummary);
+        guide.areaShown('retry');
+        flush();
+        expect(guide.request()?.area.id).toBe('retry');
+        vi.advanceTimersByTime(500);
+        expect(vi.getTimerCount()).toBe(1); // the next look
+
+        guide.areaHidden('retry');
+        flush();
+
+        expect(guide.request()).toBeNull();
+        expect(vi.getTimerCount()).toBe(0);
+        addAnchor('detail-retry');
+        vi.advanceTimersByTime(5000);
+        flush();
+        expect(popover()).toBeNull();
+        expect(guide.running()).toBeNull();
+        expect(guide.isSeen('retry')).toBe(false);
+      });
+
+      it('starts the next queued tour at once, not when the five seconds of looking are over', async () => {
+        await setup('/sagas/OrderSaga/abc', seenSummary);
+        addAnchor('map-canvas');
+        addAnchor('map-controls');
+        guide.areaShown('retry'); // asked for: its row is not there
+        guide.areaShown('map'); // queued behind it
+        flush();
+        vi.advanceTimersByTime(500);
+        expect(guide.running()).toBeNull();
+
+        guide.areaHidden('retry'); // the saga runs again
+        flush();
+
+        expect(guide.running()).toBe('map');
+        expect(popover()).not.toBeNull();
+        expect(title()).toBe(GUIDE_TOURS.map[0].title);
+      });
+
+      it('does not end a tour that is running: it stays up, centred, until the part is back', async () => {
+        await setup('/sagas/OrderSaga/abc', seenSummary);
+        const canvas = addAnchor('map-canvas');
+        addAnchor('map-controls');
+        guide.areaShown('map');
+        flush();
+        expect(guide.running()).toBe('map');
+
+        guide.areaHidden('map'); // a refresh re-renders the map
+        canvas.el.remove();
+        flush();
+        runFrame();
+
+        expect(guide.running()).toBe('map');
+        expect(popover()).not.toBeNull();
+        expect(page.hasAttribute('inert')).toBe(true);
+      });
+    });
+
     it('abandons the request if the session no longer holds the area permission when the page is ready', async () => {
       await setup('/sagas');
       guide.setEnabled(true);

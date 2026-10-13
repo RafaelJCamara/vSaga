@@ -100,7 +100,7 @@ describe('SagaDetail', () => {
   let hubInitialState: SagaHubConnectionState = 'connected';
   let auth: AuthMock;
   /** Stands in for guide mode: the page's announcements are what a spec reads. */
-  let guideMock: { areaShown: ReturnType<typeof vi.fn> };
+  let guideMock: { areaShown: ReturnType<typeof vi.fn>; areaHidden: ReturnType<typeof vi.fn> };
 
   // Only the tests that push use fake timers (the refresh waits REFRESH_AUDIT_MS); none may leak.
   afterEach(() => {
@@ -143,7 +143,7 @@ describe('SagaDetail', () => {
     };
 
     auth = createAuthMock(authOptions);
-    guideMock = { areaShown: vi.fn() };
+    guideMock = { areaShown: vi.fn(), areaHidden: vi.fn() };
     TestBed.configureTestingModule({
       imports: [SagaDetail],
       providers: [
@@ -3085,6 +3085,147 @@ describe('SagaDetail', () => {
         expect(label(el2.querySelector('.tl-marker:not(.tl-marker--failed)'))).toBe('Re-run starts here');
         expect(el2.textContent).toContain('Recorded at');
         expect(label(el2.querySelector('.tl-data'))).toBe('Data');
+      });
+    });
+
+    // The other half: a part that goes is withdrawn, so the guide stops asking for it, drops it from the queue and
+    // lets Replay fall back on what is still on screen. The summary is never withdrawn (its route asked for its tour
+    // before the saga loaded), and a refresh that re-renders a part is no reason to withdraw it.
+    describe('what the page withdraws', () => {
+      const hidden = () => guideMock.areaHidden.mock.calls.map((c) => c[0]);
+      const running = () => hubMock.sagaUpdated$.next({ ...makeDetail().summary, status: 'Running', currentState: 'Running', version: 9 });
+
+      it('withdraws nothing from a page that is created, shown and left alone', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }), timelineEntries());
+        fixture.detectChanges();
+
+        expect(hidden()).toEqual([]);
+      });
+
+      it('withdraws the map when the Timeline tab is shown, and the timeline when the Map tab returns', () => {
+        const fixture = setup(makeDetail({ status: 'Running' }), timelineEntries());
+
+        fixture.componentInstance.setTab('timeline');
+        fixture.detectChanges();
+        expect(hidden()).toEqual(['map']);
+
+        fixture.componentInstance.setTab('map');
+        fixture.detectChanges();
+        expect(hidden()).toEqual(['map', 'timeline']);
+      });
+
+      it('withdraws the data when the Saga data view is closed, and when the last step inspector is', () => {
+        const fixture = setup(makeDetail({ status: 'Running' }), timelineEntries());
+        fixture.componentInstance.setDataView('start');
+        fixture.detectChanges();
+        expect(hidden()).toEqual([]);
+
+        fixture.componentInstance.setDataView(null);
+        fixture.detectChanges();
+        expect(hidden()).toEqual(['data']);
+
+        fixture.componentInstance.setTab('timeline');
+        fixture.componentInstance.openKeys.set(new Set([60]));
+        fixture.detectChanges();
+        guideMock.areaHidden.mockClear();
+        fixture.componentInstance.openKeys.set(new Set());
+        fixture.detectChanges();
+        expect(hidden()).toEqual(['data']);
+      });
+
+      it('withdraws the retry row when the retried saga is running and has none', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        expect(shown()).toContain('retry');
+
+        running();
+        fixture.detectChanges();
+
+        expect(fixture.nativeElement.querySelector('.retry-row')).toBeNull();
+        expect(hidden()).toEqual(['retry']);
+      });
+
+      it('withdraws the retry row when the session loses sagas.retry', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+
+        auth.access.set({ permissions: ['sagas.view'], scoped: [] });
+        fixture.detectChanges();
+
+        expect(hidden()).toEqual(['retry']);
+      });
+
+      it('announces the retry row again, and withdraws it again, each time the saga fails and runs', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        running();
+        fixture.detectChanges();
+        guideMock.areaShown.mockClear();
+
+        hubMock.sagaUpdated$.next({ ...makeDetail().summary, status: 'Failed', version: 10 });
+        fixture.detectChanges();
+        expect(shown()).toEqual(['retry']);
+
+        hubMock.sagaUpdated$.next({ ...makeDetail().summary, status: 'Running', currentState: 'Running', version: 11 });
+        fixture.detectChanges();
+        expect(hidden()).toEqual(['retry', 'retry']);
+      });
+
+      it('withdraws the parts, and never the summary, when a read of the saga ends in a refusal', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        apiMock.get.mockReturnValue(throwError(() => httpError(403, problem('forbidden', 'No access.'))));
+
+        fixture.componentInstance.load();
+        fixture.detectChanges();
+
+        expect(hidden().sort()).toEqual(['map', 'retry']);
+        expect(hidden()).not.toContain('summary');
+      });
+
+      it('withdraws the parts, and never the summary, while the session is ending', () => {
+        const fixture = setup(makeDetail({ status: 'Failed' }));
+        auth.status.set('anonymous'); // the session is ending: the page shows nothing
+        fixture.detectChanges();
+
+        expect(hidden().sort()).toEqual(['map', 'retry']);
+      });
+
+      // A refresh reads the timeline and the map again and replaces what the page holds with the same content
+      // in new objects. The parts do not go, and are not announced again.
+      it.each([
+        ['map', 'map' as const],
+        ['timeline', 'timeline' as const],
+      ])('withdraws nothing, and announces nothing again, when a live refresh re-renders the %s', (_name, tab) => {
+        vi.useFakeTimers();
+        const fixture = setup(makeDetail({ status: 'Running' }), timelineEntries());
+        fixture.componentInstance.setTab(tab);
+        fixture.detectChanges();
+        guideMock.areaShown.mockClear();
+        guideMock.areaHidden.mockClear();
+        apiMock.getTimeline.mockReturnValue(of(timelineEntries()));
+        apiMock.getMap.mockReturnValue(of(makeMap()));
+
+        hubMock.timelineEntryAdded$.next({ sagaType: 'OrderSaga', correlationId: 'saga-1', entry: makeEntry() });
+        hubMock.sagaUpdated$.next({ ...makeDetail({ status: 'Running' }).summary, version: 5 });
+        vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+        fixture.detectChanges();
+
+        expect(apiMock.getMap).toHaveBeenCalled();
+        expect(hidden()).toEqual([]);
+        expect(guideMock.areaShown).not.toHaveBeenCalled();
+      });
+
+      it('withdraws what was on screen when the route moves this instance to another saga, and announces the next one anew', () => {
+        const paramMap$ = new Subject<ParamMap>();
+        const fixture = setup(makeDetail({ status: 'Failed' }), [], makeMap(), [makeDetail().summary], [], paramMap$);
+        paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-1' }));
+        fixture.detectChanges();
+        guideMock.areaShown.mockClear();
+
+        const next = new Subject<SagaDetailModel>();
+        apiMock.get.mockReturnValue(next);
+        paramMap$.next(convertToParamMap({ sagaType: 'OrderSaga', id: 'saga-2' }));
+        fixture.detectChanges();
+
+        expect(hidden().sort()).toEqual(['map', 'retry']);
+        expect(hidden()).not.toContain('summary');
       });
     });
 

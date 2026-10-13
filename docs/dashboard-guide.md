@@ -237,10 +237,14 @@ Each area explains itself once. Opening the same page again, reloading it or com
 tour you went through or skipped. Switching Guide off and on again, clearing the browser's site data, or a new
 version of a tour (its copy changed) does.
 
-Switching Guide on while you are on a saga's page starts the summary and then only the part that was shown last
-(for example the map). Parts that were shown earlier are not explained then; each explains itself the next time
-it is shown, which for the retry row means the next time it appears (open the saga again from the list, or open
-another failed saga).
+Switching Guide on while you are on a saga's page starts the summary and then every part that is on screen at
+that moment, in the order they appeared (for example the retry row, the Saga data bar when a view is open, and the
+map). A part that is not on screen then, such as the retry row of a saga that is running, is not explained; it
+explains itself the next time it is shown.
+
+A part that goes away while its tour is waiting (the saga starts running and loses its retry row, or the Saga
+data bar is closed) is dropped at once, whether it was waiting for its turn or for its place on the page, and the
+next tour starts without waiting. A tour that is already on screen is left alone.
 
 ### During a tour
 
@@ -263,8 +267,10 @@ your session no longer holds the permission the area needs.
 
 ### Replay and what the browser remembers
 
-**Replay tour** repeats the last part that was announced, and only that: the page's own area until another part
-is shown, then the map, the timeline, the data or the retry row, whichever was shown last. It appears only while
+**Replay tour** repeats the last part that was announced and is still on screen, and only that: the page's own
+area until another part is shown, then the map, the timeline, the data or the retry row, whichever was shown last.
+When that part goes away (you switch tabs, close the Saga data view, or the retried saga runs and its retry row
+goes) Replay repeats the one shown before it that is still there, and the page's own area when none is. It appears only while
 Guide is on, the page has an area you may see (the saga list, a saga's page, the administration pages) and no
 tour is running or waiting.
 

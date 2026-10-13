@@ -436,15 +436,16 @@ describe('GuideService', () => {
 
       guide.setEnabled(false);
       guide.ended('list', false); // the overlay ends the tour it was showing
+      guide.areaHidden('map'); // the tab was switched while Guide was off: the map is not on screen
       guide.setEnabled(true);
-      expect(guide.request()?.area.id).toBe('list'); // the page's own area first, then what was shown last
+      expect(guide.request()?.area.id).toBe('list'); // the page's own area first, then what is on screen
       guide.started('list');
       guide.ended('list', true);
       expect(guide.request()?.area.id).toBe('timeline');
       guide.started('timeline');
       guide.ended('timeline', true);
 
-      expect(guide.request()).toBeNull(); // the map was forgotten with the first session
+      expect(guide.request()).toBeNull(); // the map was forgotten with the first session: it is not on screen
     });
 
     it('starts the page area first and then the part that was shown last, when Guide is switched on from the detail page', async () => {
@@ -1133,6 +1134,257 @@ describe('GuideService', () => {
         await router.navigateByUrl('/admin');
 
         expect(guide.area()).toBeNull();
+      });
+    });
+
+    // A part that goes (the tab was switched, the data bar closed, the retried saga runs and has no retry row)
+    // tells the guide, which stops asking for it, and falls back on what is still on screen.
+    describe('a part that goes', () => {
+      it('drops the request that was waiting for it, and starts the next queued area at once', async () => {
+        const { guide } = await onDetailPage();
+        guide.areaShown('retry'); // asked for: the overlay is waiting for its anchor
+        guide.areaShown('data'); // queued behind it
+        expect(guide.request()?.area.id).toBe('retry');
+
+        guide.areaHidden('retry'); // the saga runs again: no retry row
+
+        expect(guide.request()?.area.id).toBe('data');
+      });
+
+      it('drops the request and leaves nothing to ask for when no other area is queued', async () => {
+        const { guide } = await onDetailPage();
+        guide.areaShown('map');
+
+        guide.areaHidden('map');
+
+        expect(guide.request()).toBeNull();
+      });
+
+      it('takes the area out of the queue, so it is never started behind the tour in front of it', async () => {
+        const { guide } = await onDetailPage();
+        guide.areaShown('retry');
+        guide.areaShown('map'); // queued
+        guide.areaShown('data'); // queued
+
+        guide.areaHidden('map');
+        guide.started('retry');
+        guide.ended('retry', true);
+
+        expect(guide.request()?.area.id).toBe('data');
+        guide.started('data');
+        guide.ended('data', true);
+        expect(guide.request()).toBeNull(); // the map was gone by its turn
+      });
+
+      it('leaves a tour that is running alone: it keeps the popover centred until the element is back', async () => {
+        const { guide } = await onDetailPage();
+        guide.areaShown('map');
+        guide.started('map');
+
+        guide.areaHidden('map');
+
+        expect(guide.running()).toBe('map');
+        guide.ended('map', true);
+        expect(guide.isSeen('map')).toBe(true);
+      });
+
+      it('does not touch a request for another area, or the queue behind it', async () => {
+        const { guide } = await onDetailPage();
+        guide.areaShown('map');
+        guide.areaShown('data');
+
+        guide.areaHidden('retry'); // never shown
+        guide.areaHidden('timeline'); // never shown
+
+        expect(guide.request()?.area.id).toBe('map');
+        guide.started('map');
+        guide.ended('map', true);
+        expect(guide.request()?.area.id).toBe('data');
+      });
+
+      it('is asked for again when it comes back unexplained, which a flicker of the part does too', async () => {
+        const { guide } = await onDetailPage();
+        guide.areaShown('timeline');
+
+        guide.areaHidden('timeline');
+        guide.areaShown('timeline');
+
+        expect(guide.request()?.area.id).toBe('timeline');
+        guide.started('timeline');
+        guide.ended('timeline', true);
+        expect(guide.request()).toBeNull(); // asked for once
+      });
+
+      it('is not asked for again once it was explained, when it comes back', async () => {
+        const { guide } = await onDetailPage();
+        guide.areaShown('map');
+        guide.started('map');
+        guide.ended('map', true);
+
+        guide.areaHidden('map');
+        guide.areaShown('map');
+
+        expect(guide.request()).toBeNull();
+      });
+
+      it('is not the area to replay any more: Replay falls back on the part shown before it that is still on screen', async () => {
+        const { guide } = await onDetailPage({ seen: { retry: 1, data: 1, map: 1 } });
+        guide.areaShown('retry');
+        guide.areaShown('data');
+        guide.areaShown('map');
+        expect(guide.area()?.id).toBe('map');
+
+        guide.areaHidden('map'); // the tab was switched
+        expect(guide.area()?.id).toBe('data');
+        guide.replay();
+        expect(guide.request()?.area.id).toBe('data');
+        guide.abandoned();
+
+        guide.areaHidden('data'); // the data bar was closed
+        expect(guide.area()?.id).toBe('retry');
+        guide.areaHidden('retry'); // the saga runs again
+        expect(guide.area()?.id).toBe('summary'); // the page's own area, with nothing else on screen
+      });
+
+      it('falls back on the part shown last again when a part that was in front goes and comes back in another order', async () => {
+        const { guide } = await onDetailPage({ seen: { retry: 1, map: 1, timeline: 1 } });
+        guide.areaShown('retry');
+        guide.areaShown('map');
+        guide.areaShown('timeline');
+        guide.areaHidden('map'); // the timeline tab was opened: the map goes
+
+        guide.areaHidden('timeline');
+        guide.areaShown('map');
+
+        expect(guide.area()?.id).toBe('map');
+        guide.areaHidden('map');
+        expect(guide.area()?.id).toBe('retry');
+      });
+
+      it('leaves what Replay repeats when it was another part that went', async () => {
+        const { guide } = await onDetailPage({ seen: { retry: 1, map: 1 } });
+        guide.areaShown('retry');
+        guide.areaShown('map');
+
+        guide.areaHidden('retry');
+
+        expect(guide.area()?.id).toBe('map');
+      });
+
+      it('falls back on nothing on a page that has no area of its own, and the hint goes with it', async () => {
+        const { guide } = await create('/admin/users');
+        guide.areaShown('admin');
+        expect(guide.area()?.id).toBe('admin');
+
+        guide.areaHidden('admin');
+
+        expect(guide.area()).toBeNull();
+        expect(guide.canReplay()).toBe(false);
+      });
+
+      it('does the same with Guide off: Replay and the hint follow what is on screen', async () => {
+        storage = createGuideStorage(stored({ enabled: false, hintDismissed: false }));
+        const { guide } = await create('/sagas/OrderSaga/abc');
+        guide.areaShown('map');
+        expect(guide.area()?.id).toBe('map');
+
+        guide.areaHidden('map');
+
+        expect(guide.area()?.id).toBe('summary');
+        expect(guide.showHint()).toBe(true);
+        expect(guide.request()).toBeNull();
+      });
+
+      it('ignores the page area: its route asks for it before the page has loaded anything, and it is not withdrawn', async () => {
+        storage = createGuideStorage(stored({ enabled: true, hintDismissed: true }));
+        const { guide } = await create('/sagas/OrderSaga/abc');
+        expect(guide.request()?.area.id).toBe('summary'); // asked for on arrival, the page is still loading
+
+        guide.areaHidden('summary');
+        guide.areaHidden('list');
+
+        expect(guide.request()?.area.id).toBe('summary');
+        expect(guide.area()?.id).toBe('summary');
+      });
+
+      it('forgets what was on screen with the page, so the next page starts from nothing', async () => {
+        const { guide, router } = await onDetailPage();
+        guide.areaShown('map');
+
+        await router.navigateByUrl('/sagas/OrderSaga/other');
+        guide.areaShown('retry');
+        guide.areaHidden('retry');
+
+        expect(guide.area()?.id).toBe('summary'); // not the map of the page that was left
+      });
+
+      it('keeps what was on screen across a navigation inside the administration area', async () => {
+        const { guide, router } = await create('/admin/users');
+        guide.areaShown('admin');
+
+        await router.navigateByUrl('/admin');
+        expect(guide.area()?.id).toBe('admin');
+        guide.areaHidden('admin');
+
+        expect(guide.area()).toBeNull();
+      });
+    });
+
+    describe('switching Guide on from a detail page that shows several parts', () => {
+      it('explains the summary and then every part on screen, in the order they came', async () => {
+        storage = createGuideStorage(stored({ enabled: false, hintDismissed: true }));
+        const { guide } = await create('/sagas/OrderSaga/abc');
+        guide.areaShown('summary');
+        guide.areaShown('retry');
+        guide.areaShown('data');
+        guide.areaShown('map');
+
+        guide.setEnabled(true);
+
+        const order: string[] = [];
+        while (guide.request()) {
+          const id = guide.request()!.area.id;
+          order.push(id);
+          guide.started(id);
+          guide.ended(id, true);
+        }
+        expect(order).toEqual(['summary', 'retry', 'data', 'map']);
+      });
+
+      it('leaves out a part that went before Guide was switched on', async () => {
+        storage = createGuideStorage(stored({ enabled: false, hintDismissed: true }));
+        const { guide } = await create('/sagas/OrderSaga/abc');
+        guide.areaShown('summary');
+        guide.areaShown('retry');
+        guide.areaShown('map');
+        guide.areaHidden('retry');
+        guide.areaHidden('map');
+        guide.areaShown('timeline');
+
+        guide.setEnabled(true);
+
+        const order: string[] = [];
+        while (guide.request()) {
+          const id = guide.request()!.area.id;
+          order.push(id);
+          guide.started(id);
+          guide.ended(id, true);
+        }
+        expect(order).toEqual(['summary', 'timeline']);
+      });
+
+      it('leaves out a part the session may not see', async () => {
+        storage = createGuideStorage(stored({ enabled: false, hintDismissed: true }));
+        const { guide } = await create('/sagas/OrderSaga/abc');
+        guide.areaShown('summary');
+        guide.areaShown('data');
+        held.set(['sagas.view', 'sagas.retry']); // sagas.data was revoked while Guide was off
+
+        guide.setEnabled(true);
+
+        guide.started('summary');
+        guide.ended('summary', true);
+        expect(guide.request()).toBeNull();
       });
     });
 
