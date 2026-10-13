@@ -243,6 +243,18 @@ export class SagaHubService implements OnDestroy {
     }
   }
 
+  /**
+   * Starts the connection and joins no group: for a page that wants to hear the server close it. The server
+   * closes a user's connections when their access changes or their session ends, and the client's reconnect
+   * (and the probe behind a failed one) is how a page without a subscription of its own notices: a forbidden
+   * saga page that a grant would let in, an administration tab that a wiped identity store would sign out.
+   * Idempotent, and a no-op between `stopAndReset()` and `resume()`. The connection is the app's one, as for
+   * any subscription: it ends with the session, not with the page that asked.
+   */
+  async connect(): Promise<void> {
+    await this.ensureStarted();
+  }
+
   async subscribeToList(): Promise<void> {
     const generation = this.generation;
     await this.ensureStarted();

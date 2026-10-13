@@ -88,12 +88,16 @@ describe('SagaDetail', () => {
     connectionState$: BehaviorSubject<SagaHubConnectionState>;
     subscribeToSaga: ReturnType<typeof vi.fn>;
     unsubscribeFromSaga: ReturnType<typeof vi.fn>;
+    connect: ReturnType<typeof vi.fn>;
   };
   let navigateSpy: ReturnType<typeof vi.spyOn>;
   /** What setup's /retry-plan answers; by default nothing, so the page shows no plan. */
   let retryPlanResponse: Observable<SagaRetryPlan> = EMPTY;
   /** The session setup() signs in with: by default every permission for every saga type. */
   let authOptions: AuthMockOptions = {};
+  /** What the hub reports when the page starts: connected, as when the list opened it first; a deep-linked
+   *  page finds it disconnected. */
+  let hubInitialState: SagaHubConnectionState = 'connected';
   let auth: AuthMock;
   /** Stands in for guide mode: the page's announcements are what a spec reads. */
   let guideMock: { areaShown: ReturnType<typeof vi.fn> };
@@ -103,6 +107,7 @@ describe('SagaDetail', () => {
     vi.useRealTimers();
     retryPlanResponse = EMPTY;
     authOptions = {};
+    hubInitialState = 'connected';
   });
 
   function setup(
@@ -131,9 +136,10 @@ describe('SagaDetail', () => {
     hubMock = {
       sagaUpdated$: new Subject<SagaSummary>(),
       timelineEntryAdded$: new Subject<{ sagaType: string; correlationId: string; entry: SagaLogEntry }>(),
-      connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
+      connectionState$: new BehaviorSubject<SagaHubConnectionState>(hubInitialState),
       subscribeToSaga: vi.fn().mockResolvedValue(undefined),
       unsubscribeFromSaga: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn().mockResolvedValue(undefined),
     };
 
     auth = createAuthMock(authOptions);
@@ -220,6 +226,7 @@ describe('SagaDetail', () => {
       connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
       subscribeToSaga: vi.fn().mockResolvedValue(undefined),
       unsubscribeFromSaga: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn().mockResolvedValue(undefined),
     };
 
     // First navigation (saga A) returns the not-yet-resolved Subject; the second (saga B) resolves
@@ -288,6 +295,7 @@ describe('SagaDetail', () => {
       connectionState$: new BehaviorSubject<SagaHubConnectionState>('disconnected'),
       subscribeToSaga: vi.fn().mockResolvedValue(undefined),
       unsubscribeFromSaga: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn().mockResolvedValue(undefined),
     };
     TestBed.configureTestingModule({
       imports: [SagaDetail],
@@ -2013,6 +2021,51 @@ describe('SagaDetail', () => {
         expect(el.querySelector('h1')?.textContent?.trim()).toBe('OrderSaga');
       });
 
+      // A page opened by URL straight into a 403 joins nothing, but it keeps the hub connected: the server
+      // closes a connection when a grant is made, and a page with no connection would never hear of it.
+      it('brings the hub connection up without joining any group', () => {
+        authOptions = { access: access([]) };
+        setupForbidden();
+
+        expect(hubMock.connect).toHaveBeenCalledTimes(1);
+        expect(hubMock.subscribeToSaga).not.toHaveBeenCalled();
+      });
+
+      it('does not bring the hub up when the 403 arrives after the page was left', () => {
+        const detail$ = new Subject<SagaDetailModel>();
+        const fixture = setup(makeDetail(), [], makeMap(), undefined, [], new Subject<ParamMap>());
+        apiMock.get.mockReturnValue(detail$);
+        fixture.componentInstance.sagaType = 'OrderSaga';
+        fixture.componentInstance.correlationId = 'saga-1';
+        fixture.componentInstance.load();
+
+        fixture.destroy();
+        detail$.error(forbiddenBody);
+
+        expect(hubMock.connect).not.toHaveBeenCalled();
+      });
+
+      // A deep link finds the hub disconnected: its first connect is the cue to read the session, as no close
+      // can have reached a connection that did not exist when the grant was made.
+      it('reads the session when its own connection first comes up, and asks again once it holds sagas.view', () => {
+        hubInitialState = 'disconnected';
+        authOptions = { access: access([]) };
+        const fixture = setupForbidden();
+        expect(auth.refresh).not.toHaveBeenCalled();
+        auth.refresh.mockImplementation(() => {
+          auth.access.set(access(['sagas.view']));
+          return Promise.resolve('authenticated' as const);
+        });
+        apiMock.get.mockReturnValue(of(makeDetail({ status: 'Completed' })));
+
+        hubMock.connectionState$.next('connected');
+        fixture.detectChanges();
+
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(apiMock.get).toHaveBeenCalledTimes(2);
+        expect(fixture.componentInstance.forbidden()).toBe(false);
+      });
+
       it('is not a load error: any other failure still shows the banner', () => {
         const paramMap$ = new Subject<ParamMap>();
         const fixture = setup(makeDetail(), [], makeMap(), undefined, [], paramMap$);
@@ -2134,6 +2187,7 @@ describe('SagaDetail', () => {
           connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
           subscribeToSaga: vi.fn().mockResolvedValue(undefined),
           unsubscribeFromSaga: vi.fn().mockResolvedValue(undefined),
+          connect: vi.fn().mockResolvedValue(undefined),
         };
         TestBed.configureTestingModule({
           imports: [SagaDetail],

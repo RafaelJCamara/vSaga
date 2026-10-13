@@ -390,10 +390,18 @@ export class SagaDetail implements OnInit, OnDestroy {
           // down are lost, and a saga that finished meanwhile would never send another.
           // The server closes a user's connection when their access changes, so a later connect is also
           // the cue to read the session: a grant that widened what the viewer may do (retry, data) is then
-          // picked up without a reload, and the effects that follow a gained permission fire. A forbidden
-          // page's refresh() reads it already. The read is single-flight and bounded, and adopting a
-          // session never reconnects the hub, so a reconnect cannot start a loop.
-          if (wasConnectedBefore && !this.forbidden()) void this.auth.refresh();
+          // picked up without a reload, and the effects that follow a gained permission fire. The read is
+          // single-flight and bounded, and adopting a session never reconnects the hub, so a reconnect
+          // cannot start a loop.
+          //
+          // A forbidden page reads it at every connect, the first included: its connection was started
+          // for that (see `forbid`), and a grant made before the connection was recorded on the server
+          // closed nothing. It asks the API for nothing else (a forbidden page has nothing to refresh).
+          if (this.forbidden()) {
+            void this.auth.refresh();
+            return;
+          }
+          if (wasConnectedBefore) void this.auth.refresh();
           if (hadError) {
             this.load();
           } else if (wasConnectedBefore || hadTimelineError || hadMapError) {
@@ -454,14 +462,17 @@ export class SagaDetail implements OnInit, OnDestroy {
   }
 
   /**
-   * The API refused the page: nothing to show, and no live updates to ask the hub for. One limit stays: a
-   * page opened by URL straight into a 403 never starts the hub (`subscribe` is not called), so nothing
-   * closes a connection to tell it about a grant: it recovers when the session is read again (the tab
-   * shown, a 403), not at once.
+   * The API refused the page: nothing to show, and no group to join. The hub connection is still brought
+   * up, with no subscription (`connect`): a page opened by URL straight into a 403 would otherwise have no
+   * connection for the server to close when a grant is made, and would notice it only when the session is
+   * read again (the tab shown, another 403). The close and the reconnect that follows it reach the
+   * connection-state handler in `ngOnInit`, which reads the session. Nothing is polled, and nothing is
+   * subscribed, so the hub has no group to refuse again on every reconnect.
    */
   private forbid(): void {
     this.forbidden.set(true);
     this.unsubscribe();
+    if (!this.destroyed) void this.hub.connect();
   }
 
   load(): void {

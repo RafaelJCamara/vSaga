@@ -163,6 +163,40 @@ describe('SagaHubService', () => {
     expect(connection.invocations).toEqual([['SubscribeToList']]);
   });
 
+  // A page with nothing to subscribe to (a forbidden saga, an administration tab) still wants the connection,
+  // so the server's close on an access change, and the failed reconnect after a wiped session, reach it.
+  it('connect() starts the connection and joins no group', async () => {
+    const seen: string[] = [];
+    service.connectionState$.subscribe((s) => seen.push(s));
+
+    await service.connect();
+
+    expect(connection.startCount).toBe(1);
+    expect(connection.invocations).toEqual([]);
+    expect(seen).toEqual(['disconnected', 'connected']);
+  });
+
+  it('connect() shares the connection with the subscriptions that come before and after it', async () => {
+    await service.subscribeToList();
+    await service.connect();
+    await service.connect();
+    await service.subscribeToSaga('OrderSaga', 'abc-123');
+
+    expect(connection.startCount).toBe(1);
+    expect(connection.invocations).toEqual([['SubscribeToList'], ['SubscribeToSaga', 'OrderSaga', 'abc-123']]);
+  });
+
+  it('connect() builds nothing between stopAndReset() and resume()', async () => {
+    await service.stopAndReset();
+
+    await service.connect();
+    expect(connection.startCount).toBe(0);
+
+    service.resume();
+    await service.connect();
+    expect(connection.startCount).toBe(1);
+  });
+
   // Hub groups are keyed by (sagaType, correlationId) server-side: two saga types can share a
   // correlation id, so dropping either argument would subscribe a detail view to another saga's feed.
   it('subscribeToSaga() invokes SubscribeToSaga with both the saga type and the correlation id', async () => {

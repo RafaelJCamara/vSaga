@@ -85,6 +85,7 @@ describe('SagaDetail with the real guide, through the router', () => {
             connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
             subscribeToSaga: vi.fn().mockResolvedValue(undefined),
             unsubscribeFromSaga: vi.fn().mockResolvedValue(undefined),
+            connect: vi.fn().mockResolvedValue(undefined),
           },
         },
       ],
