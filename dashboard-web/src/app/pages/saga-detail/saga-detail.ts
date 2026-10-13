@@ -54,8 +54,10 @@ export const SNAPSHOT_FOLLOW_UP_MS = 1500;
 
 /**
  * How long the answer to a retry stays on screen after the retry row has gone (the saga runs again, and its
- * status hides the row): long enough to read, and the screen reader has said it by then. With the row shown it
- * stays until the next retry is asked, as before.
+ * status hides the row): long enough to read, and the screen reader has said it by then. The time runs from the
+ * moment there is a message and no row, and is not shortened or restarted when the row comes back (the saga
+ * failed again): the message goes at the end of it, row or not. An answer that arrives with the row shown stays
+ * until the next retry is asked, as before.
  */
 export const RETRY_MESSAGE_LINGER_MS = 6000;
 

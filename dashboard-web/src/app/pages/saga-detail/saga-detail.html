@@ -1,7 +1,8 @@
 <a class="back" routerLink="/sagas">&larr; All sagas</a>
 
-<!-- Said to a signed-in viewer only: while the session ends the page shows nothing but the way back. -->
-@if (signedIn()) {
+<!-- Said to a signed-in viewer only: while the session ends the page shows nothing but the way back. Not on a
+     forbidden page either: it holds the connection only to hear of a grant, and promises no live updates. -->
+@if (signedIn() && !forbidden()) {
   @if (connectionState() === 'reconnecting') {
     <div class="banner banner--warning">Reconnecting to live updates…</div>
   } @else if (hasEverConnected() && connectionState() === 'disconnected') {

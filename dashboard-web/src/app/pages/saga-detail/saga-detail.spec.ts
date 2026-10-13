@@ -2162,6 +2162,20 @@ describe('SagaDetail', () => {
 
       // A page opened by URL straight into a 403 joins nothing, but it keeps the hub connected: the server
       // closes a connection when a grant is made, and a page with no connection would never hear of it.
+      it('shows no live-updates banner on the forbidden page, though it holds the connection', () => {
+        const fixture = setupForbidden();
+        const el: HTMLElement = fixture.nativeElement;
+
+        hubMock.connectionState$.next('reconnecting');
+        fixture.detectChanges();
+        expect(el.querySelector('.banner--warning')).toBeNull();
+
+        hubMock.connectionState$.next('disconnected');
+        fixture.detectChanges();
+        expect(el.querySelector('.banner--warning')).toBeNull();
+        expect(fixture.componentInstance.forbidden()).toBe(true);
+      });
+
       it('brings the hub connection up without joining any group', () => {
         authOptions = { access: access([]) };
         setupForbidden();
@@ -3109,9 +3123,11 @@ describe('SagaDetail', () => {
         fixture.detectChanges();
         expect(hidden()).toEqual(['map']);
 
+        guideMock.areaShown.mockClear();
         fixture.componentInstance.setTab('map');
         fixture.detectChanges();
         expect(hidden()).toEqual(['map', 'timeline']);
+        expect(shown()).toEqual(['map']); // and it is announced again, for the guide to ask for if unexplained
       });
 
       it('withdraws the data when the Saga data view is closed, and when the last step inspector is', () => {
@@ -3123,6 +3139,13 @@ describe('SagaDetail', () => {
         fixture.componentInstance.setDataView(null);
         fixture.detectChanges();
         expect(hidden()).toEqual(['data']);
+        guideMock.areaShown.mockClear();
+        fixture.componentInstance.setDataView('start');
+        fixture.detectChanges();
+        expect(shown()).toEqual(['data']); // the part is announced again when it comes back
+        fixture.componentInstance.setDataView(null);
+        fixture.detectChanges();
+        guideMock.areaHidden.mockClear();
 
         fixture.componentInstance.setTab('timeline');
         fixture.componentInstance.openKeys.set(new Set([60]));

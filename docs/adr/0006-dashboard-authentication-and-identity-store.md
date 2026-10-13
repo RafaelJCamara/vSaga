@@ -96,8 +96,8 @@ The eleven sub-decisions below settle how.
   a matched endpoint requires a valid token unless the endpoint carries an explicit exemption, and only
   the hub carries one (SignalR's negotiate is a POST with no header). A failure is `400` with code
   `antiforgery`; the SPA refetches the session and retries once. `XSRF-TOKEN` keeps its fixed name, so
-  two stacks on one host share it, and that refetch-and-retry is what heals a token issued by the other
-  stack.
+  two stacks on one host share it. The SPA reads the session before a write that finds a token it was not
+  issued, so the other stack's token is not sent; the refetch-and-retry above remains as the backstop.
 - **Passwords.** The framework's `PasswordHasher<T>`, rehashing on sign-in when its parameters change.
   The policy is a length of `Dashboard:Password:MinLength` (default 12) to 128 and inequality with the
   username; no composition rules. A new password equal to the current one is refused.

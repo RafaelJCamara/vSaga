@@ -628,7 +628,12 @@ describe('AdminShell: the focus after a navigation inside the area', () => {
 
   beforeEach(async () => {
     TestBed.configureTestingModule({
-      providers: [provideRouter(FOCUS_ROUTES), provideHttpClient(), provideHttpClientTesting(), { provide: SagaHubService, useValue: { connect: vi.fn().mockResolvedValue(undefined) } }],
+      providers: [
+        provideRouter(FOCUS_ROUTES),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: SagaHubService, useValue: { connect: vi.fn().mockResolvedValue(undefined) } },
+      ],
     });
     http = TestBed.inject(HttpTestingController);
     harness = await RouterTestingHarness.create();
