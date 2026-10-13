@@ -82,6 +82,10 @@ export class AuthService {
   private readonly unavailableState = signal(false);
 
   private inFlight: Promise<SessionStatus> | null = null;
+  /** The `XSRF-TOKEN` cookie as the API last issued it to this page (the interceptor notes it after every
+   *  answer that issues one); null before the first. The cookie is shared by every stack on the host and every
+   *  tab of one, so what it holds now may be another's: see `xsrfTokenReplaced`. */
+  private issuedXsrfToken: string | null = null;
   private lastForbiddenRefreshAt = Number.NEGATIVE_INFINITY;
   private lastVisibleRefreshAt = Number.NEGATIVE_INFINITY;
   /** Counts the moments the identity behind the cookie may have changed: a local sign-out, and every
@@ -286,6 +290,21 @@ export class AuthService {
     if (!intervalElapsed(this.lastForbiddenRefreshAt, now, FORBIDDEN_REFRESH_INTERVAL_MS)) return;
     this.lastForbiddenRefreshAt = now;
     void this.refresh();
+  }
+
+  /** For the interceptor: the token cookie as it stands right after an answer that issues it. */
+  noteXsrfTokenIssued(token: string | null): void {
+    this.issuedXsrfToken = token;
+  }
+
+  /**
+   * For the interceptor: whether the `XSRF-TOKEN` cookie `current` is no longer the one this page was issued
+   * (another stack on the same host, or another tab, re-issued it, or it was cleared): the request that would
+   * carry it is refused with 400 `antiforgery`, so the interceptor reads the session first and sends the
+   * request with the cookie that read issues. False before the first token: nothing was issued to compare with.
+   */
+  xsrfTokenReplaced(current: string | null): boolean {
+    return this.issuedXsrfToken !== null && current !== this.issuedXsrfToken;
   }
 
   /** POSTs a request that changes the identity behind the cookie (sign-in, setup, password change). It

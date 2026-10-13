@@ -802,14 +802,14 @@ one cookie jar. Compose names each stack's session cookie after its project (`vs
 keeps its own sign-in, even after a reload.
 
 They do share one cookie, `XSRF-TOKEN`: the readable cookie whose value the page copies into every change it
-sends. Each stack's sign-in and session read overwrites it, so the first change you make after switching to the
-other stack carries the other stack's token and the API refuses it once (HTTP 400, `antiforgery`). The page
-recovers by itself: it reads the session again, which issues the right token, and sends the same request once
-more. You see nothing, apart from one failed request per switch in the browser's developer tools (Chromium also
-logs one console error); a second change in the same tab needs no retry. Only if the second attempt fails as well
-does the page show the server's message. Reloading the page reads the session and fixes the token.
+sends. Each stack's sign-in and session read overwrites it, so after you switch to the other stack the cookie
+holds the other stack's token. The page notices that before it sends your next change: it reads the session
+again, which issues the right token, and sends the change once with it. You see nothing, and nothing is refused.
+If the cookie is replaced in the instant between that check and the send, the API refuses the change once (HTTP
+400, `antiforgery`), and the page does the same thing then: reads the session and sends the change again. Only
+if the second attempt fails as well does the page show the server's message.
 
-For two stacks without that failed request, give each its own cookie jar: a separate browser profile (or a
+To keep the stacks' cookies apart altogether, give each its own cookie jar: a separate browser profile (or a
 private window), or reach one of them by another host name, for example <http://127.0.0.1:4300> beside
 <http://localhost:4200>, since cookies are kept per host name.
 

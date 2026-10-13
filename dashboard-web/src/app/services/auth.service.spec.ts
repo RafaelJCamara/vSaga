@@ -1894,6 +1894,40 @@ describe('AuthService with the real Router', () => {
   });
 });
 
+describe('AuthService token cookie bookkeeping', () => {
+  function service(): AuthService {
+    TestBed.configureTestingModule({
+      providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
+    });
+    return TestBed.inject(AuthService);
+  }
+
+  it('asks nothing of a cookie before one was issued, whatever it holds', () => {
+    const auth = service();
+
+    expect(auth.xsrfTokenReplaced('theirs')).toBe(false);
+    expect(auth.xsrfTokenReplaced(null)).toBe(false);
+  });
+
+  it('says a cookie is replaced when it differs from the one issued, a cleared one included', () => {
+    const auth = service();
+    auth.noteXsrfTokenIssued('mine');
+
+    expect(auth.xsrfTokenReplaced('mine')).toBe(false);
+    expect(auth.xsrfTokenReplaced('theirs')).toBe(true);
+    expect(auth.xsrfTokenReplaced(null)).toBe(true);
+  });
+
+  it('follows the latest token issued', () => {
+    const auth = service();
+    auth.noteXsrfTokenIssued('one');
+    auth.noteXsrfTokenIssued('two');
+
+    expect(auth.xsrfTokenReplaced('one')).toBe(true);
+    expect(auth.xsrfTokenReplaced('two')).toBe(false);
+  });
+});
+
 describe('PAGE_RELOAD', () => {
   it('reloads the document of the page by default', () => {
     const reload = vi.fn();

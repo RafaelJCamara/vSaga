@@ -475,9 +475,12 @@ could still ride a session. Every **unsafe** request therefore has to carry an a
   and still signed in after reloading. Across ten writes alternating between the two tabs, **every first
   `POST` got `400` `antiforgery`** (it carried the other stack's token), the SPA read `GET /api/auth/session`,
   and **one** retried `POST` answered `201`, with no banner; a second write in the same tab right after needed
-  no retry. So expect that one refused-and-retried request, visible in the network log, on the first change you
-  make after switching stacks; a page that has just read its own session holds its own stack's token, until
-  the other stack issues one again, and needs no retry.
+  no retry. That was the behaviour of the SPA that only reacted to the refusal. The SPA now also notes the
+  token each answer that issues one left in the cookie, and before a write that finds another value there (the
+  other stack's, or another tab's) it reads `GET /api/auth/session` first and sends the write once, with the
+  token that read issued: the same switch shows a session read and a `201`, and no `400` in the network log
+  or the console. The refusal handling above remains for a cookie that is replaced between that check and the
+  send.
 - **Not for the hub.** A browser cannot add a header to a WebSocket upgrade, so the hub is exempt and an
   [origin check](#live-updates-signalr) guards it instead.
 

@@ -394,7 +394,9 @@ cannot read is strictly better.
   `Dashboard:ApiKeyRole` is set.
 - The demo ships a known administrator login; binding to `127.0.0.1` is what keeps it local.
 - Stacks side by side on one host share `XSRF-TOKEN`; the first unsafe request after switching stacks
-  costs one antiforgery `400` and a retry.
+  would cost one antiforgery `400` and a retry. The SPA now reads the session before such a request when it
+  finds a token it was not issued, so nothing is refused (`docs/dashboard.md#csrf-protection`); the
+  refusal-and-retry path stays as the backstop.
 
 ### Neutral
 

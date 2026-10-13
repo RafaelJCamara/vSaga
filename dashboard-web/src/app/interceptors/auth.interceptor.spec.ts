@@ -293,6 +293,134 @@ describe('authInterceptor', () => {
     });
   });
 
+  // The cookie is one name for every stack on the host: another stack, or another tab, replaces it, and the
+  // write that carried it would be refused. The page notes the token it was issued and checks it before a write.
+  describe('a token cookie that another stack replaced', () => {
+    /** The cookie the session read leaves behind. */
+    function refreshLeaves(token: string | null): void {
+      auth.refresh.mockImplementation(async () => {
+        setXsrfCookie(token);
+        return auth.status();
+      });
+    }
+    const replacedWhenNot = (issued: string | null) =>
+      auth.xsrfTokenReplaced.mockImplementation((current) => issued !== null && current !== issued);
+
+    it('reads the session first and sends the write once, with the token that read issues', async () => {
+      setXsrfCookie('foreign');
+      replacedWhenNot('mine');
+      refreshLeaves('fresh');
+      const outcome = run(http.post('/api/admin/teams', { name: 'ops' }));
+
+      backend.expectNone('/api/admin/teams');
+      await settle();
+
+      expect(auth.refresh).toHaveBeenCalledTimes(1);
+      const only = backend.expectOne('/api/admin/teams');
+      expect(only.request.headers.get(XSRF)).toBe('fresh');
+      expect(only.request.body).toEqual({ name: 'ops' });
+      only.flush({ id: 'team-1' });
+      expect(outcome.value).toEqual({ id: 'team-1' });
+      expect(auth.noteXsrfTokenIssued).toHaveBeenCalledWith('fresh');
+    });
+
+    it('stamps a write that had no token at all, the cookie having been cleared', async () => {
+      replacedWhenNot('mine');
+      refreshLeaves('fresh');
+      run(http.post('/api/admin/teams', {}));
+
+      await settle();
+
+      const only = backend.expectOne('/api/admin/teams');
+      expect(only.request.headers.get(XSRF)).toBe('fresh');
+      only.flush(null);
+    });
+
+    it('does not read the session for a read, whatever the cookie holds', () => {
+      setXsrfCookie('foreign');
+      replacedWhenNot('mine');
+      run(http.get('/api/sagas'));
+
+      backend.expectOne('/api/sagas').flush([]);
+
+      expect(auth.refresh).not.toHaveBeenCalled();
+      expect(auth.xsrfTokenReplaced).not.toHaveBeenCalled();
+    });
+
+    it('does not read the session while the cookie is the one the page was issued', () => {
+      setXsrfCookie('mine');
+      replacedWhenNot('mine');
+      run(http.post('/api/admin/teams', {}));
+
+      const only = backend.expectOne('/api/admin/teams');
+      expect(only.request.headers.get(XSRF)).toBe('mine');
+      only.flush(null);
+      expect(auth.refresh).not.toHaveBeenCalled();
+    });
+
+    it('does not read the session for a URL outside /api/', () => {
+      setXsrfCookie('foreign');
+      replacedWhenNot('mine');
+      run(http.post('https://elsewhere.example/other/x', {}));
+
+      backend.expectOne(() => true).flush(null);
+
+      expect(auth.refresh).not.toHaveBeenCalled();
+    });
+
+    it('sends the write as it was when the read left the other stack token, and does not wait again for the next one', async () => {
+      setXsrfCookie('foreign');
+      replacedWhenNot('mine');
+      refreshLeaves('foreign');
+      run(http.post('/api/admin/teams', {}));
+      await settle();
+
+      const only = backend.expectOne('/api/admin/teams');
+      expect(only.request.headers.get(XSRF)).toBe('foreign');
+      only.flush(null);
+      expect(auth.noteXsrfTokenIssued).toHaveBeenCalledWith('foreign');
+    });
+
+    it('still heals a refusal that comes anyway: the cookie was replaced after the check', async () => {
+      setXsrfCookie('foreign');
+      replacedWhenNot('mine');
+      refreshLeaves('fresh');
+      const outcome = run(http.post('/api/admin/teams', {}));
+      await settle();
+      refreshLeaves('fresher');
+      refuse(backend.expectOne('/api/admin/teams'), 400, antiforgery());
+      await settle();
+
+      const again = backend.expectOne('/api/admin/teams');
+      expect(again.request.headers.get(XSRF)).toBe('fresher');
+      again.flush({ id: 'team-1' });
+      expect(outcome.error).toBeUndefined();
+    });
+
+    it.each(['/api/auth/session', '/api/auth/login', '/api/auth/logout', '/api/auth/setup', '/api/auth/password'])(
+      'notes the token the answer of %s issued',
+      (path) => {
+        setXsrfCookie('issued');
+        run(http.request(path === '/api/auth/session' ? 'GET' : 'POST', path, {}));
+
+        backend.expectOne(path).flush(null);
+
+        expect(auth.noteXsrfTokenIssued).toHaveBeenCalledWith('issued');
+      },
+    );
+
+    it('notes nothing for an answer that issues no token, or for a refusal', () => {
+      setXsrfCookie('someone-elses');
+      run(http.get('/api/sagas'));
+      run(http.post('/api/auth/login', {}));
+
+      backend.expectOne('/api/sagas').flush([]);
+      refuse(backend.expectOne('/api/auth/login'), 400, { code: 'invalid_credentials' });
+
+      expect(auth.noteXsrfTokenIssued).not.toHaveBeenCalled();
+    });
+  });
+
   describe('an antiforgery refusal (400, code antiforgery)', () => {
     /** The token the next session read leaves in the cookie. */
     function refreshRenews(token: string | null): void {
@@ -588,6 +716,46 @@ describe('authInterceptor with the real auth service', () => {
       setXsrfCookie(null);
       TestBed.resetTestingModule();
     }
+  });
+
+  it('notes the token its session read was issued, and reads the session again before a write that finds another', async () => {
+    const http = TestBed.inject(HttpClient);
+    const backend = TestBed.inject(HttpTestingController);
+    const auth = TestBed.inject(AuthService);
+    const bootstrap = auth.bootstrap();
+    setXsrfCookie('mine');
+    backend.expectOne('/api/auth/session').flush(session);
+    await bootstrap;
+    // Another stack on the same host issues its own, and this page does not know yet.
+    setXsrfCookie('theirs');
+
+    const first = run(http.post('/api/a', {}));
+    const second = run(http.post('/api/b', {}));
+    await settle();
+
+    backend.expectNone('/api/a');
+    const read = backend.expectOne('/api/auth/session');
+    setXsrfCookie('mine-again');
+    read.flush(session);
+    await settle();
+    const writes = [backend.expectOne('/api/a'), backend.expectOne('/api/b')];
+    expect(writes.map((r) => r.request.headers.get(XSRF))).toEqual(['mine-again', 'mine-again']);
+    writes.forEach((r) => r.flush(null));
+    expect([first.done, second.done]).toEqual([true, true]);
+
+    // The read it made noted the new token: the next write goes out at once.
+    run(http.post('/api/c', {}));
+    backend.expectOne('/api/c').flush(null);
+  });
+
+  it('checks nothing before it was issued a token', () => {
+    setXsrfCookie('theirs');
+    TestBed.inject(AuthService);
+    run(TestBed.inject(HttpClient).post('/api/a', {}));
+
+    const only = TestBed.inject(HttpTestingController).expectOne('/api/a');
+    expect(only.request.headers.get(XSRF)).toBe('theirs');
+    only.flush(null);
   });
 
   it('shares one session read between requests refused together, and sends each again with the new token', async () => {

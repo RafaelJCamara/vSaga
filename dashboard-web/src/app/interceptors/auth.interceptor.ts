@@ -7,10 +7,11 @@ import {
   HttpHandlerFn,
   HttpInterceptorFn,
   HttpRequest,
+  HttpResponse,
   HttpXsrfTokenExtractor,
 } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { Observable, catchError, from, switchMap, throwError } from 'rxjs';
+import { Observable, catchError, from, switchMap, tap, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 
 /** Marks the one retry of a request that the API refused for its antiforgery token. */
@@ -30,6 +31,9 @@ const SESSION_ENDPOINTS = new Set([
   '/api/auth/session',
 ]);
 
+/** The endpoints whose answers issue the `XSRF-TOKEN` cookie (`AntiforgeryEnforcement.IssueRequestToken`). */
+const TOKEN_ENDPOINTS = new Set([...SESSION_ENDPOINTS, '/api/auth/password']);
+
 /**
  * Keeps the SPA in step with the sign-in session. The session cookie and the `XSRF-TOKEN` cookie ride on
  * the browser's own requests and the built-in XSRF interceptor, which runs before this one, copies the
@@ -47,21 +51,44 @@ const SESSION_ENDPOINTS = new Set([
  *   interceptor already stamped the old token, so the clone replaces the header. The failure of that second
  *   request is the caller's.
  *
+ * Before an unsafe request it also checks that the `XSRF-TOKEN` cookie is still the one this page was issued
+ * (the page notes it after every answer that issues one). The cookie is one name for every stack on the host,
+ * so a second stack, or a second tab, replaces it, and the request would be refused with the 400 above and
+ * only then healed. When it was replaced the session is read first, the built-in interceptor's stamp is
+ * replaced with the token that read issues, and the request goes out once with a token that is valid: nothing
+ * is refused, and nothing shows in the network log or the console. The refusal handling stays as the backstop
+ * for a cookie that is replaced between the check and the send.
+ *
  * Every failure reaches the caller unchanged.
  */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const path = pathOf(req.url, inject(DOCUMENT));
   if (!path.startsWith('/api/')) return next(req);
   const endsSession = !SESSION_ENDPOINTS.has(path);
-  return send(req, next, endsSession, inject(AuthService), inject(HttpXsrfTokenExtractor));
+  const issuesToken = TOKEN_ENDPOINTS.has(path);
+  const auth = inject(AuthService);
+  const xsrf = inject(HttpXsrfTokenExtractor);
+  if (isUnsafe(req) && auth.xsrfTokenReplaced(xsrf.getToken())) {
+    return from(auth.refresh()).pipe(
+      switchMap(() => {
+        // Whatever the read left (a failed one leaves the other stack's token): not asked about again, so a
+        // write does not wait for the same failing read each time; the refusal handling takes it from here.
+        const token = xsrf.getToken();
+        auth.noteXsrfTokenIssued(token);
+        return send(token === null ? req : restamp(req, token), next, endsSession, issuesToken, auth, xsrf);
+      }),
+    );
+  }
+  return send(req, next, endsSession, issuesToken, auth, xsrf);
 };
 
 /** Sends `req` and reacts to a refusal. `endsSession` is false for the sign-in endpoints, whose 401 is an
- *  answer to the call. */
+ *  answer to the call; `issuesToken` is true for the endpoints whose answer issues the `XSRF-TOKEN` cookie. */
 function send(
   req: HttpRequest<unknown>,
   next: HttpHandlerFn,
   endsSession: boolean,
+  issuesToken: boolean,
   auth: AuthService,
   xsrf: HttpXsrfTokenExtractor,
 ): Observable<HttpEvent<unknown>> {
@@ -70,6 +97,12 @@ function send(
   const epoch = auth.currentIdentityEpoch();
 
   return next(req).pipe(
+    tap((event) => {
+      // The answer has set the cookie by now: this is the token the page was issued.
+      if (issuesToken && event instanceof HttpResponse) {
+        auth.noteXsrfTokenIssued(xsrf.getToken());
+      }
+    }),
     catchError((err: unknown) => {
       if (!(err instanceof HttpErrorResponse)) return throwError(() => err);
 
@@ -92,13 +125,18 @@ function send(
             if (token === null || token === req.headers.get(XSRF_HEADER)) {
               return throwError(() => err);
             }
-            return send(retryWith(req, token), next, endsSession, auth, xsrf);
+            return send(retryWith(req, token), next, endsSession, issuesToken, auth, xsrf);
           }),
         );
       }
       return throwError(() => err);
     }),
   );
+}
+
+/** `req` with `token` in place of whatever the built-in interceptor stamped. */
+function restamp(req: HttpRequest<unknown>, token: string): HttpRequest<unknown> {
+  return req.clone({ headers: req.headers.set(XSRF_HEADER, token) });
 }
 
 /** `req` again with `token` in place of whatever the built-in interceptor stamped, marked as the retry.

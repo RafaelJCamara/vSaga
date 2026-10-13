@@ -110,6 +110,8 @@ export function createAuthMock(options: AuthMockOptions = {}) {
     handleUnauthorized: vi.fn<AuthService['handleUnauthorized']>(),
     currentIdentityEpoch: vi.fn<AuthService['currentIdentityEpoch']>(() => 0),
     noteForbidden: vi.fn<AuthService['noteForbidden']>(),
+    noteXsrfTokenIssued: vi.fn<AuthService['noteXsrfTokenIssued']>(),
+    xsrfTokenReplaced: vi.fn<AuthService['xsrfTokenReplaced']>(() => false),
     can: vi.fn<AuthService['can']>((permission, sagaType) =>
       holds(effectiveAccess(), permission, sagaType),
     ),

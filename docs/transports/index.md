@@ -180,11 +180,10 @@ http://localhost:4300 for the Wolverine overlay; there is nothing to edit. Each 
 proxies `/api` and `/hubs` to its own stack's dashboard API, so several stacks' dashboards can be open
 side by side (see [`../dashboard.md`](../dashboard.md#how-it-is-served)); in one browser each stack keeps its
 own sign-in, because compose names the session cookie after the project (`vsaga.session.vsaga-wolverine`, say)
-and cookies are scoped by host, not port, while the one cookie they share, `XSRF-TOKEN`, makes the first change
-after switching stacks fail once with `400` `antiforgery` and succeed on the SPA's single retry, which the user
-does not see (observed with the base stack and the Wolverine overlay in one browser: ten writes alternating
-between the two tabs, ten refused-and-retried `POST`s; see
-[CSRF protection](../dashboard.md#csrf-protection)). To point the SPA's dev server
+and cookies are scoped by host, not port, while the one cookie they share, `XSRF-TOKEN`, is replaced by whichever
+stack issued it last, which the SPA notices before the first change after switching stacks: it reads the session
+and sends the change once with the right token, so nothing is refused (it used to be refused once with `400`
+`antiforgery` and sent again; see [CSRF protection](../dashboard.md#csrf-protection)). To point the SPA's dev server
 at an overlay instead, start it with `VSAGA_API_URL` set to that overlay's Dashboard API port — see
 [`dashboard-web/README.md`](../../dashboard-web/README.md#run-it).
 
