@@ -990,7 +990,9 @@ fonts, images or requests. Inline styles are allowed because Angular injects com
 `index.html` contains an inline script or handler. `Referrer-Policy: same-origin` rather than
 `no-referrer`, because under `no-referrer` browsers send `Origin: null` on same-origin `POST`s.
 Framing is nginx's policy alone: the API sends no `X-Frame-Options` of its own (ASP.NET antiforgery's
-default `SAMEORIGIN` is switched off), so a proxied API response carries the single `DENY`.
+default `SAMEORIGIN` is switched off), so a proxied API response carries the single `DENY`. The API does send its own
+`X-Content-Type-Options: nosniff` (its port can be reached without nginx), so nginx hides that one
+(`proxy_hide_header`) and a proxied response carries the single nginx `nosniff`.
 
 **The dev server.** `npx ng serve` in `dashboard-web/` runs on http://localhost:4201, beside the compose
 UI, and proxies `/api` and `/hubs` the same way through `dashboard-web/proxy.conf.mjs`, to
