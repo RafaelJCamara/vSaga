@@ -62,12 +62,18 @@ under the others; that matters at shutdown only. Full build history and live-ver
   through unfiltered. Brighter's own `Bag` carries CloudEvents-flavoured echoes of core fields on
   receipt (`CorrelationId`, `Topic`, `HandledCount`, `cloudEvents_id`, ...)
   that would otherwise leak forward as bogus outbound headers on redelivery.
-- **A known intermittent condition, not a defect.** The low-traffic sub-saga queues occasionally logged
-  `ChannelFailureException`/`precondition_failed: unknown delivery tag` following RabbitMQ.Client's
-  automatic connection recovery — a documented client limitation (a message delivered-but-unacked
-  immediately before a recovery can't be acked against the recovered channel's restarted delivery-tag
-  numbering), not unique to Brighter's gateway. The existing catch-log-retry loop recovers automatically
-  and no message was lost during live verification.
+- **The correlation id of a message another adapter published.** Brighter's consumer takes the correlation id
+  from Brighter's own `CorrelationId` header and, when that is absent, from `x-vsaga-correlation-id`, which the
+  RabbitMQ adapter (the dashboard host's, for a retry's redrive) carries in that header and in the AMQP
+  `correlation_id` property that Brighter never reads. Without the fallback such a message arrived with
+  `Guid.Empty`.
+- **Connection resets seen intermittently, and their cause.** The low-traffic sub-saga queues occasionally
+  logged `ChannelFailureException`/`precondition_failed: unknown delivery tag` after a connection recovery,
+  which was put down to a documented RabbitMQ.Client limitation (a message delivered-but-unacked immediately
+  before a recovery can't be acked against the recovered channel's restarted delivery-tag numbering). A live run
+  on 2026-10-13 found what was closing the connection: a producer built and disposed per publish (see the top of
+  this page). With one producer none was seen in runs of several minutes under the sample's traffic; the
+  limitation itself stands for a real broker connection loss, and the catch-log-retry loop recovers from it. Disposing a subscription closes the connection under the producer too, so the next publish after one fails once and rebuilds the producer.
 
 Options: [`../configuration.md#brighteroptions-vsagatransportbrighter`](../configuration.md#brighteroptions-vsagatransportbrighter).
 Compose overlay: `docker-compose.brighter.yml` (uses the `!override` YAML merge tag on `ports` — Compose's

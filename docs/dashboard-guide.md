@@ -360,7 +360,7 @@ What you see follows your [grants](#grants-and-scope), and the API enforces it, 
   you may not view is not refused in the list; it is simply not there.
 - With no view permission at all the page says: "Your account has no access to any saga type yet. Ask an
   administrator for sagas.view."
-- If your access covers several saga types but not all, the API merges them. A list sorted by **Status**, filtered
+- If your access covers several saga types but not all, the API lists them together. A list sorted by **Status**, filtered
   by status or kind, or searched can combine at most 10 of those types and reach 500 rows (page times rows per
   page); the plain list by **Updated** at most 50 types and 10,000 rows. Past a bound the page shows the server's
   message, goes back to the last page it could read and asks you to choose a saga type with the saga type filter,

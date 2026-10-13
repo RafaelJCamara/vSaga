@@ -72,7 +72,7 @@ First round (the user's three decisions, the rest by the lead with the review th
 | Per-step data | New `SagaEntryType.StatePersisted` entry appended after each committed persist, state in `PayloadJson`; no persistence contract or schema change; on by default with an opt-out, a 256 KiB per-snapshot cap and a 1 MiB per-saga budget | lead (feasibility review) |
 | Sessions | ASP.NET Core cookie authentication plus antiforgery; Data Protection keys in the identity store | lead |
 | API key | Kept as a machine credential mapped to `Dashboard:ApiKeyRole` (default Viewer); can never hold `access.manage`; removed from the SPA | lead (security review) |
-| Scoped lists | The API merges per-type `ListAsync` results; no persistence contract change; a multi-type store filter is a recorded follow-up | lead (feasibility review) |
+| Scoped lists | The API merges per-type `ListAsync` results; no persistence contract change; a multi-type store filter is a recorded follow-up | lead (feasibility review). Superseded by `SagaListFilter.SagaTypes` (§8.7, ADR 0006 decision 7): one provider call |
 | Guidance | A hand-rolled tour (no npm dependency) plus `docs/dashboard-guide.md` | lead |
 
 Second round (the user, 2026-10-02):
@@ -184,7 +184,7 @@ Each of these shaped a decision below. The section that answers it is named in t
 | `angular.json` `optimization` written as an object coerces omitted keys to `false` (unminified JS and CSS, both budgets broken). | `@angular/build` `normalizeOptimization` | §4.3 |
 | Checkouts on this machine are CRLF (`core.autocrlf=true`, no `.gitattributes`); a shell script copied into a Linux image would not start. | git configuration | §4.1 |
 | `GetVisitedStatesAsync` reads every entry, payloads included, before every step. On Redis the timeline is one list read with `LRANGE 0 -1` that blocks the single-threaded server, each entry is JSON inside JSON (every quote in a state blob costs about six bytes, 1.6 to 2 times the raw size), it sits in RAM and counts toward `WriteMemoryThreshold`, above which every persist is refused. | `SagaOrchestrator.GetVisitedStatesAsync`; `VSaga.Persistence.Redis/RedisSagaEventLogStore.cs`, `RedisPersistScripts.cs`; `docker-compose.redis.yml` (`maxmemory 256mb`) | §6.5 |
-| On Redis, a list filtered by saga type is rank-served only for the plain `UpdatedAt` sort; with a `Status` sort or a status or kind filter the reader intersects indexes and returns every matching member before paging. A scoped merge issues that once per visible type. | `VSaga.Persistence.Redis/RedisListQuery.cs`, `RedisSagaSummaryReader.cs` | §8.7 |
+| On Redis, a list filtered by saga type is rank-served only for the plain `UpdatedAt` sort; with a `Status` sort or a status or kind filter the reader intersects indexes and returns every matching member before paging. The scoped merge that issued that once per visible type is gone: one call carries the set of visible types and the reader filters on the member's type suffix or intersects per type, whichever reads less. | `VSaga.Persistence.Redis/RedisListQuery.cs`, `RedisSagaSummaryReader.cs` | §8.7 |
 | `GetSagaTypesAsync` is an unindexed `DISTINCT` on EF Core and a `$group` over the collection on MongoDB. | `EfCoreSagaSummaryReader.cs`, `MongoSagaSummaryReader.cs` | §8.7 |
 | A blank `sagaType` means "no filter" in every provider (`IsNullOrWhiteSpace`). | the four list-query implementations | §8.7 |
 | Several entries carry no message id: `TimeoutScheduled` and `SagaCompleted` (`HandleStepSuccessAsync`) and compensation entries. A `.CallHttp` request carries its own fresh call id, and its reply is logged as a mid-step `MessageReceived` with another fresh id whose `causationId` names the request. `SagaStarted` and the first `MessageReceived` share one id. The in-process retry reuses the failed message's id. | `SagaOrchestrator.cs`, `CompensationRunner.cs`, `VSaga.Http/HttpCallDefinition.cs` | §5.2, §6.6, §7.3 |
@@ -1674,10 +1674,15 @@ Limits elsewhere:
   notice on every run; it goes when Vitest 5 lands (`dd37bd1`).
 
 Never exercised in a recorded run, so resting on tests alone: a screen reader, and any browser but
-headless Chromium; the first-run setup flow on a live stack that was not seeded; TLS (`RequireHttps`) and
-time-based session limits; the scoped list on Redis or MongoDB with a scoped caller; a `DeliveryExhausted`
-retry and a targeted retry over the HTTP, Brighter, MassTransit and Wolverine transports; the age window
-that turns a "pending" snapshot into "missing" and the 1500 ms follow-up fetch.
+headless Chromium; a retry that the planner accepts for a `DeliveryExhausted` saga (every fault that could be
+made live left no recorded body, or was deduplicated on redelivery, so the one `DeliveryExhausted` plan seen
+was refused with 422); a retry through the dashboard over MassTransit or Wolverine that reaches the saga host
+(the dashboard host runs neither adapter, a retry there answers 502 with the saga restored, which was seen, and
+the targeted redrive itself was exercised by publishing through the two adapters directly); the scoped list's
+`maxPage` 0 refusal in a browser (the sample has seven saga types and the refusal needs more than ten that
+have run); the age window that turns a "pending" snapshot into "missing" and the 1500 ms follow-up fetch.
+What the live run of 2026-10-13 covered and found is in
+[`../history/2026-10-13-live-verification-of-the-open-paths.md`](../history/2026-10-13-live-verification-of-the-open-paths.md).
 
 ---
 
