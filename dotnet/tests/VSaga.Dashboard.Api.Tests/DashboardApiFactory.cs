@@ -40,6 +40,9 @@ public sealed class DashboardApiFactory : WebApplicationFactory<Program>
     /// </summary>
     public string IdentityDatabasePath => _identity.FilePath;
 
+    /// <summary>The connection string <see cref="TestIdentityDatabase"/> clears the pool of when this factory is disposed.</summary>
+    public string IdentityConnectionString => _identity.ConnectionString;
+
     public override async ValueTask DisposeAsync()
     {
         // The base stops every host, derived ones included, before the file is deleted.

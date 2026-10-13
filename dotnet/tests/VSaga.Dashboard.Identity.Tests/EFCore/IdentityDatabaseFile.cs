@@ -48,9 +48,20 @@ public sealed class IdentityDatabaseFile : IDisposable
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
     }
 
+    /// <summary>
+    /// Releases the pool of this file only. <c>SqliteConnection.ClearAllPools()</c> reaches every database in the
+    /// process, and test classes run in parallel: it disposed a connection another test had just taken from its
+    /// own pool.
+    /// </summary>
+    public void ClearPool()
+    {
+        using var pooled = new SqliteConnection(ConnectionString(DatabasePath));
+        SqliteConnection.ClearPool(pooled);
+    }
+
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        ClearPool();
         try
         {
             if (System.IO.Directory.Exists(Directory))

@@ -193,7 +193,7 @@ public sealed class IdentityStartupTests : IDisposable
 
         await using (var first = _file.BuildServices())
             Assert.True(await first.GetRequiredService<IdentityStartup>().EnsureReadyAsync(None));
-        SqliteConnection.ClearAllPools();
+        _file.ClearPool();
         File.SetUnixFileMode(_file.DatabasePath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
 
         await using var restarted = _file.BuildServices();
