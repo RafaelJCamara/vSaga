@@ -8,6 +8,7 @@ import { App } from '../../app';
 import { GuideService } from '../../services/guide.service';
 import { adminData, answerLoad } from '../../testing/admin';
 import { createAuthMock, provideAuthMock } from '../../testing/auth-mock';
+import { SagaHubService } from '../../services/saga-hub.service';
 import { createGuideStorage, provideGuideStorage } from '../../testing/guide';
 import { ADMIN_ROUTES } from './admin.routes';
 
@@ -42,6 +43,7 @@ describe('The administration area with the real app, guide and overlay', () => {
         provideHttpClientTesting(),
         provideAuthMock(createAuthMock()),
         provideGuideStorage(createGuideStorage(stored)),
+        { provide: SagaHubService, useValue: { connect: vi.fn().mockResolvedValue(undefined) } },
       ],
     });
     http = TestBed.inject(HttpTestingController);

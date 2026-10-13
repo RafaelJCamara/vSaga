@@ -387,6 +387,7 @@ describe('AdminShell: guide mode', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: GuideService, useValue: { areaShown } },
+        { provide: SagaHubService, useValue: { connect: vi.fn().mockResolvedValue(undefined) } },
       ],
     });
     http = TestBed.inject(HttpTestingController);
@@ -494,6 +495,7 @@ describe('AdminShell: the guide that is really there', () => {
         provideGuideStorage(
           createGuideStorage({ v: 1, enabled: true, seen: { admin: 1 }, hintDismissed: true }),
         ),
+        { provide: SagaHubService, useValue: { connect: vi.fn().mockResolvedValue(undefined) } },
       ],
     });
     http = TestBed.inject(HttpTestingController);
@@ -626,7 +628,7 @@ describe('AdminShell: the focus after a navigation inside the area', () => {
 
   beforeEach(async () => {
     TestBed.configureTestingModule({
-      providers: [provideRouter(FOCUS_ROUTES), provideHttpClient(), provideHttpClientTesting()],
+      providers: [provideRouter(FOCUS_ROUTES), provideHttpClient(), provideHttpClientTesting(), { provide: SagaHubService, useValue: { connect: vi.fn().mockResolvedValue(undefined) } }],
     });
     http = TestBed.inject(HttpTestingController);
     harness = await RouterTestingHarness.create();
