@@ -242,6 +242,57 @@ public sealed class BrighterTransportTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The dashboard's retry republishes with the RabbitMQ adapter (the dashboard host runs no other
+    /// adapter that can reach a Brighter host's queues). That adapter carries the correlation id in the
+    /// AMQP <c>correlation_id</c> property and an <c>x-vsaga-correlation-id</c> header, not in Brighter's own
+    /// <c>CorrelationId</c> header, and the Brighter consumer read only the latter: the redrive arrived
+    /// with <see cref="Guid.Empty"/> and ran against a new saga instance under the empty id instead of the
+    /// one the retry was for. Found on a live run of the Brighter overlay.
+    /// </summary>
+    [Fact]
+    public async Task Subscribe_ReceivesAMessageFromTheRabbitMqAdapter_UnderItsOwnCorrelationId()
+    {
+        var correlationId = Guid.NewGuid();
+        var tcs = new TaskCompletionSource<ReceivedMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var handle = await _transport.SubscribeAsync(
+            new TransportSubscription("FromRabbitMqAdapter", [typeof(PingMessage)], "vsaga.brighter.test.from-rabbitmq-adapter"),
+            async (received, ct) =>
+            {
+                tcs.TrySetResult(received);
+                await received.Ack.AckAsync(ct);
+            });
+
+        var messageId = Guid.NewGuid().ToString("N");
+        await using (var connection = await new ConnectionFactory { Uri = new Uri(_container.GetConnectionString()) }.CreateConnectionAsync())
+        await using (var channel = await connection.CreateChannelAsync())
+        {
+            var properties = new BasicProperties
+            {
+                CorrelationId = correlationId.ToString(),
+                MessageId = messageId,
+                Headers = new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["x-vsaga-correlation-id"] = correlationId.ToString(),
+                    ["x-vsaga-message-id"] = messageId,
+                    ["x-vsaga-message-type"] = nameof(PingMessage),
+                    [MessageEnvelope.TargetSagaTypeHeader] = "InvoiceFollowUpSaga",
+                },
+            };
+            await channel.BasicPublishAsync(ExchangeName, "ping-message", mandatory: false, properties, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new PingMessage("redrive")));
+        }
+
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+        Assert.Same(tcs.Task, completed);
+
+        var message = await tcs.Task;
+        Assert.Equal(correlationId, message.CorrelationId);
+        Assert.Equal(nameof(PingMessage), message.MessageTypeName);
+        Assert.Equal(messageId, message.MessageId);
+        Assert.Equal("InvoiceFollowUpSaga", message.Headers[MessageEnvelope.TargetSagaTypeHeader]);
+    }
+
+    /// <summary>
     /// Brighter's gateway keeps one AMQP connection per host in a static pool, and disposing any
     /// producer or consumer removes that connection for everyone. A producer built and disposed for every
     /// publish therefore closed the connection every consumer was using ("Connection close forced"): a

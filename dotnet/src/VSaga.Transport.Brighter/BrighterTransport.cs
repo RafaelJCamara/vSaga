@@ -31,6 +31,9 @@ public sealed class BrighterTransport : IMessageTransport, IAsyncDisposable
     /// </summary>
     public const string MessageTypeHeader = "x-vsaga-message-type";
 
+    /// <summary>The header the RabbitMQ and HTTP adapters carry the correlation id in; read when Brighter's own is absent.</summary>
+    public const string CorrelationIdHeader = "x-vsaga-correlation-id";
+
     private readonly RmqMessagingGatewayConnection _connection;
     private readonly SemaphoreSlim _producerGate = new(1, 1);
     private RmqMessageProducer? _producer;
@@ -319,6 +322,16 @@ public sealed class BrighterTransport : IMessageTransport, IAsyncDisposable
         }
     }
 
+    private static Guid ReadCorrelationId(Message message, Dictionary<string, string> headers)
+    {
+        if (Guid.TryParse(message.Header.CorrelationId?.Value, out var fromBrighter))
+            return fromBrighter;
+
+        return headers.TryGetValue(CorrelationIdHeader, out var value) && Guid.TryParse(value, out var fromHeader)
+            ? fromHeader
+            : Guid.Empty;
+    }
+
     private static ReceivedMessage BuildReceivedMessage(Message message, RmqMessageConsumer consumer)
     {
         // Brighter's MessageHeader.Bag also carries several of its own CloudEvents-flavored echoes of
@@ -347,7 +360,11 @@ public sealed class BrighterTransport : IMessageTransport, IAsyncDisposable
             ? typeName
             : message.Header.Topic.Value;
 
-        var correlationId = Guid.TryParse(message.Header.CorrelationId?.Value, out var parsedCorrelationId) ? parsedCorrelationId : Guid.Empty;
+        // Brighter's own "CorrelationId" header when Brighter published it; otherwise the header the RabbitMQ
+        // adapter (the dashboard's, for a retry's redrive) sends. Reading only the first made such a message
+        // arrive with Guid.Empty, so the engine ran it against a new instance under the empty id, not the one
+        // it was addressed to.
+        var correlationId = ReadCorrelationId(message, headers);
 
         return new ReceivedMessage(
             messageTypeName,
