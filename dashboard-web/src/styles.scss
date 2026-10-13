@@ -316,6 +316,13 @@ textarea.input {
   margin: 3rem auto;
 }
 
+/* The scrollport of a wide table: below its natural width the table scrolls inside this box, not the page.
+   Focusable (tabindex 0 in the template) so a keyboard user can scroll it. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* A table of records. A row that links somewhere styles its own hover and cursor. */
 .data-table {
   width: 100%;

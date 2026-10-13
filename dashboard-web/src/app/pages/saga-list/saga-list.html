@@ -63,57 +63,59 @@
          "No sagas match these filters yet." on top of it would read as contradictory. -->
     <div class="empty">No sagas match these filters yet.</div>
   } @else if (sagas().length > 0) {
-    <table class="data-table" data-tour="list-table">
-      <thead>
-        <tr>
-          <th>Correlation Id</th>
-          <th>Saga Type</th>
-          <th>Kind</th>
-          <th>Current State</th>
-          <!-- The heading is a button, so the keyboard reaches it; the click handler stays on the cell, which
-               the button's click (Enter and Space included) bubbles to, so the whole heading sorts. -->
-          <th
-            class="sortable"
-            data-tour="list-sort"
-            [attr.aria-sort]="ariaSort('Status')"
-            (click)="toggleSort('Status', $event)"
-          >
-            <button #statusSort type="button" class="sort-button">
-              Status
-              @if (sortColumn() === 'Status') {
-                <span class="sort-indicator" aria-hidden="true">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
-              }
-            </button>
-          </th>
-          <th class="sortable" [attr.aria-sort]="ariaSort('UpdatedAt')" (click)="toggleSort('UpdatedAt', $event)">
-            <button #updatedSort type="button" class="sort-button">
-              Updated
-              @if (sortColumn() === 'UpdatedAt') {
-                <span class="sort-indicator" aria-hidden="true">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
-              }
-            </button>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (saga of sagas(); track saga.sagaType + ':' + saga.correlationId) {
-          <!-- A row opens its saga on a click anywhere in it; for the keyboard and for assistive technology the
-               correlation id is a link (one tab stop per row, opened with Enter). -->
-          <tr class="saga-row" data-tour="list-row" (click)="openFromRow($event, saga)">
-            <td class="mono">
-              <a class="row-link" [routerLink]="['/sagas', saga.sagaType, saga.correlationId]"
-                >{{ saga.correlationId | slice: 0 : 8 }}…</a
-              >
-            </td>
-            <td>{{ saga.sagaType }}</td>
-            <td><app-kind-badge [kind]="saga.kind" /></td>
-            <td>{{ saga.currentState }}</td>
-            <td><app-status-badge [status]="saga.status" /></td>
-            <td class="muted">{{ saga.updatedAtUtc | date: 'M/d/yy, HH:mm' }}</td>
+    <div class="table-scroll" role="region" aria-label="Sagas table" tabindex="0">
+      <table class="data-table" data-tour="list-table">
+        <thead>
+          <tr>
+            <th>Correlation Id</th>
+            <th>Saga Type</th>
+            <th>Kind</th>
+            <th>Current State</th>
+            <!-- The heading is a button, so the keyboard reaches it; the click handler stays on the cell, which
+                 the button's click (Enter and Space included) bubbles to, so the whole heading sorts. -->
+            <th
+              class="sortable"
+              data-tour="list-sort"
+              [attr.aria-sort]="ariaSort('Status')"
+              (click)="toggleSort('Status', $event)"
+            >
+              <button #statusSort type="button" class="sort-button">
+                Status
+                @if (sortColumn() === 'Status') {
+                  <span class="sort-indicator" aria-hidden="true">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
+                }
+              </button>
+            </th>
+            <th class="sortable" [attr.aria-sort]="ariaSort('UpdatedAt')" (click)="toggleSort('UpdatedAt', $event)">
+              <button #updatedSort type="button" class="sort-button">
+                Updated
+                @if (sortColumn() === 'UpdatedAt') {
+                  <span class="sort-indicator" aria-hidden="true">{{ sortDirection() === 'asc' ? '▲' : '▼' }}</span>
+                }
+              </button>
+            </th>
           </tr>
-        }
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          @for (saga of sagas(); track saga.sagaType + ':' + saga.correlationId) {
+            <!-- A row opens its saga on a click anywhere in it; for the keyboard and for assistive technology the
+                 correlation id is a link (one tab stop per row, opened with Enter). -->
+            <tr class="saga-row" data-tour="list-row" (click)="openFromRow($event, saga)">
+              <td class="mono">
+                <a class="row-link" [routerLink]="['/sagas', saga.sagaType, saga.correlationId]"
+                  >{{ saga.correlationId | slice: 0 : 8 }}…</a
+                >
+              </td>
+              <td>{{ saga.sagaType }}</td>
+              <td><app-kind-badge [kind]="saga.kind" /></td>
+              <td>{{ saga.currentState }}</td>
+              <td><app-status-badge [status]="saga.status" /></td>
+              <td class="muted">{{ saga.updatedAtUtc | date: 'M/d/yy, HH:mm' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
 
     <div class="pagination" data-tour="list-pagination">
       <label class="page-size">
