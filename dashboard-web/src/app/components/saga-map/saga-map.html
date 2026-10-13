@@ -74,7 +74,7 @@
 
     <div class="speeds">
       @for (s of speeds; track s) {
-        <button type="button" [class.active]="speed() === s" (click)="setSpeed(s)">{{ s }}&times;</button>
+        <button type="button" [class.active]="speed() === s" [attr.aria-pressed]="speed() === s" (click)="setSpeed(s)">{{ s }}&times;</button>
       }
     </div>
   </div>

@@ -473,6 +473,20 @@ describe('SagaMap', () => {
       for (const name of new Set(wanted.filter((n) => !!n))) expect(el.querySelector(`[data-tour="${name}"]`), `${name}`).not.toBeNull();
     });
 
+    // The chosen speed is highlighted by a class only; the buttons say whether they are the one in effect.
+    it('tells assistive technology which replay speed is in effect', () => {
+      const fixture = createComponent();
+      const el: HTMLElement = fixture.nativeElement;
+      const pressed = () => Array.from(el.querySelectorAll('.speeds button'), (b) => b.getAttribute('aria-pressed'));
+
+      expect(pressed()).toEqual(['false', 'true', 'false', 'false']);
+
+      el.querySelectorAll<HTMLButtonElement>('.speeds button')[2].click();
+      fixture.detectChanges();
+
+      expect(pressed()).toEqual(['false', 'false', 'true', 'false']);
+    });
+
     it('names the controls the tour names: Restart, Play, Step forward, the slider and the speeds', () => {
       const el: HTMLElement = createComponent().nativeElement;
       const controls = el.querySelector('.controls') as HTMLElement;

@@ -175,8 +175,8 @@
   />
 
   <div class="subtabs">
-    <button type="button" data-tour="detail-tab-map" [class.active]="tab() === 'map'" (click)="setTab('map')">Map</button>
-    <button type="button" data-tour="detail-tab-timeline" [class.active]="tab() === 'timeline'" (click)="setTab('timeline')">Timeline</button>
+    <button type="button" data-tour="detail-tab-map" [class.active]="tab() === 'map'" [attr.aria-pressed]="tab() === 'map'" (click)="setTab('map')">Map</button>
+    <button type="button" data-tour="detail-tab-timeline" [class.active]="tab() === 'timeline'" [attr.aria-pressed]="tab() === 'timeline'" (click)="setTab('timeline')">Timeline</button>
   </div>
 
   <!-- A failed fetch with nothing to show is an error in place of the tab; over content loaded

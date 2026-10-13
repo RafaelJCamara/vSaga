@@ -351,6 +351,21 @@ describe('SagaDetail', () => {
   // The page's panel, tabs, empty state and banners are the shared classes of src/styles.scss, which
   // the unit tests do not load, so the class names are all there is to check. The base `.banner`
   // carries the box: a modifier on its own would show a banner with no padding.
+  // The two views are plain buttons, so the highlighted one is a CSS class a screen reader never sees: each
+  // says whether it is the one showing, the way the data overview's At start / At end / Compare buttons do.
+  it('tells assistive technology which of Map and Timeline is showing', () => {
+    const fixture = setup(makeDetail({ status: 'Completed' }));
+    const el: HTMLElement = fixture.nativeElement;
+    const pressed = () => Array.from(el.querySelectorAll('.subtabs button'), (b) => b.getAttribute('aria-pressed'));
+
+    expect(pressed()).toEqual(['true', 'false']);
+
+    el.querySelectorAll<HTMLButtonElement>('.subtabs button')[1].click();
+    fixture.detectChanges();
+
+    expect(pressed()).toEqual(['false', 'true']);
+  });
+
   it('builds its summary card, tabs, empty state and banners from the shared global classes', () => {
     const fixture = setup(makeDetail({ status: 'Completed' }));
     const el: HTMLElement = fixture.nativeElement;
