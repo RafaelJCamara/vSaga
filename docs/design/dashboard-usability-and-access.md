@@ -1561,7 +1561,8 @@ have the evidence; each bullet names the commits it rests on.
 - **Antiforgery and framing.** The first live check of C37 found two `X-Frame-Options` headers: antiforgery
   adds `SAMEORIGIN` to any response it issues a token on, and nginx sends `DENY`. `c0a1ca4` suppresses the
   API's header, so the edge owns the framing policy. The same run saw `X-Content-Type-Options: nosniff`
-  twice (nginx and the API, the same value), which was left.
+  twice (nginx and the API, the same value), which was left (later fixed: nginx hides the API's copy with
+  `proxy_hide_header`, so a proxied response carries one).
 - **The slice's mutation pass** ran the nine mutations of the plan against `e913282`, reading "remove the
   retry policy" as the `sagas.retry` requirement on `POST .../retry` (the other reading, the SPA hub's
   reconnect policy, was mutated in C43). All nine failed only their own tests, and the pass found two

@@ -370,11 +370,13 @@ describe('SagaHubService', () => {
     await service.unsubscribeFromSaga('OrderSaga', 'abc-123');
     finishStart();
     await subscribing;
-    connection.invocations.length = 0;
+    // No invoke from the subscribe itself, though the connection is up by now.
+    expect(connection.invocations).toEqual([]);
 
     connection.triggerReconnected();
     await Promise.resolve();
 
+    // And no record for a reconnect to send again.
     expect(connection.invocations).toEqual([]);
   });
 

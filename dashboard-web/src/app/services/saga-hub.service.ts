@@ -269,6 +269,7 @@ export class SagaHubService implements OnDestroy {
   async subscribeToSaga(sagaType: string, correlationId: string): Promise<void> {
     const generation = this.generation;
     const key = `${sagaType}\0${correlationId}`;
+    if (!this.active) return;
     this.wantedSagas.add(key);
     await this.ensureStarted();
     if (!this.active || generation !== this.generation) return;

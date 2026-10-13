@@ -436,8 +436,13 @@ describe('GrantsEditor', () => {
 
     it('does not submit the page on Enter pressed on a radio or a checkbox, and leaves a button alone', async () => {
       await render([grant(OPERATOR_ID, ['OrderSaga'])]);
-      const press = (target: Element) => {
-        const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true });
+      const press = (target: Element, modifiers: KeyboardEventInit = {}) => {
+        const enter = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          cancelable: true,
+          bubbles: true,
+          ...modifiers,
+        });
         target.dispatchEvent(enter);
         return enter.defaultPrevented;
       };
@@ -445,7 +450,30 @@ describe('GrantsEditor', () => {
       expect(press(el().querySelector('input[type="radio"]')!)).toBe(true);
       expect(press(el().querySelector('input[type="checkbox"]')!)).toBe(true);
       expect(press(el().querySelector('button')!)).toBe(false);
+      // Another key on the same inputs is left alone: Space makes the choice.
+      const space = new KeyboardEvent('keydown', { key: ' ', cancelable: true, bubbles: true });
+      el().querySelector('input[type="radio"]')!.dispatchEvent(space);
+      expect(space.defaultPrevented).toBe(false);
     });
+
+    it.each([{ shiftKey: true }, { ctrlKey: true }, { altKey: true }])(
+      'does not submit the page on Enter with a modifier held (%o), on a radio, a checkbox or the typed name',
+      async (modifiers) => {
+        await render([grant(OPERATOR_ID, ['OrderSaga'])]);
+
+        for (const selector of ['input[type="radio"]', 'input[type="checkbox"]', 'input[type="text"]']) {
+          const enter = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            cancelable: true,
+            bubbles: true,
+            ...modifiers,
+          });
+          el().querySelector(selector)!.dispatchEvent(enter);
+          expect(enter.defaultPrevented, selector).toBe(true);
+        }
+        expect(host.submits).toBe(0);
+      },
+    );
 
     it('keeps the case it was typed in: saga types are compared ordinally', async () => {
       await render([grant(OPERATOR_ID, [])]);
