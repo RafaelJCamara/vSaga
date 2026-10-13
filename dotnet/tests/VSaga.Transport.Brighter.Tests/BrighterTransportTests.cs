@@ -353,6 +353,18 @@ public sealed class BrighterTransportTests : IAsyncLifetime
         }
     }
 
+    /// <summary>A transport that has been disposed refuses to publish, instead of building a producer nothing will ever dispose.</summary>
+    [Fact]
+    public async Task Publish_AfterTheTransportIsDisposed_ThrowsObjectDisposed()
+    {
+        var transport = new BrighterTransport(
+            new BrighterOptions { ConnectionString = _container.GetConnectionString(), ExchangeName = ExchangeName + ".disposed" }, NullLogger<BrighterTransport>.Instance);
+        await transport.PublishAsync(new PingMessage("before"), MessageEnvelope.New(Guid.NewGuid()));
+        await transport.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => transport.PublishAsync(new PingMessage("after"), MessageEnvelope.New(Guid.NewGuid())));
+    }
+
     private sealed class ErrorCapturingLogger : ILogger<BrighterTransport>
     {
         private readonly System.Collections.Concurrent.ConcurrentQueue<string> _errors = new();

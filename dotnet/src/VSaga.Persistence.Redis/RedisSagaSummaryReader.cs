@@ -73,16 +73,19 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
     {
         var window = query.Skip + query.PageSize;
         var order = query.Descending ? Order.Descending : Order.Ascending;
-        var counts = query.TypeIndexes.Select(index => db.SortedSetLengthAsync(index, query.MinScore, double.PositiveInfinity, query.Exclude)).ToList();
-        var windows = query.TypeIndexes
-            .Select(index => db.SortedSetRangeByScoreWithScoresAsync(index, query.MinScore, double.PositiveInfinity, query.Exclude, order, 0, window))
-            .ToList();
-        await Task.WhenAll(counts.Cast<Task>().Concat(windows));
+        var counts = await Task.WhenAll(query.TypeIndexes
+            .Select(index => db.SortedSetLengthAsync(index, query.MinScore, double.PositiveInfinity, query.Exclude)));
 
-        var merged = windows.SelectMany(w => w.Result).ToList();
+        // A type is asked for no more rows than it holds, so a deep page over small types reads only what exists.
+        var windows = await Task.WhenAll(query.TypeIndexes
+            .Zip(counts, (index, count) => (index, take: (int)Math.Min(count, window)))
+            .Where(read => read.take > 0)
+            .Select(read => db.SortedSetRangeByScoreWithScoresAsync(read.index, query.MinScore, double.PositiveInfinity, query.Exclude, order, 0, read.take)));
+
+        var merged = windows.SelectMany(w => w).ToList();
         merged.Sort(query.Descending ? static (first, second) => CompareEntries(second, first) : CompareEntries);
         var members = merged.Skip(query.Skip).Take(query.PageSize).Select(e => e.Element.ToString()).ToList();
-        return (members, counts.Sum(c => (int)c.Result));
+        return (members, (int)counts.Sum());
     }
 
     private static int CompareEntries(SortedSetEntry a, SortedSetEntry b)
@@ -93,8 +96,8 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
 
     /// <summary>
     /// The indexes a materialised list starts from: the status and kind indexes when the filter has them. With
-    /// none, a set of types starts from the union of the types' own indexes (exactly the candidates, so no member
-    /// is read that cannot qualify, signalled by an empty list), and no set starts from every instance.
+    /// none, a set of types starts from the types' own indexes (exactly the candidates, so no member is read that
+    /// cannot qualify, signalled by an empty list), and no set starts from every instance.
     /// </summary>
     private IReadOnlyList<RedisKey> StartingIndexes(RedisListQuery query)
     {
@@ -153,14 +156,6 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
     }
 
     /// <summary>
-    /// Every candidate of the given indexes, ascending by score then member: a server-side read-only
-    /// intersection when there are several, one range read when there is one, or, with no index at all, the
-    /// the saga types' own indexes, each read once. A set of saga types over a status or kind index is applied here
-    /// as a filter on the member's suffix, which already carries the type. <c>UpdatedSince</c> and
-    /// <c>Search</c> are applied here, client-side, and a search over more members than the bound throws
-    /// rather than truncating.
-    /// </summary>
-    /// <summary>
     /// Every member of every index of <see cref="RedisListQuery.TypeSet"/> within the score bound, one range read per
     /// type issued together. A member sits in exactly one type's index, so the reads are disjoint and need no
     /// merge here; a server-side union of the same indexes measured slower than the reads it replaces.
@@ -173,19 +168,57 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
         return [.. (await Task.WhenAll(reads)).SelectMany(entries => entries)];
     }
 
+    /// <summary>
+    /// Every candidate of the given indexes, ascending by score then member: a server-side read-only
+    /// intersection when there are several, one range read when there is one, or, with none (a set of saga types
+    /// and no status or kind filter), each saga type's own index read once. A set of saga types over a status or
+    /// kind index is applied here either as a filter on the member's suffix, which already carries the type, or,
+    /// when the types hold fewer members than that index, as one intersection per type (see
+    /// <see cref="PreferTypeIntersectionsAsync"/>).
+    /// <c>UpdatedSince</c> and <c>Search</c> are applied here, client-side, and a search over more members than the
+    /// bound throws rather than truncating.
+    /// </summary>
+    /// <summary>
+    /// Whether a set of saga types over a status or kind index is cheaper as one intersection per type than as a
+    /// read of the whole index filtered on the member's suffix: when the types together hold fewer members than
+    /// the smallest index they are filtered against, which is a caller who sees a small share of a large status
+    /// bucket. Two cardinality reads, no member is touched.
+    /// </summary>
+    private static async Task<bool> PreferTypeIntersectionsAsync(IDatabase db, RedisListQuery query, IReadOnlyList<RedisKey> indexes)
+    {
+        var typeSizes = Task.WhenAll(query.TypeIndexes.Select(index => db.SortedSetLengthAsync(index)));
+        var indexSizes = Task.WhenAll(indexes.Select(index => db.SortedSetLengthAsync(index)));
+        await Task.WhenAll(typeSizes, indexSizes);
+        return PreferTypeIntersections(typeSizes.Result.Sum(), indexSizes.Result.Min());
+    }
+
+    internal static bool PreferTypeIntersections(long typeMembers, long indexMembers) => typeMembers < indexMembers;
+
+    /// <summary>One read-only intersection of each saga type's index with the given indexes, issued together; a member is in one type, so the answers are disjoint.</summary>
+    private static async Task<SortedSetEntry[]> IntersectPerTypeAsync(IDatabase db, RedisListQuery query, IReadOnlyList<RedisKey> indexes)
+    {
+        var reads = query.TypeIndexes
+            .Select(type => db.SortedSetCombineWithScoresAsync(SetOperation.Intersect, [type, .. indexes], weights: null, Aggregate.Max))
+            .ToList();
+        return [.. (await Task.WhenAll(reads)).SelectMany(entries => entries)];
+    }
+
     private async Task<List<SortedSetEntry>> MaterializeAsync(IDatabase db, RedisListQuery query, IReadOnlyList<RedisKey> indexes)
     {
-        var entries = indexes.Count switch
-        {
-            0 => await ReadTypeIndexesAsync(db, query),
-            1 => await db.SortedSetRangeByScoreWithScoresAsync(indexes[0], query.MinScore, double.PositiveInfinity, query.Exclude),
-            _ => await db.SortedSetCombineWithScoresAsync(SetOperation.Intersect, indexes.ToArray(), weights: null, Aggregate.Max),
-        };
+        var intersectPerType = indexes.Count > 0 && query.TypeSet is not null && await PreferTypeIntersectionsAsync(db, query, indexes);
+        var entries = intersectPerType
+            ? await IntersectPerTypeAsync(db, query, indexes)
+            : indexes.Count switch
+            {
+                0 => await ReadTypeIndexesAsync(db, query),
+                1 => await db.SortedSetRangeByScoreWithScoresAsync(indexes[0], query.MinScore, double.PositiveInfinity, query.Exclude),
+                _ => await db.SortedSetCombineWithScoresAsync(SetOperation.Intersect, indexes.ToArray(), weights: null, Aggregate.Max),
+            };
 
         IEnumerable<SortedSetEntry> filtered = entries;
-        if (indexes.Count >= 2 && query.SinceMicroseconds is { } since)
+        if ((intersectPerType || indexes.Count >= 2) && query.SinceMicroseconds is { } since)
             filtered = filtered.Where(e => e.Score > since);
-        if (indexes.Count > 0 && query.TypeSet is not null)
+        if (!intersectPerType && indexes.Count > 0 && query.TypeSet is not null)
             filtered = filtered.Where(e => query.InTypeSet(e.Element.ToString()));
 
         if (query.Search is { } search)

@@ -37,6 +37,7 @@ public sealed class BrighterTransport : IMessageTransport, IAsyncDisposable
     private readonly RmqMessagingGatewayConnection _connection;
     private readonly SemaphoreSlim _producerGate = new(1, 1);
     private RmqMessageProducer? _producer;
+    private bool _disposed;
     private readonly ILogger<BrighterTransport> _logger;
 
     public BrighterTransport(BrighterOptions options, ILogger<BrighterTransport> logger)
@@ -102,6 +103,7 @@ public sealed class BrighterTransport : IMessageTransport, IAsyncDisposable
         await _producerGate.WaitAsync(cancellationToken);
         try
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             _producer ??= new RmqMessageProducer(_connection);
             await SendWithConfirmationAsync(_producer, message, messageTypeName, envelope, routingKey, cancellationToken);
         }
@@ -138,6 +140,7 @@ public sealed class BrighterTransport : IMessageTransport, IAsyncDisposable
         await _producerGate.WaitAsync();
         try
         {
+            _disposed = true;
             if (_producer is { } producer)
             {
                 _producer = null;

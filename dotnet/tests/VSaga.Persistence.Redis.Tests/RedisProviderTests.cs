@@ -28,6 +28,47 @@ public sealed class RedisProviderTests(RedisProviderFixture fixture)
     };
 
     /// <summary>
+    /// A set of saga types over a status index reads the cheaper way: one intersection per type when the types
+    /// together hold fewer members than the status bucket (a caller who sees a small share of a large bucket),
+    /// and the bucket read once and filtered on the member's type suffix when they hold more. Counted with the
+    /// server's own ZINTER call counter; the answers are the same either way.
+    /// </summary>
+    [Fact]
+    public async Task ATypeSetOverAStatusBucket_IntersectsPerTypeWhenTheTypesAreSmall_AndFiltersTheBucketWhenTheyAreNot()
+    {
+        await using var stores = await fixture.CreateNamespaceAsync();
+        await using var uow = await stores.BeginAsync();
+        foreach (var (type, count) in new[] { ("BigSaga", 30), ("SmallA", 3), ("SmallB", 2) })
+        {
+            for (var i = 0; i < count; i++)
+                await uow.Snapshots<ConformanceSagaState>().InsertAsync(NewState(type));
+        }
+
+        var server = (await fixture.Connection.GetMultiplexerAsync()).GetServers().First(s => s.IsConnected);
+
+        await server.ConfigResetStatisticsAsync();
+        var small = await uow.Summaries.ListAsync(new SagaListFilter { Status = SagaStatus.Running, SagaTypes = ["SmallA", "SmallB"], PageSize = 50 });
+        var smallIntersections = await ZinterCallsAsync(server);
+
+        await server.ConfigResetStatisticsAsync();
+        var large = await uow.Summaries.ListAsync(new SagaListFilter { Status = SagaStatus.Running, SagaTypes = ["BigSaga", "SmallA", "SmallB"], PageSize = 50 });
+        var largeIntersections = await ZinterCallsAsync(server);
+
+        Assert.Equal(5, small.TotalCount);
+        Assert.Equal(5, small.Items.Count);
+        Assert.Equal(2, smallIntersections);
+        Assert.Equal(35, large.TotalCount);
+        Assert.Equal(35, large.Items.Count);
+        Assert.Equal(0, largeIntersections);
+    }
+
+    private static async Task<int> ZinterCallsAsync(IServer server)
+    {
+        var stats = (await server.InfoAsync("commandstats")).SelectMany(group => group).FirstOrDefault(pair => string.Equals(pair.Key, "cmdstat_zinter", StringComparison.Ordinal));
+        return stats.Value is null ? 0 : int.Parse(stats.Value.Split(',')[0]["calls=".Length..], System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
     /// The script cache is volatile (a restart, SCRIPT FLUSH, a failover), and a NOSCRIPT that escaped
     /// would redeliver every in-flight message at once. Every write path is exercised with the cache
     /// emptied immediately before it, and none may fail.

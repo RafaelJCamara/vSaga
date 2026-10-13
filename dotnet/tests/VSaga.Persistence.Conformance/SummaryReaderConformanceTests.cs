@@ -81,7 +81,7 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
     /// <summary>
     /// <see cref="SagaListFilter.SagaTypes"/> keeps the rows of any of the named types, compared exactly, and
     /// counts the set it kept. An empty set matches nothing, null puts no limit on the type, a name that no row
-    /// has is harmless and a repeated one counts once; with <see cref="SagaListFilter.SagaType"/> too, a row
+    /// has is harmless, a null one matches nothing, and a repeated one counts once; with <see cref="SagaListFilter.SagaType"/> too, a row
     /// must satisfy both, and a blank <see cref="SagaListFilter.SagaType"/> is no filter.
     /// </summary>
     [Fact]
@@ -102,6 +102,8 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         var one = await ListAsync(stores, new SagaListFilter { SagaTypes = ["PaymentSaga"] });
         var empty = await ListAsync(stores, new SagaListFilter { SagaTypes = [] });
         var none = await ListAsync(stores, new SagaListFilter { SagaTypes = null });
+        var withNullName = await ListAsync(stores, new SagaListFilter { SagaTypes = [null!, "PaymentSaga"] });
+        var onlyNullName = await ListAsync(stores, new SagaListFilter { SagaTypes = [null!] });
 
         Assert.Equal([payment.CorrelationId, orderNew.CorrelationId, orderOld.CorrelationId], Ids(two));
         Assert.Equal(3, two.TotalCount);
@@ -115,6 +117,9 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         Assert.Empty(empty.Items);
         Assert.Equal(0, empty.TotalCount);
         Assert.Equal(5, none.TotalCount);
+        Assert.Equal([payment.CorrelationId], Ids(withNullName));
+        Assert.Empty(onlyNullName.Items);
+        Assert.Equal(0, onlyNullName.TotalCount);
 
         string[] orderAndPayment = ["OrderSaga", "PaymentSaga"];
         var both = await ListAsync(stores, new SagaListFilter { SagaType = "OrderSaga", SagaTypes = orderAndPayment });
@@ -182,8 +187,9 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         var states = new List<ConformanceSagaState>();
         for (var i = 0; i < 48; i++)
         {
-            // Only a few distinct timestamps and statuses, so most rows tie on the sort column.
-            states.Add(NewState(kinds[i % kinds.Length], status: statuses[i % statuses.Length], updatedAtUtc: T0.AddSeconds(i % 4)));
+            // Only a few distinct timestamps and statuses, and each timestamp and status spans every type, so rows
+            // tie on the sort column across types.
+            states.Add(NewState(kinds[i % kinds.Length], status: statuses[i % statuses.Length], updatedAtUtc: T0.AddSeconds((i / 4) % 4)));
         }
 
         await InsertAsync(stores, [.. states]);

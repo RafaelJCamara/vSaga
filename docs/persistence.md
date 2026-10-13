@@ -337,8 +337,9 @@ materialises the candidates server-side (`ZINTER`, read-only) and pages client-s
 `SagaListFilter.SagaTypes` set of two or more types (the dashboard's scoped lists) adds no intersection of its
 own: a ranked list reads each type's window by rank, all at once, and merges them (O(types × (offset + page)));
 a list that starts from a status or kind index reads that index once and keeps the members whose type suffix
-(the part of `{correlationId}|{sagaType}` after the bar) is in the set; and one with neither reads each type's
-index. Measured on the redis overlay with 4,651 of about 5,500 sagas visible to a caller scoped to three of seven
+(the part of `{correlationId}|{sagaType}` after the bar) is in the set, or, when the types together hold fewer
+members than that index (two `ZCARD` reads decide), intersects each type's index with it; and one with neither
+reads each type's index. Measured on the redis overlay with 4,651 of about 5,500 sagas visible to a caller scoped to three of seven
 types, as Redis's own `INFO commandstats` per request: a sort by status 21 `ZINTER` calls and 3.3 ms of server
 time became 7 range reads and 1.5 ms; a status filter 3 `ZINTER` calls (0.62 ms) became one range read
 (0.49 ms); the hundredth-row page 40 of 100 read 4,200 hashes and took 10.4 ms of server time, now 100 and

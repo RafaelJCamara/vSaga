@@ -256,8 +256,11 @@ merge is gone. A caller scoped to several types is served by a `ScopedSagaLister
 
 The bounds stay because they are the HTTP contract (the SPA reads `maxPage`) and because the cost still
 grows with them; the provider-side work per request is one query on EF Core and MongoDB, and on Redis a
-rank read per type for a ranked list, or one read of the status or kind index (or of each visible type's
-index) filtered on the member's type suffix for the others, with no `ZINTER` per type.
+rank window per type for a ranked list (the cost is the types' count times `page × pageSize`, at most
+500,000 entries at the bounds, because each type must be asked for the whole depth), and for a list that
+starts from a status or kind index whichever is cheaper by two cardinality reads: the index read once and
+filtered on the member's type suffix, or, when the visible types hold fewer members than the index, one
+`ZINTER` per type. A list with neither reads each visible type's index.
 
 ### 8. Without `sagas.data`, payloads and error messages are redacted
 
@@ -389,9 +392,9 @@ cannot read is strictly better.
 - **Scoped lists can cost more than unscoped ones.** A list across several types is one provider call, so on
   EF Core and MongoDB it is one query, which at a deep page reads and discards the rows before it as any
   offset page does. On Redis, list shapes that are not served from a rank (a `Status` sort, a status or kind
-  filter, or a search) read the candidate members of the index they start from in one call, which when the
-  visible types are a small share of a large status bucket is more than the per-type reads it replaced, and
-  Redis is single-threaded while it does.
+  filter, or a search) read the candidate members of the index they start from, and Redis is single-threaded
+  while it does; a ranked list over many large types at a deep page transfers up to the number of types times
+  `page × pageSize` entries.
 - **A store read per request**, and per hub subscription. A local SQLite read is sub-millisecond; a
   short cache keyed by security stamp is the remedy if measurement ever says otherwise.
 - The API key defaults to Viewer, so scripts that retry with it receive `403` until

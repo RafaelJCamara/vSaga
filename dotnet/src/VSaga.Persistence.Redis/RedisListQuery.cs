@@ -28,7 +28,8 @@ internal sealed class RedisListQuery
         var sagaType = string.IsNullOrWhiteSpace(filter.SagaType) ? null : filter.SagaType;
         if (filter.SagaTypes is { } sagaTypes)
         {
-            var names = new HashSet<string>(sagaTypes, StringComparer.Ordinal);
+            // A null name matches nothing in every other provider, so it is dropped here rather than read as "no type".
+            var names = new HashSet<string>(sagaTypes.Where(name => name is not null), StringComparer.Ordinal);
             if (sagaType is not null)
             {
                 MatchesNothing = !names.Contains(sagaType);
