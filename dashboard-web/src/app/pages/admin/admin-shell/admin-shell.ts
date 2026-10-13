@@ -14,6 +14,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
 import { GuideService } from '../../../services/guide.service';
+import { SagaHubService } from '../../../services/saga-hub.service';
 import { AdminStore } from '../admin.store';
 
 /**
@@ -29,6 +30,12 @@ import { AdminStore } from '../admin.store';
  * the heading of the page that has arrived (`tabindex="-1"`, set here), as the first thing a keyboard or a screen
  * reader user meets there. Focus that is somewhere (a tab link, a field a page has focused, the link of a "no
  * longer exists" notice) is never taken away.
+ *
+ * The shell keeps the hub connected, with no subscription (`SagaHubService.connect`). An administration tab has
+ * nothing live to show, but a session that ends behind its back (the identity store was wiped, the user was
+ * disabled or signed out elsewhere) is noticed through the connection: the server closes it, or the API is
+ * gone, and the hub's reconnect asks the session whether it is still alive and takes the tab to `/login`.
+ * Without one the tab learns of it at its first write (a 401) or when it is shown again.
  *
  * Guide mode: the shell announces the area (`areaShown('admin')`) once its pages show, not when the route is
  * opened, so the tour finds the table it points at; and again after each navigation inside the area, because
@@ -68,6 +75,8 @@ export class AdminShell {
       this.navigations();
       if (this.store.loaded()) untracked(() => this.guide.areaShown('admin'));
     });
+    // The route is guarded, so there is a session to keep a connection for.
+    void inject(SagaHubService).connect();
     // The route's injector outlives this component: leaving the area drops what it held, and entering it again reads afresh.
     inject(DestroyRef).onDestroy(() => this.store.clear());
     void this.store.load();

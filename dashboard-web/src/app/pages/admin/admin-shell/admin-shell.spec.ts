@@ -14,6 +14,7 @@ import { Router, RouterLink, Routes, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { GUIDE_ANCHORS } from '../../../components/guide-overlay/guide-tours';
 import { GuideService } from '../../../services/guide.service';
+import { SagaHubService } from '../../../services/saga-hub.service';
 import { adminData, answerLoad, answerReload } from '../../../testing/admin';
 import { createGuideStorage, provideGuideStorage } from '../../../testing/guide';
 import { AdminStore } from '../admin.store';
@@ -55,10 +56,17 @@ const ROUTES: Routes = [
 describe('AdminShell', () => {
   let http: HttpTestingController;
   let harness: RouterTestingHarness;
+  let hub: { connect: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
+    hub = { connect: vi.fn().mockResolvedValue(undefined) };
     TestBed.configureTestingModule({
-      providers: [provideRouter(ROUTES), provideHttpClient(), provideHttpClientTesting()],
+      providers: [
+        provideRouter(ROUTES),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: SagaHubService, useValue: hub },
+      ],
     });
     http = TestBed.inject(HttpTestingController);
     harness = await RouterTestingHarness.create();
@@ -82,6 +90,16 @@ describe('AdminShell', () => {
     answerLoad(http);
     await settle();
   }
+
+  // The tab has nothing to subscribe to, but the connection is how it hears that its session ended: the hub's
+  // failed reconnect asks the session and the app goes to /login, without waiting for a write or a tab switch.
+  it('keeps the hub connected while it is open, once, whichever page of the area shows', async () => {
+    await open('/admin/users');
+    expect(hub.connect).toHaveBeenCalledTimes(1);
+
+    await harness.navigateByUrl('/admin/teams');
+    expect(hub.connect).toHaveBeenCalledTimes(1);
+  });
 
   it('shows the heading and the Users, Teams and Roles tabs, in that order', async () => {
     await harness.navigateByUrl('/admin/users');

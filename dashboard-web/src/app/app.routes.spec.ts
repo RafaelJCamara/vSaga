@@ -8,6 +8,7 @@ import { routes } from './app.routes';
 import { adminGuard, authGuard } from './guards/auth.guards';
 import { Account } from './pages/account/account';
 import { Login } from './pages/login/login';
+import { SagaHubService } from './services/saga-hub.service';
 import { AdminShell } from './pages/admin/admin-shell/admin-shell';
 import { Setup } from './pages/setup/setup';
 import { answerLoad } from './testing/admin';
@@ -110,6 +111,8 @@ describe('routes', () => {
         // The administration shell reads its data as it opens; the specs here are about getting to it.
         provideHttpClient(),
         provideHttpClientTesting(),
+        // ...and keeps the hub connected, which the stand-in answers without a socket.
+        { provide: SagaHubService, useValue: { connect: vi.fn().mockResolvedValue(undefined) } },
       ],
     });
     harness = await RouterTestingHarness.create();

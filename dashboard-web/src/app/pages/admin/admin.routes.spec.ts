@@ -3,6 +3,8 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
+import { vi } from 'vitest';
+import { SagaHubService } from '../../services/saga-hub.service';
 import { provideAuthMock } from '../../testing/auth-mock';
 import { adminUser, answerLoad, answerReload } from '../../testing/admin';
 import { AdminShell } from './admin-shell/admin-shell';
@@ -50,6 +52,7 @@ describe('ADMIN_ROUTES', () => {
           provideAuthMock(),
           provideHttpClient(),
           provideHttpClientTesting(),
+          { provide: SagaHubService, useValue: { connect: vi.fn().mockResolvedValue(undefined) } },
         ],
       });
       http = TestBed.inject(HttpTestingController);
