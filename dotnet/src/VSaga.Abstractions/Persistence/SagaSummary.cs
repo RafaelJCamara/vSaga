@@ -29,6 +29,20 @@ public sealed class SagaListFilter
 
     public string? SagaType { get; init; }
 
+    /// <summary>
+    /// Keeps only instances whose <see cref="SagaSummary.SagaType"/> is one of these names, compared exactly
+    /// (ordinal: <c>ordersaga</c> is not <c>OrderSaga</c>); null (the default) puts no limit on the type, so
+    /// existing callers are unaffected. An empty collection matches nothing. When <see cref="SagaType"/> is also
+    /// set, an instance must satisfy both. It composes with every other member as a filter does: applied before
+    /// sorting and paging, so the page and <see cref="PagedResult{T}.TotalCount"/> arithmetic is over the
+    /// filtered set, and the order of the rows kept is the order they hold in the unfiltered list.
+    /// <para>
+    /// The dashboard serves a caller whose access names several saga types with one call carrying this, instead
+    /// of one call per type.
+    /// </para>
+    /// </summary>
+    public IReadOnlyCollection<string>? SagaTypes { get; init; }
+
     public SagaKind? Kind { get; init; }
 
     /// <summary>

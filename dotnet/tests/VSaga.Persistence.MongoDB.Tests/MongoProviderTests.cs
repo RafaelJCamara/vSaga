@@ -93,6 +93,32 @@ public sealed class MongoProviderTests(MongoProviderFixture fixture)
         Assert.True(!listing.Contains("COLLSCAN", StringComparison.Ordinal), listing);
     }
 
+    /// <summary>
+    /// A scoped list across several saga types is one <c>$in</c> on the type under the default sort: served by
+    /// walking the updated-at index and checking the type on its keys, with no collection scan and no blocking
+    /// sort of every row the types hold.
+    /// </summary>
+    [Fact]
+    public async Task ASagaTypeSetListing_IsServedByAnIndexWalk_NeverAScanOrABlockingSort()
+    {
+        await using var stores = await fixture.CreateDatabaseAsync();
+        await using var uow = await stores.BeginAsync();
+        foreach (var type in new[] { "OrderSaga", "ShippingSaga", "PaymentSaga" })
+        {
+            for (var i = 0; i < 3; i++)
+                await uow.Snapshots<ConformanceSagaState>().InsertAsync(NewState(type));
+        }
+
+        var listing = await ExplainAsync(
+            stores,
+            new BsonDocument { { "sagaType", new BsonDocument("$in", new BsonArray { "OrderSaga", "PaymentSaga" }) } },
+            new BsonDocument { { "updatedAtTicks", -1 }, { "sagaType", -1 }, { "correlationId", -1 } });
+
+        Assert.True(listing.Contains("IXSCAN", StringComparison.Ordinal), listing);
+        Assert.True(!listing.Contains("COLLSCAN", StringComparison.Ordinal), listing);
+        Assert.True(!listing.Contains("\"stage\" : \"SORT\"", StringComparison.Ordinal), listing);
+    }
+
     private static async Task<string> ExplainAsync(MongoProviderStores stores, BsonDocument filter, BsonDocument? sort)
     {
         var find = new BsonDocument { { "find", MongoCollections.InstancesName }, { "filter", filter } };

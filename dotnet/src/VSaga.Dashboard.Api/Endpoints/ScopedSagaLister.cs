@@ -5,7 +5,7 @@ using VSaga.Dashboard.Identity.Services;
 namespace VSaga.Dashboard.Api.Endpoints;
 
 /// <summary>
-/// A list across several saga types that the merge refuses to serve: too many visible types, or a page too
+/// A list across several saga types that the dashboard refuses to serve: too many visible types, or a page too
 /// deep for the request's shape. The list endpoint answers 400 <c>{ error, maxPage }</c>; the message names
 /// the <c>sagaType</c> filter, which always works.
 /// </summary>
@@ -17,34 +17,35 @@ public sealed class ScopedSagaListBoundExceededException(string message, int max
 
 /// <summary>
 /// The saga list for a caller whose <c>sagas.view</c> may be scoped to named saga types
-/// (docs/design/dashboard-usability-and-access.md §8.7, ADR 0006 decision 7). <see cref="ISagaSummaryReader.ListAsync"/>
-/// filters by at most one saga type, so a caller who sees several is served by merging one stream per type in
-/// the API, inside bounds that keep the cost of one request in check.
+/// (docs/design/dashboard-usability-and-access.md §8.7, ADR 0006 decision 7). A caller who sees several types is
+/// served by one <see cref="ISagaSummaryReader.ListAsync"/> call carrying <see cref="SagaListFilter.SagaTypes"/>:
+/// the provider filters, sorts, pages and counts the set in its own order, inside bounds that keep the cost of
+/// one request in check and that the HTTP contract states (400 with the last reachable page).
 /// </summary>
 public sealed class ScopedSagaLister(ISagaSummaryReader reader, SagaTypeNameCache typeNames)
 {
     /// <summary>
-    /// The most saga types a list served from a rank can merge, and the most scoped names such a list uses as
+    /// The most saga types a list served from a rank can cover, and the most scoped names such a list uses as
     /// they stand without asking the store which types have run.
     /// </summary>
     public const int MaxMergedTypes = 50;
 
-    /// <summary>The deepest row (<c>page × pageSize</c>) a merged list served from a rank can reach.</summary>
+    /// <summary>The deepest row (<c>page × pageSize</c>) a list across several types served from a rank can reach.</summary>
     public const int MaxMergeDepth = 10_000;
 
     /// <summary>
-    /// The most saga types a merged list of any other shape can cover, and the most scoped names such a list
-    /// uses as they stand.
+    /// The most saga types a list of any other shape can cover, and the most scoped names such a list uses as
+    /// they stand.
     /// </summary>
     public const int MaxUnrankedTypes = 10;
 
     /// <summary>
-    /// The deepest row any other shape can reach: one chunk per type, so no stream is ever refilled. On Redis
-    /// such a request reads every member of every visible type (ADR 0006).
+    /// The deepest row any other shape can reach. On Redis such a request reads every candidate member of the
+    /// status or kind index it starts from (ADR 0006).
     /// </summary>
     public const int MaxUnrankedDepth = 500;
 
-    /// <summary>The largest refill a merged stream asks its provider for; the list endpoint's own page cap.</summary>
+    /// <summary>The largest page a provider is asked for; the list endpoint's own page cap.</summary>
     public const int MaxChunk = SagaEndpoints.MaxPageSize;
 
     /// <summary>
@@ -75,60 +76,33 @@ public sealed class ScopedSagaLister(ISagaSummaryReader reader, SagaTypeNameCach
 
         var rankServed = IsRankServed(filter);
         var types = await VisibleTypesAsync(scope, rankServed ? MaxMergedTypes : MaxUnrankedTypes, cancellationToken);
+        if (filter.SagaTypes is { } requested)
+            types = [.. types.Intersect(requested, StringComparer.Ordinal)];
+
         if (types.Count == 0)
             return Empty(page, pageSize);
         if (types.Count == 1)
-            return WithinScope(await reader.ListAsync(For(filter, types[0], filter.Page, filter.PageSize), cancellationToken), scope);
+            return WithinScope(await reader.ListAsync(For(filter, types, filter.Page, filter.PageSize), cancellationToken), scope);
 
         CheckBounds(types.Count, page, pageSize, rankServed);
 
-        var merged = await MergeAsync(filter, types, page, pageSize, rankServed, cancellationToken);
-        return WithinScope(merged, scope);
+        return WithinScope(await reader.ListAsync(For(filter, types, page, pageSize), cancellationToken), scope);
     }
 
     /// <summary>
-    /// The shape Redis serves from its per-type rank (<c>RedisListQuery.IsRankable</c>), so paging deeper there
-    /// costs a range read, not a scan: the <c>UpdatedAt</c> sort (the default included) with no status or kind
-    /// filter and no search. Redis never serves a search from a rank, and EF Core matches one with <c>LIKE</c>,
-    /// so a searched list gets the tighter bounds of every other shape.
+    /// The shape Redis serves from a rank (<c>RedisListQuery.IsRankable</c> and its type-set counterpart), so
+    /// paging deeper there costs a range read, not a scan: the <c>UpdatedAt</c> sort (the default included) with
+    /// no status or kind filter and no search. Redis never serves a search from a rank, and EF Core matches one
+    /// with <c>LIKE</c>, so a searched list gets the tighter bounds of every other shape.
     /// </summary>
     internal static bool IsRankServed(SagaListFilter filter) =>
         filter.SortBy is null or SagaSortColumn.UpdatedAt && filter.Status is null && filter.Kind is null && string.IsNullOrWhiteSpace(filter.Search);
 
     /// <summary>
-    /// The order the merge picks heads in: the providers' own order for the requested sort arm
-    /// (<c>EfCoreSagaSummaryReader.ApplySort</c>), then saga type, ordinal ascending, across types. Rows of one
-    /// type are never compared with each other, so each provider's own tie-break inside a type stands.
-    /// </summary>
-    internal static Comparison<SagaSummary> ComparerFor(SagaListFilter filter)
-    {
-        ArgumentNullException.ThrowIfNull(filter);
-        Comparison<SagaSummary> arm = filter.SortBy switch
-        {
-            SagaSortColumn.Status when filter.SortDescending => (a, b) => StatusThenNewest(b.Status, a.Status, a, b),
-            SagaSortColumn.Status => (a, b) => StatusThenNewest(a.Status, b.Status, a, b),
-            SagaSortColumn.UpdatedAt when !filter.SortDescending => (a, b) => a.UpdatedAtUtc.CompareTo(b.UpdatedAtUtc),
-            _ => (a, b) => b.UpdatedAtUtc.CompareTo(a.UpdatedAtUtc),
-        };
-
-        return (a, b) =>
-        {
-            var byArm = arm(a, b);
-            return byArm != 0 ? byArm : string.CompareOrdinal(a.SagaType, b.SagaType);
-        };
-    }
-
-    private static int StatusThenNewest(SagaStatus first, SagaStatus second, SagaSummary a, SagaSummary b)
-    {
-        var byStatus = ((int)first).CompareTo((int)second);
-        return byStatus != 0 ? byStatus : b.UpdatedAtUtc.CompareTo(a.UpdatedAtUtc);
-    }
-
-    /// <summary>
     /// The non-blank saga types the scope names, ordinal ascending: as they stand when there are at most
     /// <paramref name="typeBound"/> of them, the request shape's type bound (types that have not run yet just
-    /// give an empty stream), otherwise the types that have run, read through a short-lived cache, kept when
-    /// the scope covers them. So a caller granted more named types than the shape can merge is refused only
+    /// match nothing), otherwise the types that have run, read through a short-lived cache, kept when
+    /// the scope covers them. So a caller granted more named types than the shape can cover is refused only
     /// when more than that many of them have actually run.
     /// </summary>
     private async Task<IReadOnlyList<string>> VisibleTypesAsync(SagaTypeScope scope, int typeBound, CancellationToken cancellationToken)
@@ -163,87 +137,14 @@ public sealed class ScopedSagaLister(ISagaSummaryReader reader, SagaTypeNameCach
     }
 
     /// <summary>
-    /// The k-way merge. Each type's stream is primed with one chunk, read one after another (the reader is
-    /// scoped, and an EF Core context cannot run queries in parallel): <c>pageSize</c> rows for the rank-served
-    /// shape, refilled with doubling chunks up to <see cref="MaxChunk"/>; <c>page × pageSize</c> rows for every
-    /// other shape, which the bounds keep to one chunk. <c>TotalCount</c> is the sum of the primes' counts. A
-    /// row that a refill returns again, because its saga was updated between two reads, is skipped.
+    /// <paramref name="filter"/> restricted to <paramref name="types"/>: the one type as <c>SagaType</c> (every
+    /// provider's cheapest path), several as <c>SagaTypes</c>.
     /// </summary>
-    private async Task<PagedResult<SagaSummary>> MergeAsync(
-        SagaListFilter filter, IReadOnlyList<string> types, int page, int pageSize, bool rankServed, CancellationToken cancellationToken)
-    {
-        var prime = rankServed ? pageSize : page * pageSize;
-        var streams = new List<TypeStream>(types.Count);
-        var totalCount = 0;
-        foreach (var type in types)
-        {
-            var stream = new TypeStream(type);
-            totalCount += await FillAsync(stream, filter, prime, cancellationToken);
-            streams.Add(stream);
-        }
-
-        var compare = ComparerFor(filter);
-        var emitted = new HashSet<(string SagaType, Guid CorrelationId)>();
-        var toSkip = (page - 1) * pageSize;
-        var items = new List<SagaSummary>(pageSize);
-        while (items.Count < pageSize && await NextHeadAsync(streams, filter, compare, cancellationToken) is { } head)
-        {
-            var row = head.Rows.Dequeue();
-            if (!emitted.Add((row.SagaType, row.CorrelationId)))
-                continue;
-            if (toSkip > 0)
-                toSkip--;
-            else
-                items.Add(row);
-        }
-
-        return new PagedResult<SagaSummary>(items, page, pageSize, totalCount);
-    }
-
-    /// <summary>The stream whose head comes first, refilling any that ran dry; null when every stream is drained.</summary>
-    private async Task<TypeStream?> NextHeadAsync(List<TypeStream> streams, SagaListFilter filter, Comparison<SagaSummary> compare, CancellationToken cancellationToken)
-    {
-        TypeStream? best = null;
-        foreach (var stream in streams)
-        {
-            if (stream.Rows.Count == 0 && !stream.Drained)
-                await FillAsync(stream, filter, NextChunk(stream.Fetched), cancellationToken);
-            if (stream.Rows.Count > 0 && (best is null || compare(stream.Rows.Peek(), best.Rows.Peek()) < 0))
-                best = stream;
-        }
-
-        return best;
-    }
-
-    /// <summary>
-    /// The next refill size: as many rows as the stream has read so far, so each refill doubles what it holds,
-    /// up to <see cref="MaxChunk"/>, and always a divisor of the rows read so far, so the refill is a whole
-    /// provider page that starts exactly where the stream stopped.
-    /// </summary>
-    internal static int NextChunk(int fetched)
-    {
-        var chunk = Math.Clamp(fetched, 1, MaxChunk);
-        while (fetched % chunk != 0)
-            chunk--;
-        return chunk;
-    }
-
-    /// <summary>Reads the stream's next <paramref name="chunk"/> rows; returns the provider's total for the type.</summary>
-    private async Task<int> FillAsync(TypeStream stream, SagaListFilter filter, int chunk, CancellationToken cancellationToken)
-    {
-        var result = await reader.ListAsync(For(filter, stream.SagaType, (stream.Fetched / chunk) + 1, chunk), cancellationToken);
-        foreach (var row in result.Items)
-            stream.Rows.Enqueue(row);
-
-        stream.Fetched += result.Items.Count;
-        stream.Drained = result.Items.Count < chunk;
-        return result.TotalCount;
-    }
-
-    private static SagaListFilter For(SagaListFilter filter, string sagaType, int page, int pageSize) => new()
+    private static SagaListFilter For(SagaListFilter filter, IReadOnlyList<string> types, int page, int pageSize) => new()
     {
         Status = filter.Status,
-        SagaType = sagaType,
+        SagaType = types.Count == 1 ? types[0] : null,
+        SagaTypes = types.Count == 1 ? null : types,
         Kind = filter.Kind,
         Search = filter.Search,
         UpdatedSince = filter.UpdatedSince,
@@ -271,18 +172,6 @@ public sealed class ScopedSagaLister(ISagaSummaryReader reader, SagaTypeNameCach
     }
 
     private static PagedResult<SagaSummary> Empty(int page, int pageSize) => new([], page, pageSize, 0);
-
-    /// <summary>One saga type's rows in the provider's order: those read and not yet merged, and how far the reads got.</summary>
-    private sealed class TypeStream(string sagaType)
-    {
-        public string SagaType { get; } = sagaType;
-
-        public Queue<SagaSummary> Rows { get; } = new();
-
-        public int Fetched { get; set; }
-
-        public bool Drained { get; set; }
-    }
 }
 
 /// <summary>

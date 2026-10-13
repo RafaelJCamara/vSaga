@@ -9,9 +9,9 @@ namespace VSaga.Dashboard.Api.Tests;
 
 /// <summary>
 /// <see cref="ScopedSagaLister"/> (docs/design/dashboard-usability-and-access.md §8.7) against a reader that
-/// orders and pages exactly as the in-memory and EF Core providers do: every sort arm walked page by page
-/// equals one full sort of the visible rows, cross-type ties break by saga type (ordinal), the bounds refuse
-/// with the last reachable page, and nothing outside the scope gets through.
+/// orders and pages exactly as the in-memory and EF Core providers do: a caller who sees several types is one
+/// provider call carrying the set, every sort arm walked page by page equals one full sort of the visible
+/// rows, the bounds refuse with the last reachable page, and nothing outside the scope gets through.
 /// </summary>
 public sealed class ScopedSagaListerTests
 {
@@ -71,42 +71,41 @@ public sealed class ScopedSagaListerTests
     }
 
     [Fact]
-    public async Task TheTotalCount_IsTheSumOfThePrimes_AndEachTypeIsPrimedWithOnePage()
+    public async Task SeveralVisibleTypes_AreOneProviderCallCarryingTheSet_AndTheProvidersTotalStands()
     {
         var reader = new FakeReader(Rows((Alpha, 12), (Beta, 3), (Hidden, 40)));
 
-        var result = await Lister(reader).ListAsync(Filter(1, 5), SagaTypeScope.Of([Alpha, Beta]), CancellationToken.None);
+        var result = await Lister(reader).ListAsync(Filter(1, 5), SagaTypeScope.Of([Beta, Alpha]), CancellationToken.None);
 
         Assert.Equal(15, result.TotalCount);
-        Assert.Equal(
-            [(Alpha, 1, 5), (Beta, 1, 5)],
-            reader.Calls.Select(c => (c.SagaType!, c.Page, c.PageSize)));
+        var call = Assert.Single(reader.Calls);
+        Assert.Null(call.SagaType);
+        Assert.Equal([Alpha, Beta], call.SagaTypes, StringComparer.Ordinal);
+        Assert.Equal((1, 5), (call.Page, call.PageSize));
     }
 
     [Fact]
-    public async Task ADeeperRankedPage_RefillsWithDoublingChunks()
+    public async Task ADeepRankedPage_IsOneCallAtThePageAsked_NotAWalkOfThePagesBeforeIt()
     {
         var reader = new FakeReader(Rows((Alpha, 200), (Beta, 1)));
 
         await Lister(reader).ListAsync(Filter(page: 8, pageSize: 10), SagaTypeScope.Of([Alpha, Beta]), CancellationToken.None);
 
-        // Alpha is primed with 10 rows, then read on in chunks of 10, 20 and 40, each a whole provider page
-        // starting where the stream stopped.
-        Assert.Equal(
-            [(1, 10), (2, 10), (2, 20), (2, 40)],
-            reader.Calls.Where(c => Is(c.SagaType, Alpha)).Select(c => (c.Page, c.PageSize)));
+        var call = Assert.Single(reader.Calls);
+        Assert.Equal((8, 10), (call.Page, call.PageSize));
     }
 
-    [Theory]
-    [InlineData(25, 25)]
-    [InlineData(400, 400)]
-    [InlineData(800, 400)]
-    [InlineData(1200, 400)]
-    [InlineData(896, 448)]
-    [InlineData(7, 7)]
-    public void TheNextChunk_DoublesUpTo500_AndDividesWhatWasRead(int fetched, int expected)
+    [Fact]
+    public async Task ATypeSetTheCallerAlsoNames_NarrowsTheScope_NeverWidensIt()
     {
-        Assert.Equal(expected, ScopedSagaLister.NextChunk(fetched));
+        var reader = new FakeReader(Rows((Alpha, 3), (Beta, 3), (Gamma, 3), (Hidden, 3)));
+
+        var narrowed = await Lister(reader).ListAsync(
+            new SagaListFilter { SagaTypes = [Beta, Gamma, Hidden], PageSize = 50 }, SagaTypeScope.Of([Alpha, Beta, Gamma]), CancellationToken.None);
+
+        Assert.Equal([Gamma, Beta], Assert.Single(reader.Calls).SagaTypes, StringComparer.Ordinal);
+        Assert.Equal(6, narrowed.TotalCount);
+        Assert.All(narrowed.Items, s => Assert.False(Is(s.SagaType, Hidden) || Is(s.SagaType, Alpha)));
     }
 
     [Fact]
@@ -211,20 +210,22 @@ public sealed class ScopedSagaListerTests
             Shaped(new SagaListFilter { Status = SagaStatus.Failed }, 1, 25), Types(ScopedSagaLister.MaxUnrankedTypes + 1), CancellationToken.None);
 
         Assert.Equal(1, reader.SagaTypeReads);
-        Assert.Equal(["Type00", "Type07"], reader.Calls.Select(c => c.SagaType!), StringComparer.Ordinal);
+        Assert.Equal(["Type00", "Type07"], Assert.Single(reader.Calls).SagaTypes, StringComparer.Ordinal);
         Assert.Equal(expected, result.TotalCount);
         Assert.Equal(expected, result.Items.Count);
         Assert.All(result.Items, s => Assert.Equal(SagaStatus.Failed, s.Status));
     }
 
     [Fact]
-    public async Task AnUnrankedShape_ReadsEachTypeInOneChunk_NeverRefilling()
+    public async Task AnUnrankedShape_IsOneCallAtThePageAsked()
     {
         var reader = new FakeReader(Rows((Alpha, 60), (Beta, 60)));
 
         await Lister(reader).ListAsync(Filter(4, 25, SagaSortColumn.Status), SagaTypeScope.Of([Alpha, Beta]), CancellationToken.None);
 
-        Assert.Equal([(Alpha, 1, 100), (Beta, 1, 100)], reader.Calls.Select(c => (c.SagaType!, c.Page, c.PageSize)));
+        var call = Assert.Single(reader.Calls);
+        Assert.Equal((4, 25, SagaSortColumn.Status), (call.Page, call.PageSize, call.SortBy));
+        Assert.Equal([Alpha, Beta], call.SagaTypes, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -256,8 +257,8 @@ public sealed class ScopedSagaListerTests
         Assert.Equal(4, single.TotalCount);
         Assert.Equal(4, supplied.TotalCount);
 
-        // Each of the two streams counted all twelve rows; the four hidden ones on this page come off.
-        Assert.Equal(24 - 4, merged.TotalCount);
+        // One call: the provider counted all twelve rows and the four hidden ones on this page come off.
+        Assert.Equal(12 - 4, merged.TotalCount);
     }
 
     [Theory]
@@ -277,30 +278,7 @@ public sealed class ScopedSagaListerTests
         Assert.Equal(0, onlyBlank.TotalCount);
         Assert.All(blankAndAlpha.Items, s => Assert.Equal(Alpha, s.SagaType));
         Assert.Equal(3, blankAndAlpha.TotalCount);
-        Assert.DoesNotContain(reader.Calls, c => string.IsNullOrWhiteSpace(c.SagaType));
-    }
-
-    [Fact]
-    public async Task ARowThatMovesBetweenTwoReads_IsNotEmittedTwice()
-    {
-        var reader = new FakeReader(Rows((Alpha, 40), (Beta, 2)));
-        var newestFirst = Oracle(reader.Data.Where(r => Is(r.SagaType, Alpha)), null, false);
-        var lastOfThePrime = newestFirst[9];
-
-        // Between Alpha's prime (rows 0-9) and its refill, its oldest row is updated and moves to the front, so
-        // every row shifts one place and the refill starts with the prime's last row again.
-        reader.BeforeList = filter =>
-        {
-            if (filter is { SagaType: Alpha, Page: 2 })
-                reader.Touch(newestFirst[^1], Base.AddHours(1));
-        };
-
-        var result = await Lister(reader).ListAsync(Filter(2, 10), SagaTypeScope.Of([Alpha, Beta]), CancellationToken.None);
-
-        Assert.Equal(10, result.Items.Count);
-        Assert.Equal(result.Items.Count, result.Items.Select(s => (s.SagaType, s.CorrelationId)).Distinct().Count());
-        Assert.DoesNotContain(result.Items, s => s.CorrelationId == lastOfThePrime.CorrelationId);
-        Assert.Equal(newestFirst[10..20].Select(s => s.CorrelationId), result.Items.Select(s => s.CorrelationId));
+        Assert.DoesNotContain(reader.Calls, c => string.IsNullOrWhiteSpace(c.SagaType) && c.SagaTypes is null);
     }
 
     [Fact]
@@ -311,7 +289,7 @@ public sealed class ScopedSagaListerTests
         await Lister(reader).ListAsync(Filter(1, 10), Types(ScopedSagaLister.MaxMergedTypes), CancellationToken.None);
 
         Assert.Equal(0, reader.SagaTypeReads);
-        Assert.Equal(ScopedSagaLister.MaxMergedTypes, reader.Calls.Count);
+        Assert.Equal(ScopedSagaLister.MaxMergedTypes, Assert.Single(reader.Calls).SagaTypes!.Count);
     }
 
     [Fact]
@@ -331,7 +309,7 @@ public sealed class ScopedSagaListerTests
 
         Assert.Equal(2, reader.SagaTypeReads);
         Assert.Equal(4, first.TotalCount);
-        Assert.DoesNotContain(reader.Calls, c => Is(c.SagaType, Hidden) || Is(c.SagaType, "Type02"));
+        Assert.All(reader.Calls, c => Assert.Equal(["Type00", "Type01"], c.SagaTypes, StringComparer.Ordinal));
     }
 
     private static ScopedSagaLister Lister(FakeReader reader) => new(reader, new SagaTypeNameCache(TimeProvider.System));
@@ -419,25 +397,17 @@ public sealed class ScopedSagaListerTests
 
         public bool IgnoreTypeFilter { get; init; }
 
-        public Action<SagaListFilter>? BeforeList { get; set; }
-
-        public void Touch(SagaSummary row, DateTimeOffset updatedAtUtc)
-        {
-            var index = Data.FindIndex(r => r.CorrelationId == row.CorrelationId);
-            Data[index] = Data[index] with { UpdatedAtUtc = updatedAtUtc };
-        }
-
         public Task<PagedResult<SagaSummary>> ListAsync(SagaListFilter filter, CancellationToken cancellationToken = default)
         {
             Calls.Add(filter);
-            BeforeList?.Invoke(filter);
             if (Refuse)
                 throw new RedisSearchScanLimitExceededException(candidates: 250_000, limit: 100_000);
 
             var matching = Data.Where(r =>
                 (filter.Status is not { } status || r.Status == status)
                 && (filter.Kind is not { } kind || r.Kind == kind)
-                && (IgnoreTypeFilter || string.IsNullOrWhiteSpace(filter.SagaType) || string.Equals(r.SagaType, filter.SagaType, StringComparison.Ordinal)))
+                && (IgnoreTypeFilter || string.IsNullOrWhiteSpace(filter.SagaType) || string.Equals(r.SagaType, filter.SagaType, StringComparison.Ordinal))
+                && (IgnoreTypeFilter || filter.SagaTypes is not { } types || types.Contains(r.SagaType, StringComparer.Ordinal)))
                 .ToList();
             var page = Oracle(matching, filter.SortBy, filter.SortDescending).Skip((filter.Page - 1) * filter.PageSize).Take(filter.PageSize).ToList();
             return Task.FromResult(new PagedResult<SagaSummary>(page, filter.Page, filter.PageSize, matching.Count));

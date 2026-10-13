@@ -232,30 +232,32 @@ logs "No XML encryptor configured" at start); a deployment that wants that adds 
 `ProtectKeysWithCertificate` to the API's composition itself, as `docs/dashboard.md` says, and that
 path is not exercised in this repository.
 
-### 7. Scoped lists are merged in the API, within bounds
+### 7. Scoped lists are one provider call carrying the visible types, within bounds
 
-`ISagaSummaryReader.ListAsync` filters by at most one saga type, and this decision does not change the
-persistence contracts. A caller scoped to several types is served by a `ScopedSagaLister` in the API:
+This decision first merged the lists in the API, because `ISagaSummaryReader.ListAsync` filtered by at most
+one saga type and the persistence contracts were left alone. `SagaListFilter.SagaTypes` (any of several types,
+exact, ordinal) has since been added to the contract, in every provider and in the conformance suite, and the
+merge is gone. A caller scoped to several types is served by a `ScopedSagaLister` in the API:
 
 - Unscoped callers get one `ListAsync` call, as today. A `sagaType` filter in scope is one call; out of
   scope, an empty page. A blank `sagaType` is treated as not supplied, because every provider reads a
   blank filter as "all types".
-- Otherwise the lister runs one stream per visible type, sequentially (the reader is scoped, and an EF
-  context cannot run queries in parallel), and merges them k-way in the order each sort arm uses, with
-  ties across types broken by saga type, ordinal. Rows of one type keep the provider's own order.
-  Repeated `(sagaType, correlationId)` pairs are dropped, and every row is checked against the scope
-  again before it is returned.
+- Otherwise the lister makes one `ListAsync` call whose filter names the visible types, and the provider
+  sorts, pages and counts the set in its own total order (the order the unfiltered list gives those rows).
+  Every row is checked against the scope again before it is returned.
 - Bounds: for the shape Redis serves from a rank (the `UpdatedAt` sort with no status or kind filter and
   no search), at most 50 types and `page × pageSize` at most 10,000; for every other shape (a `Status`
   sort, a status or kind filter, or a search), on every provider, at most 10 types and one 500-row chunk,
   because on Redis they read every member of every visible type. Scoped names beyond a shape's type
   bound are narrowed to the types that have run (read through a short cache). Beyond a bound, `400` with
   an error that names the `sagaType` filter and the last reachable page.
-- `TotalCount` is the sum of separate per-type counts, as loose under concurrent writes as offset paging
-  already is.
+- `TotalCount` is the provider's own count of the visible rows, as loose under concurrent writes as offset
+  paging already is.
 
-A multi-type filter on `SagaListFilter`, which would let each provider serve this in one query, is a
-recorded follow-up.
+The bounds stay because they are the HTTP contract (the SPA reads `maxPage`) and because the cost still
+grows with them; the provider-side work per request is one query on EF Core and MongoDB, and on Redis a
+rank read per type for a ranked list, or one read of the status or kind index (or of each visible type's
+index) filtered on the member's type suffix for the others, with no `ZINTER` per type.
 
 ### 8. Without `sagas.data`, payloads and error messages are redacted
 
@@ -384,10 +386,12 @@ cannot read is strictly better.
 - **The key ring is stored unencrypted next to the hashes** unless the deployer adds a certificate to the
   API's composition, which vSaga does not ship. Anyone who can read the file can forge a session for any
   user.
-- **Scoped lists cost more than unscoped ones.** At the bounds a page can take on the order of 70
-  sequential `ListAsync` calls and tens of thousands of summaries on EF Core or MongoDB. On Redis, list
-  shapes that are not served from a rank (a `Status` sort, a status or kind filter, or a search) read
-  every member of every visible type on each call, and Redis is single-threaded while it does.
+- **Scoped lists can cost more than unscoped ones.** A list across several types is one provider call, so on
+  EF Core and MongoDB it is one query, which at a deep page reads and discards the rows before it as any
+  offset page does. On Redis, list shapes that are not served from a rank (a `Status` sort, a status or kind
+  filter, or a search) read the candidate members of the index they start from in one call, which when the
+  visible types are a small share of a large status bucket is more than the per-type reads it replaced, and
+  Redis is single-threaded while it does.
 - **A store read per request**, and per hub subscription. A local SQLite read is sub-millisecond; a
   short cache keyed by security stamp is the remedy if measurement ever says otherwise.
 - The API key defaults to Viewer, so scripts that retry with it receive `403` until

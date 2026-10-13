@@ -629,16 +629,16 @@ engine that contains it.
   leave out the types they may not. A `sagaType` filter for a type outside the scope is an empty page, not a
   `403`; a blank `sagaType` counts as no filter. A caller scoped to one type is served by one provider query,
   so a page past the end is an empty `200`.
-- **A caller scoped to several types is served by a merge in the API.** `ISagaSummaryReader.ListAsync`
-  filters by at most one saga type and the persistence contracts do not change, so the API reads one stream
-  per visible type and merges them in the requested order (ties between types break by saga type). The cost of
-  that is bounded: a list ordered by `UpdatedAt` with no status or kind filter and no search covers at most 50
-  types and reaches a depth (`page × pageSize`) of 10,000 rows; every other shape (a `Status` sort, a status or
-  kind filter, a search) covers at most 10 types and reaches 500 rows, because on Redis those shapes read every
-  member of every visible type. Past a bound the answer is `400` `{ error, maxPage }`, and the error
-  names the saga-type filter, which always works. Scoped names beyond a shape's type bound are narrowed to the
-  types that have run, read through a short cache. `totalCount` is the sum of separate per-type counts, as loose
-  under concurrent writes as offset paging already is.
+- **A caller scoped to several types is served by one provider query carrying the set.** The API passes the
+  visible types as `SagaListFilter.SagaTypes` and the provider filters, sorts, pages and counts them in its own
+  order, so `totalCount` is exact over the visible rows (as loose under concurrent writes as offset paging
+  already is) and a page holds the rows the unfiltered list would hold in that position. The cost is bounded: a
+  list ordered by `UpdatedAt` with no status or kind filter and no search covers at most 50 types and reaches a
+  depth (`page × pageSize`) of 10,000 rows; every other shape (a `Status` sort, a status or kind filter, a
+  search) covers at most 10 types and reaches 500 rows, because on Redis those shapes read every candidate
+  member of the status or kind index they start from. Past a bound the answer is `400` `{ error, maxPage }`, and
+  the error names the saga-type filter, which always works. Scoped names beyond a shape's type bound are
+  narrowed to the types that have run, read through a short cache.
 - **Per-instance routes answer `403` before any read** when the route's saga type is out of scope.
 - **Without `sagas.data` the business data is withheld** (see
   [Redaction seam](#state-snapshots)): the detail's `dataJson` is `null` and is not read, every timeline entry

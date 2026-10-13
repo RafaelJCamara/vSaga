@@ -1004,11 +1004,9 @@ outlive the session's absolute lifetime.
    `page × pageSize ≤ 500` (one chunk, so no refill). Past a bound: 400 `{ error, maxPage }` naming the
    saga-type filter. ADR 0006 says that on Redis these other shapes read every member of every visible
    type.
-5. Merge: for the rank-served shape each type's stream is primed with `pageSize` rows and refilled with
-   doubling chunks up to 500, each a whole provider page starting where the stream stopped; for every
-   other shape each stream is read once with `page × pageSize` rows; the smallest head wins under the provider's comparer for that sort arm; ties across types break
-   by saga type, ordinal ascending. `TotalCount` comes from the primes. A set of emitted
-   `(sagaType, correlationId)` pairs skips repeats caused by updates between fetches.
+5. One call: the visible types go to the provider as `SagaListFilter.SagaTypes` (one type as `SagaType`, the
+   cheapest path in every provider), and the provider filters, sorts, pages and counts them in its own total
+   order, which is the order the unfiltered list gives those rows. `TotalCount` is the provider's count.
 6. Every result is filtered by scope (ordinal) before returning, so a provider quirk cannot widen it.
    `RedisSearchScanLimitExceededException` still maps to 400.
 
@@ -1688,8 +1686,6 @@ that turns a "pending" snapshot into "missing" and the 1500 ms follow-up fetch.
 - **Retention or erasure of recorded snapshots.** Nothing in vSaga removes event-log entries, and saga
   state may hold personal data. An erase path needs a persistence-contract change across all four
   providers.
-- **A multi-type filter on `SagaListFilter`.** It would make scoped lists efficient on Redis, which can
-  filter the index member suffix (it already carries the saga type) with no per-type intersection.
 - **A `(SagaType, UpdatedAtUtc)` Postgres index** for per-type pages in the scoped merge, following
   `20260924142250_AddSagaInstanceUpdatedAtUtcIndex`.
 - **A payload-free timeline read** for the engine's visited-states lookup and the map. It is the real fix

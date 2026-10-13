@@ -17,6 +17,13 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
             query = query.Where(x => x.Kind == kind);
         if (!string.IsNullOrWhiteSpace(filter.SagaType))
             query = query.Where(x => x.SagaType == filter.SagaType);
+        if (filter.SagaTypes is { } sagaTypes)
+        {
+            // One parameter for the whole set (= ANY(@p) on Npgsql, IN (...) on SQLite): never a query per type.
+            var wanted = sagaTypes.Distinct(StringComparer.Ordinal).ToArray();
+            query = query.Where(x => wanted.Contains(x.SagaType));
+        }
+
         // Strictly greater-than — see SagaListFilter.UpdatedSince. Folded into the same composable
         // query the CountAsync below runs, so TotalCount describes the filtered set and the caller's
         // Skip/Take arithmetic stays consistent with it.

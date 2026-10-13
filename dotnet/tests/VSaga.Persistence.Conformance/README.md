@@ -44,6 +44,14 @@ your declarations in a test of your own, so a flag can only change in a reviewed
 `ConformanceCoverage.AssertEverySuiteIsDerived(fixture, typeof(YourTest).Assembly)` from it so that no
 suite your declarations call for can go missing.
 
+## What a green run covers that a provider written earlier may not
+
+`SagaListFilter.SagaTypes` (the rows of any of several saga types, compared exactly; empty matches nothing,
+null puts no limit on the type) is a filter every `ISagaSummaryReader` must honour, and the summary-reader
+suite holds it to that: the set composes with every other filter, counts the filtered set, and keeps the
+order the unfiltered list gives the same rows for every sort arm. A provider that ignores it returns rows of
+other types, and the dashboard's scoped lists would then show a page of mostly foreign rows.
+
 ## What a green run does not cover, by design
 
 A state blob that is not valid JSON at all must make `FindAsync` throw rather than return null

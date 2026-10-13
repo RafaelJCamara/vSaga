@@ -24,6 +24,8 @@ internal static class MongoListQuery
             predicate &= Filter.Eq(d => d.Kind, kind);
         if (!string.IsNullOrWhiteSpace(filter.SagaType))
             predicate &= Filter.Eq(d => d.SagaType, filter.SagaType);
+        if (filter.SagaTypes is { } sagaTypes)
+            predicate &= Filter.In(d => d.SagaType, sagaTypes.Distinct(StringComparer.Ordinal));
         // Strictly greater-than, on the exact ticks (SagaListFilter.UpdatedSince): applied before the
         // count and the page alike, so TotalCount describes the filtered set.
         if (filter.UpdatedSince is { } since)

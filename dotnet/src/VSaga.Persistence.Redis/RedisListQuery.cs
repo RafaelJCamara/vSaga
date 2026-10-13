@@ -22,9 +22,35 @@ internal sealed class RedisListQuery
         Descending = ByStatus ? filter.SortDescending : filter.SortBy != SagaSortColumn.UpdatedAt || filter.SortDescending;
         StatusFilter = filter.Status;
 
+        // SagaType and SagaTypes both restrict the type: a row must satisfy both. A set that reduces to one name
+        // is that name's own index (the cheapest, ranked), so only two or more names need the member-suffix and
+        // union paths.
+        var sagaType = string.IsNullOrWhiteSpace(filter.SagaType) ? null : filter.SagaType;
+        if (filter.SagaTypes is { } sagaTypes)
+        {
+            var names = new HashSet<string>(sagaTypes, StringComparer.Ordinal);
+            if (sagaType is not null)
+            {
+                MatchesNothing = !names.Contains(sagaType);
+            }
+            else if (names.Count == 0)
+            {
+                MatchesNothing = true;
+            }
+            else if (names.Count == 1)
+            {
+                sagaType = names.First();
+            }
+            else
+            {
+                TypeSet = names;
+                TypeIndexes = [.. names.Select(keys.IndexType)];
+            }
+        }
+
         var indexes = new List<RedisKey>(3);
-        if (!string.IsNullOrWhiteSpace(filter.SagaType))
-            indexes.Add(keys.IndexType(filter.SagaType));
+        if (sagaType is not null)
+            indexes.Add(keys.IndexType(sagaType));
         if (filter.Status is { } status)
             indexes.Add(keys.IndexStatus(status));
         if (filter.Kind is { } kind)
@@ -36,6 +62,15 @@ internal sealed class RedisListQuery
         NonStatusIndexes = indexes.Where(i => filter.Status is not { } s || i != keys.IndexStatus(s)).ToList();
         Driving = indexes.Count > 0 ? indexes[0] : keys.IndexUpdated;
     }
+
+    /// <summary>True when the filter cannot match any row (an empty set, or a type outside the set): the answer is an empty page.</summary>
+    public bool MatchesNothing { get; }
+
+    /// <summary>Two or more saga type names every row must be one of; null when the filter names at most one type.</summary>
+    public HashSet<string>? TypeSet { get; }
+
+    /// <summary>The per-type indexes of <see cref="TypeSet"/>, empty when there is none.</summary>
+    public IReadOnlyList<RedisKey> TypeIndexes { get; } = [];
 
     public int Page { get; }
 
@@ -65,7 +100,27 @@ internal sealed class RedisListQuery
     public Exclude Exclude => SinceMicroseconds is null ? Exclude.None : Exclude.Start;
 
     /// <summary>True when one sorted set answers the whole query by rank, with no client-side filtering.</summary>
-    public bool IsRankable => Search is null && EqualityIndexes.Count <= 1;
+    public bool IsRankable => Search is null && EqualityIndexes.Count <= 1 && TypeSet is null;
+
+    /// <summary>
+    /// True when a set of saga types alone (no status, kind or search) restricts an <c>UpdatedAt</c> list: each
+    /// type has its own sorted set that answers its window by rank, and the windows merge, so the cost follows
+    /// the page and not the number of rows the types hold.
+    /// </summary>
+    public bool IsTypeRankable => TypeSet is not null && Search is null && EqualityIndexes.Count == 0;
+
+    /// <summary>
+    /// True when the saga type of <paramref name="member"/>, the part after its first <c>|</c>, is in
+    /// <see cref="TypeSet"/>, or when there is no set.
+    /// </summary>
+    public bool InTypeSet(ReadOnlySpan<char> member)
+    {
+        if (TypeSet is null)
+            return true;
+
+        var separator = member.IndexOf('|');
+        return separator >= 0 && TypeSet.GetAlternateLookup<ReadOnlySpan<char>>().Contains(member[(separator + 1)..]);
+    }
 
     /// <summary>The buckets a Status sort walks, in <see cref="SagaStatus"/>'s declared order, reversed when descending.</summary>
     public IEnumerable<SagaStatus> StatusBuckets()

@@ -79,6 +79,149 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
     }
 
     /// <summary>
+    /// <see cref="SagaListFilter.SagaTypes"/> keeps the rows of any of the named types, compared exactly, and
+    /// counts the set it kept. An empty set matches nothing, null puts no limit on the type, a name that no row
+    /// has is harmless and a repeated one counts once; with <see cref="SagaListFilter.SagaType"/> too, a row
+    /// must satisfy both, and a blank <see cref="SagaListFilter.SagaType"/> is no filter.
+    /// </summary>
+    [Fact]
+    public async Task List_SagaTypes_KeepsTheRowsOfAnyNamedType_ComparedExactly_AndCountsTheFilteredSet()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var orderOld = NewState("OrderSaga", updatedAtUtc: T0);
+        var shipping = NewState("ShippingSaga", updatedAtUtc: T0.AddSeconds(1));
+        var orderNew = NewState("OrderSaga", updatedAtUtc: T0.AddSeconds(2));
+        var payment = NewState("PaymentSaga", updatedAtUtc: T0.AddSeconds(3));
+        var other = NewState("OtherSaga", updatedAtUtc: T0.AddSeconds(4));
+        await InsertAsync(stores, orderOld, shipping, orderNew, payment, other);
+
+        var two = await ListAsync(stores, new SagaListFilter { SagaTypes = ["OrderSaga", "PaymentSaga"] });
+        var paged = await ListAsync(stores, new SagaListFilter { SagaTypes = ["OrderSaga", "PaymentSaga"], Page = 2, PageSize = 2 });
+        var wrongCase = await ListAsync(stores, new SagaListFilter { SagaTypes = ["ordersaga", "PAYMENTSAGA"] });
+        var unknownToo = await ListAsync(stores, new SagaListFilter { SagaTypes = ["NoSuchSaga", "ShippingSaga", "ShippingSaga"] });
+        var one = await ListAsync(stores, new SagaListFilter { SagaTypes = ["PaymentSaga"] });
+        var empty = await ListAsync(stores, new SagaListFilter { SagaTypes = [] });
+        var none = await ListAsync(stores, new SagaListFilter { SagaTypes = null });
+
+        Assert.Equal([payment.CorrelationId, orderNew.CorrelationId, orderOld.CorrelationId], Ids(two));
+        Assert.Equal(3, two.TotalCount);
+        Assert.Equal([orderOld.CorrelationId], Ids(paged));
+        Assert.Equal(3, paged.TotalCount);
+        Assert.Empty(wrongCase.Items);
+        Assert.Equal(0, wrongCase.TotalCount);
+        Assert.Equal([shipping.CorrelationId], Ids(unknownToo));
+        Assert.Equal(1, unknownToo.TotalCount);
+        Assert.Equal([payment.CorrelationId], Ids(one));
+        Assert.Empty(empty.Items);
+        Assert.Equal(0, empty.TotalCount);
+        Assert.Equal(5, none.TotalCount);
+
+        string[] orderAndPayment = ["OrderSaga", "PaymentSaga"];
+        var both = await ListAsync(stores, new SagaListFilter { SagaType = "OrderSaga", SagaTypes = orderAndPayment });
+        var outsideTheSet = await ListAsync(stores, new SagaListFilter { SagaType = "ShippingSaga", SagaTypes = orderAndPayment });
+        var blankType = await ListAsync(stores, new SagaListFilter { SagaType = "  ", SagaTypes = orderAndPayment });
+
+        Assert.Equal([orderNew.CorrelationId, orderOld.CorrelationId], Ids(both));
+        Assert.Equal(2, both.TotalCount);
+        Assert.Empty(outsideTheSet.Items);
+        Assert.Equal(0, outsideTheSet.TotalCount);
+        Assert.Equal(3, blankType.TotalCount);
+    }
+
+    /// <summary>
+    /// <see cref="SagaListFilter.SagaTypes"/> composes with the other filters as each of them does: the set
+    /// is applied with them before the count, the sort and the page.
+    /// </summary>
+    [Fact]
+    public async Task List_SagaTypes_ComposesWithStatusKindUpdatedSinceAndSearch()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var failedOrder = NewState("OrderSaga", status: SagaStatus.Failed, updatedAtUtc: T0.AddSeconds(1));
+        var runningOrder = NewState("OrderSaga", status: SagaStatus.Running, updatedAtUtc: T0.AddSeconds(2));
+        var failedShipping = NewState("ShippingSaga", status: SagaStatus.Failed, updatedAtUtc: T0.AddSeconds(3));
+        var failedPayment = NewState("PaymentSaga", status: SagaStatus.Failed, updatedAtUtc: T0.AddSeconds(4));
+        failedPayment.Kind = SagaKind.Choreographed;
+        var failedOther = NewState("OtherSaga", status: SagaStatus.Failed, updatedAtUtc: T0.AddSeconds(5));
+        await InsertAsync(stores, failedOrder, runningOrder, failedShipping, failedPayment, failedOther);
+        string[] types = ["OrderSaga", "PaymentSaga", "OtherSaga"];
+
+        var failed = await ListAsync(stores, new SagaListFilter { SagaTypes = types, Status = SagaStatus.Failed });
+        var choreographed = await ListAsync(stores, new SagaListFilter { SagaTypes = types, Kind = SagaKind.Choreographed });
+        var since = await ListAsync(stores, new SagaListFilter { SagaTypes = types, UpdatedSince = T0.AddSeconds(2) });
+        var searched = await ListAsync(stores, new SagaListFilter { SagaTypes = types, Search = "pay" });
+        var failedSince = await ListAsync(stores, new SagaListFilter { SagaTypes = types, Status = SagaStatus.Failed, UpdatedSince = T0.AddSeconds(1), PageSize = 1, Page = 2 });
+
+        Assert.Equal([failedOther.CorrelationId, failedPayment.CorrelationId, failedOrder.CorrelationId], Ids(failed));
+        Assert.Equal(3, failed.TotalCount);
+        Assert.Equal([failedPayment.CorrelationId], Ids(choreographed));
+        Assert.Equal([failedOther.CorrelationId, failedPayment.CorrelationId], Ids(since));
+        Assert.Equal(2, since.TotalCount);
+        Assert.Equal([failedPayment.CorrelationId], Ids(searched));
+        Assert.Equal([failedPayment.CorrelationId], Ids(failedSince));
+        Assert.Equal(2, failedSince.TotalCount);
+    }
+
+    /// <summary>
+    /// The rows a set of types keeps come in the order they hold in the unfiltered list, for every sort arm and
+    /// with ties on the sort column across the types, and every page holds the same rows as that list's slice:
+    /// the relative order of two rows depends only on their own values (see
+    /// <see cref="ISagaSummaryReader.ListAsync"/>), so restricting the set cannot reorder it. Nothing here
+    /// asserts a particular order, only that the restriction keeps the provider's own.
+    /// </summary>
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(SagaSortColumn.UpdatedAt, false)]
+    [InlineData(SagaSortColumn.UpdatedAt, true)]
+    [InlineData(SagaSortColumn.Status, false)]
+    [InlineData(SagaSortColumn.Status, true)]
+    public async Task List_SagaTypes_KeepTheUnfilteredOrder_OverTiesAcrossTypes_PageByPage(SagaSortColumn? sortBy, bool sortDescending)
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        string[] kinds = ["OrderSaga", "PaymentSaga", "ShippingSaga", "OtherSaga"];
+        SagaStatus[] statuses = [SagaStatus.Running, SagaStatus.Completed, SagaStatus.Failed];
+        var states = new List<ConformanceSagaState>();
+        for (var i = 0; i < 48; i++)
+        {
+            // Only a few distinct timestamps and statuses, so most rows tie on the sort column.
+            states.Add(NewState(kinds[i % kinds.Length], status: statuses[i % statuses.Length], updatedAtUtc: T0.AddSeconds(i % 4)));
+        }
+
+        await InsertAsync(stores, [.. states]);
+        string[] wanted = ["OrderSaga", "ShippingSaga"];
+
+        var unfiltered = await WalkAllAsync(stores, new SagaListFilter { SortBy = sortBy, SortDescending = sortDescending, PageSize = 5 });
+        var expected = unfiltered.Where(k => wanted.Contains(k.SagaType, StringComparer.Ordinal)).ToList();
+        var filtered = await WalkAllAsync(stores, new SagaListFilter { SortBy = sortBy, SortDescending = sortDescending, PageSize = 5, SagaTypes = wanted });
+
+        Assert.Equal(48, unfiltered.Count);
+        Assert.Equal(24, expected.Count);
+        Assert.Equal(expected, filtered);
+        var total = (await ListAsync(stores, new SagaListFilter { SortBy = sortBy, SortDescending = sortDescending, PageSize = 5, Page = 2, SagaTypes = wanted })).TotalCount;
+        Assert.Equal(24, total);
+    }
+
+    private static async Task<List<(string SagaType, Guid CorrelationId)>> WalkAllAsync(IProviderStores stores, SagaListFilter first)
+    {
+        var walked = new List<(string SagaType, Guid CorrelationId)>();
+        for (var page = 1; page <= 30; page++)
+        {
+            var result = await ListAsync(stores, new SagaListFilter
+            {
+                SortBy = first.SortBy,
+                SortDescending = first.SortDescending,
+                PageSize = first.PageSize,
+                SagaTypes = first.SagaTypes,
+                Page = page,
+            });
+            if (result.Items.Count == 0)
+                break;
+            walked.AddRange(Keys(result));
+        }
+
+        return walked;
+    }
+
+    /// <summary>
     /// Strictly greater-than, applied before paging: the change poller's watermark is the timestamp of a
     /// row it already pushed, and <c>&gt;=</c> would re-push that row on every tick.
     /// </summary>
