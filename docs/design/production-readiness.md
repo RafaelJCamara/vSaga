@@ -168,6 +168,22 @@ which `ci.yml` has. Secrets needed: `NUGET_API_KEY`, `NPM_TOKEN`.
 > that has not yet been carried out, and `dotnet add package VSaga.Core` (this section's stated goal) as
 > not yet working.
 
+> **Status note (2026-10-13): `release.yml` now exists; it has not yet published anything.**
+> [`.github/workflows/release.yml`](../../.github/workflows/release.yml) runs on a `v*` tag, or by hand as a
+> dry run that never publishes. It checks the tag is a plain semantic version on `main`, builds and tests in
+> Release, packs, asserts there are exactly `EXPECTED_PACKAGES` packages and each carries the tag's version (and
+> has its symbol package), and then, in a job that targets the `nuget` environment (which should hold the key as
+> an environment secret and require reviewers; see Releasing in CONTRIBUTING.md), pushes to nuget.org with
+> `NUGET_API_KEY` and creates a GitHub release.
+> It has `permissions: contents: read` (the release job alone has `write`) and a `release` concurrency group.
+> The npm half is gone with the TypeScript SDK, so `NPM_TOKEN` is not used. The library count is now 19, not
+> 16: the Dashboard identity store stays an internal project, and `VSaga.Persistence.Conformance` ships so a
+> third-party provider can run the same suite. The packages' nuspecs were inspected for the transitive-pin
+> hazard above: the three bus SDKs carry their bounded ranges, and the dependencies a `.csproj` does not list
+> are the advisory pins on the MongoDB package (SharpCompress, Snappier) and the repo's `RabbitMQ.Client 7.2.2`
+> pin on the MassTransit and Wolverine packages. What is still unexercised is a real tag: the first one needs the
+> `VSaga.` prefix reserved on nuget.org and the API key stored (see Releasing in CONTRIBUTING.md).
+
 **Confirm names before the first publish** — the `VSaga.*` NuGet prefix and `@vsaga` npm scope are
 claimed publicly and hard to undo.
 

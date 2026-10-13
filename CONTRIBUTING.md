@@ -182,3 +182,42 @@ pass:
   first, because the job binds the same ports (5433, 5672, 15672, 5080, 4200), and end with
   `docker compose down` rather than `down -v` unless you want the stack's volumes, and with them your
   local saga data, deleted.
+
+## Releasing
+
+A release is a version tag on `main`. Pushing `v1.2.3` (or a pre-release such as `v1.2.3-rc.1`) runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml). It refuses a tag that is not a plain semantic
+version or not on `main`, builds and tests in Release, packs the `VSaga.*` libraries in lockstep at the tag's
+version (MinVer reads it; no version string is committed) and checks that every package carries it. It then pushes
+them with their symbol packages to nuget.org and creates a GitHub release with generated notes (a version with a
+hyphen is a pre-release on both). The packages are the packable projects under `dotnet/src` and
+`dotnet/tests/VSaga.Persistence.Conformance`; the dashboard API and identity store, the samples and the tools are
+not libraries and are not published.
+
+**Before the first release**, once:
+
+1. Reserve the `VSaga.` package ID prefix on nuget.org: the names are public and cannot be taken back.
+2. Create the `nuget` environment (Settings, Environments) and give it three things: the nuget.org API key,
+   limited to push and scoped to the glob `VSaga.*`, as an environment secret named `NUGET_API_KEY` (a repository
+   secret can be read by any workflow a writer pushes on any branch; an environment secret only by jobs that
+   target the environment); a deployment rule that allows only tags matching `v*`; and required reviewers, so the
+   push job waits for an approval and a mistaken tag can still be stopped before anything reaches nuget.org.
+3. Add a tag ruleset on `v*` (Settings, Rules) so that only maintainers can create or move release tags. The
+   workflow checks that the tagged commit is on `main`, but that check lives in the workflow file, so it guards
+   against mistakes, not against someone who can push a tag on a branch that edits it.
+4. Run the workflow by hand (Actions, Release, Run workflow) on `main`. A manual run is a dry run: it builds, tests
+   and packs at `0.0.1-dryrun.<run number>`, uploads the packages as an artifact and never publishes.
+
+**To release**, check that CI is green on the commit, then:
+
+```bash
+git tag v1.2.3 <commit on main>
+git push origin v1.2.3
+```
+
+nuget.org never lets a published version be replaced, only unlisted, so a bad release is fixed by a new version. A
+run that failed part-way through the push can be re-run: the push skips versions that are already there and
+completes the symbol packages that did not make it. The workflow checks the number of packages against
+`EXPECTED_PACKAGES`, so a commit that adds or removes a library changes that number too. Locally,
+`dotnet pack` refuses a build with no tag (it would be a fake 0.0.0); give it a version with
+`-p:MinVerVersionOverride=0.1.0-local`.

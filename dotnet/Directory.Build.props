@@ -59,8 +59,8 @@
   </ItemGroup>
 
   <!-- Versioning: MinVer derives the version from git tags, with no version string committed
-       anywhere. MinVerTagPrefix matches this project's v* tag convention (e.g. v0.1.0) for whenever a
-       release is tagged; no automated release workflow exists yet, so tagging and publishing are manual. -->
+       anywhere. MinVerTagPrefix matches this project's v* tag convention (e.g. v0.1.0): pushing such a tag
+       runs .github/workflows/release.yml, which packs and publishes (see "Releasing" in CONTRIBUTING.md). -->
   <PropertyGroup>
     <MinVerTagPrefix>v</MinVerTagPrefix>
   </PropertyGroup>

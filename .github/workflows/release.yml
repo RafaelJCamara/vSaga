@@ -1,0 +1,180 @@
+name: Release
+
+# A version tag (v1.2.3, v1.2.3-rc.1) publishes every VSaga.* library to nuget.org, in lockstep, at the
+# version the tag names (MinVer derives it; nothing is committed). A manual run is a dry run: it
+# builds, tests and packs at a throwaway version, uploads the packages as an artifact, and never
+# publishes. See "Releasing" in CONTRIBUTING.md before cutting the first tag.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Nothing here needs more than reading the repository, except the job that creates the GitHub Release.
+permissions:
+  contents: read
+
+# Two releases racing to nuget.org would interleave their pushes, so a tag run waits for the one before it.
+# GitHub keeps one running and one pending run per group, and a newer pending run replaces the older one:
+# a second tag pushed while a first is running waits, a third replaces it (re-run the cancelled one). A dry
+# run gets a group of its own so it can never replace a pending tag run.
+concurrency:
+  group: ${{ github.event_name == 'push' && 'release' || format('release-dryrun-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    name: Verify, build, test and pack
+    runs-on: ubuntu-latest
+    env:
+      # Same as the CI job: the cleanup sidecar is redundant on a runner that is destroyed afterwards
+      # and its image pull is a flake source (see ci.yml).
+      TESTCONTAINERS_RYUK_DISABLED: true
+      # The libraries a release publishes: the packable projects under dotnet/src and
+      # dotnet/tests/VSaga.Persistence.Conformance. A package that drops out of the pack would leave the ones that
+      # depend on it pointing at a version that was never published, which nuget.org cannot undo, so a count that
+      # differs stops the release. Change it in the same commit that adds or removes a library.
+      EXPECTED_PACKAGES: 19
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # MinVer reads the tag from history; a shallow checkout would hide it and the pack guard would
+          # (rightly) refuse to build a 0.0.0 package. Full history also lets the main-branch check below see main.
+          fetch-depth: 0
+
+      # The version is the tag without its v. A tag that is not a plain semantic version is refused before
+      # anything is built, and so is one that is not on main: a release is cut from what CI has checked.
+      # A manual run has no tag, so it packs at a throwaway version that the 0.0.0 guard accepts.
+      - name: Work out the version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+            version="0.0.1-dryrun.$GITHUB_RUN_NUMBER"
+            echo "Dry run: packing at $version, nothing will be published."
+          else
+            tag=$GITHUB_REF_NAME
+            [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] \
+              || fail "the tag '$tag' is not a version tag like v1.2.3 or v1.2.3-rc.1"
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+              || fail "the tag '$tag' points at $GITHUB_SHA, which is not on main"
+            version=${tag#v}
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Restore
+        run: dotnet restore dotnet/VSaga.slnx
+
+      - name: Build
+        run: dotnet build dotnet/VSaga.slnx --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test dotnet/VSaga.slnx --no-build --configuration Release --logger "console;verbosity=normal"
+
+      # A dry run has no tag for MinVer to read, so it is given its version explicitly; a tagged run is
+      # left to MinVer, which is exactly what the check below then holds to the tag.
+      - name: Pack
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then args+=("-p:MinVerVersionOverride=$VERSION"); fi
+          dotnet pack dotnet/VSaga.slnx --no-restore --configuration Release --output artifacts "${args[@]}"
+
+      # Every package must carry the version the tag names, and all of them must be there: a stale tag, a
+      # MinVer misread or a project that dropped out of the pack all show up here, before anything is pushed.
+      - name: Check the packages
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          shopt -s nullglob
+          packages=(artifacts/*.nupkg)
+          (( ${#packages[@]} == EXPECTED_PACKAGES )) \
+            || fail "expected $EXPECTED_PACKAGES packages, found ${#packages[@]}; if a library was added or removed, change EXPECTED_PACKAGES"
+          for package in "${packages[@]}"; do
+            [[ $package == *".$VERSION.nupkg" ]] || fail "$package does not carry the version $VERSION"
+            [[ -f "${package%.nupkg}.snupkg" ]] || fail "$package has no symbol package beside it"
+            echo "$package"
+          done
+          echo "${#packages[@]} packages at $VERSION"
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to nuget.org
+    needs: pack
+    # Only a tag publishes. Give the nuget environment required reviewers (Settings, Environments) to put a
+    # human approval between the tag and the irreversible push.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: nuget
+    steps:
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts
+
+      # nuget.org never lets a version be re-published, only unlisted, so --skip-duplicate keeps a re-run of a
+      # half-finished push from failing on what already went through. The .nupkg glob does not match the .snupkg
+      # symbol packages, and the .nupkg push uploads the one beside it only when the .nupkg itself was new, so the
+      # symbols are pushed by their own command: a re-run then completes a package whose symbols did not make it.
+      - name: Push
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z $NUGET_API_KEY ]]; then
+            echo "::error::the NUGET_API_KEY secret is not set (see Releasing in CONTRIBUTING.md)"
+            exit 1
+          fi
+          source=https://api.nuget.org/v3/index.json
+          dotnet nuget push "artifacts/*.nupkg" --source "$source" --api-key "$NUGET_API_KEY" --skip-duplicate
+          dotnet nuget push "artifacts/*.snupkg" --source "$source" --api-key "$NUGET_API_KEY" --skip-duplicate
+
+  github-release:
+    name: Create the GitHub release
+    needs: [pack, publish]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts
+
+      # A version with a hyphen (1.2.3-rc.1) is a pre-release on GitHub as it is on nuget.org.
+      - name: Create the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.pack.outputs.version }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [[ $VERSION == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes "${flags[@]}" artifacts/*.nupkg
