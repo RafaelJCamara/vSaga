@@ -220,16 +220,27 @@ jobs:
             || fail "the identity health check is not healthy: $health"
           echo "GET /health -> identity healthy"
 
-          # The identity file must sit on a named volume mounted on dashboard-api, or every user and session
-          # key is lost with the container.
+          # The identity file must sit on the vsaga-dashboard-identity volume mounted on dashboard-api, or
+          # every user and session key is lost with the container. The base file and every overlay are
+          # checked: an overlay that replaced the volumes list or moved the path would otherwise put the
+          # store back inside the container without any job noticing.
+          # check_identity_volume <stack> <rendered config>
+          check_identity_volume() {
+            local path
+            path=$(jq -er '.services["dashboard-api"].environment.Dashboard__Identity__Sqlite__Path' <<<"$2") \
+              || fail "$1: docker compose config sets no Dashboard__Identity__Sqlite__Path on dashboard-api"
+            jq -e --arg path "$path" '
+              [.services["dashboard-api"].volumes[] | select(.type == "volume" and .source == "vsaga-dashboard-identity") | .target]
+              | any(. as $target | $path | startswith($target + "/"))' <<<"$2" >/dev/null \
+              || fail "$1: $path is not under the vsaga-dashboard-identity volume mounted on dashboard-api: $(jq -c '.services["dashboard-api"].volumes' <<<"$2")"
+            echo "$1: $path lies on the vsaga-dashboard-identity volume"
+          }
+
           rendered=$(docker compose config --format json)
-          identity_path=$(jq -er '.services["dashboard-api"].environment.Dashboard__Identity__Sqlite__Path' <<<"$rendered") \
-            || fail "docker compose config sets no Dashboard__Identity__Sqlite__Path on dashboard-api"
-          jq -e --arg path "$identity_path" '
-            [.services["dashboard-api"].volumes[] | select(.type == "volume" and (.source // "") != "") | .target]
-            | any(. as $target | $path | startswith($target + "/"))' <<<"$rendered" >/dev/null \
-            || fail "$identity_path is not under a volume mounted on dashboard-api: $(jq -c '.services["dashboard-api"].volumes' <<<"$rendered")"
-          echo "$identity_path lies on a mounted volume"
+          check_identity_volume base "$rendered"
+          for overlay in wolverine masstransit brighter http mongo redis; do
+            check_identity_volume "$overlay" "$(docker compose -f docker-compose.yml -f "docker-compose.$overlay.yml" config --format json)"
+          done
 
           # The seeded administrator, read from the compose file so the check follows it.
           admin_user=$(jq -er '.services["dashboard-api"].environment.Dashboard__Admin__Username' <<<"$rendered") \
@@ -272,9 +283,12 @@ jobs:
           jq -e '.connectionToken | type == "string"' <<<"$own" >/dev/null || fail "the hub negotiation from $ui returned no connectionToken: $own"
           echo "POST /hubs/saga/negotiate with Origin $ui -> connectionToken"
 
-          foreign=$(origin_status http://localhost:9999)
-          [[ $foreign == 403 ]] || fail "the hub negotiation with Origin http://localhost:9999 answered $foreign, expected 403"
-          echo "POST /hubs/saga/negotiate with Origin http://localhost:9999 -> 403"
+          # Another port of this host, and the literal "null" that sandboxed frames send, are other sites.
+          for foreign_origin in http://localhost:9999 null; do
+            foreign=$(origin_status "$foreign_origin")
+            [[ $foreign == 403 ]] || fail "the hub negotiation with Origin $foreign_origin answered $foreign, expected 403"
+            echo "POST /hubs/saga/negotiate with Origin $foreign_origin -> 403"
+          done
 
       - name: Show compose logs
         if: failure()

@@ -170,11 +170,11 @@ pass:
   and `docker compose up --wait`. Through the UI's origin (port 4200, with the demo API key) it checks
   a deep link, an API call, a missing bundle (404), an encoded saga type that must answer exactly as
   it does straight from the API on port 5080, and the SignalR negotiate plus WebSocket upgrade (101).
-  A further step checks that `/health` lists `identity` as healthy and that the identity file lies on a
-  mounted volume, then signs in as the seeded administrator through port 4200 (a session probe, then
+  A further step checks that `/health` lists `identity` as healthy and that the identity file lies on the
+  `vsaga-dashboard-identity` volume in the base file and in every overlay, then signs in as the seeded administrator through port 4200 (a session probe, then
   the login with the `X-XSRF-TOKEN` header), checks that `/api/sagas` answers 200 with the session
   cookie and that the hub negotiates with `Origin: http://localhost:4200` but answers 403 for another
-  origin. The administrator is seeded only into an empty identity volume, so a local replay against a
+  port of the host and for `Origin: null`. The administrator is seeded only into an empty identity volume, so a local replay against a
   stack whose password you changed fails at the login: run `docker compose down -v` first.
   It prints the compose logs on failure and always ends with `docker compose down -v`. If you change
   a compose file, a Dockerfile or the nginx template, run the same steps locally (the job's `run`
