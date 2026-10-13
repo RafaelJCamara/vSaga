@@ -1659,21 +1659,8 @@ Limits of the SPA, left as they are:
 - **A deep-linked forbidden detail page recovers late.** A detail page opened by URL straight into a 403
   never starts the hub, so it notices a grant made later only when the session is read again (the tab
   shown again, or a 403), not at once (`4ac938d`).
-- **The hub service's unsubscribe-before-start race.** `subscribeToSaga` writes its record after awaiting
-  the connection, so an `unsubscribeFromSaga` made before the very first start finishes is overtaken and
-  leaves a record (`4ac938d` did not change the hub service).
 - **The list's saga-type filter is fetched once.** A widened scope adds its types to the dropdown only when
   the page is opened again (`c4720c6`).
-- **Administration writes have no timeout of their own.** The store bounds its reads at 30 s; a hung write
-  keeps the form busy, and a typed password stays in the draft until the store has answered the save
-  (`cec2a40`, `c6ca8ca`).
-- **The team page applies a server 400 to its fields whatever was typed while the request ran.** The user
-  page does not; the team page compares its draft's revision on success only (`c6ca8ca`, not taken up by
-  `537134e`).
-- **Enter in a saga-type box, or on a radio, of the grants editor can submit the page's form**, which on
-  the team page is a `PUT` that replaces the whole team (`537134e`).
-- **`.btn--danger` is white on `#ef5566`, about 3.4:1**, below the 4.5:1 that WCAG AA asks of normal text.
-  It inherited the retry button's red (C42).
 - **An administration tab with no live hub ends on `/login` late after the identity volume is wiped:** at
   its first write, which answers 401, or when the tab is shown again (a session read, at most once a
   minute). A tab with a live hub ends there by itself, after about 17 seconds in the runs (the C50 run).
@@ -1684,9 +1671,6 @@ Limits of the SPA, left as they are:
 - **Two stacks in one browser cost one healed `400 antiforgery` per switch**, because they share the
   `XSRF-TOKEN` cookie: the SPA retries once and the user sees nothing, but it shows in the network log and
   as one console error in Chromium (the C50 run).
-- **At 360 px the saga list, users and roles tables are wider than the viewport**, so those pages scroll
-  sideways with Guide off (the teams page does not). Pre-existing; the list tour scrolls to what it points
-  at (`425910f`).
 - **`GuideService.areaHidden` was not built.** Replay after the part it repeats has gone (the Saga data
   bar closed, a Failed saga running again) waits five seconds for the anchor and does nothing, and a
   queued retry for a saga that stops being retryable waits five seconds and is dropped, which delays the
@@ -1697,8 +1681,6 @@ Limits elsewhere:
 
 - **The identity key ring is stored unencrypted.** `ProtectKeysWithCertificate` is a hardening a deployer
   adds; vSaga ships no configuration key or code for it (§8.3).
-- **Two `X-Content-Type-Options: nosniff` headers**, nginx's and the API's, with the same value, were seen
-  in the C37 run and left.
 - **`"splitting": false`** in the `test` options of `angular.json` makes `ng test` print a deprecation
   notice on every run; it goes when Vitest 5 lands (`dd37bd1`).
 
