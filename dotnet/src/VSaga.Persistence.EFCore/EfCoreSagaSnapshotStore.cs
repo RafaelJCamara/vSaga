@@ -47,13 +47,29 @@ public sealed class EfCoreSagaSnapshotStore<TState>(VSagaDbContext db) : ISagaSn
         }
         catch (DbUpdateException ex)
         {
+            Forget(entity);
+
             // Not necessarily the (SagaType, BusinessKey) unique-constraint violation this is meant to
             // signal -- any DbUpdateException lands here. Chained as InnerException (production-readiness.md
             // §8.14's review) so a caller that finds this was actually an unrelated infra failure, not a
             // real collision, can still see what really happened instead of a bare "already exists".
             throw new SagaAlreadyExistsException(state.SagaType, state.CorrelationId, ex);
         }
+        catch
+        {
+            Forget(entity);
+            throw;
+        }
     }
+
+    /// <summary>
+    /// Drops an entity whose save failed from the change tracker. The context is scoped to the whole unit of
+    /// work, so an entity left Added or Modified after a failed save is re-sent by every later SaveChangesAsync
+    /// on it: the next log entry (the dead-letter record included) fails with the same error and the saga is
+    /// never marked Failed, or, once the cause has passed, the step the engine reported as failed is committed
+    /// along with it. Only this entry is dropped; rows staged in the outbox stay staged.
+    /// </summary>
+    private void Forget(SagaInstanceEntity entity) => db.Entry(entity).State = EntityState.Detached;
 
     public async Task UpdateAsync(TState state, int expectedVersion, CancellationToken cancellationToken = default)
     {
@@ -91,11 +107,13 @@ public sealed class EfCoreSagaSnapshotStore<TState>(VSagaDbContext db) : ISagaSn
         }
         catch (DbUpdateConcurrencyException)
         {
+            Forget(entity);
             state.Version = expectedVersion;
             throw new SagaConcurrencyException(state.SagaType, state.CorrelationId, expectedVersion);
         }
         catch (DbUpdateException ex)
         {
+            Forget(entity);
             // An update moving BusinessKey onto a key another instance of this saga type holds trips the
             // partial unique index on (SagaType, BusinessKey), exactly as InsertAsync's reservation
             // does, and is reported the same way (ISagaSnapshotStore's collision rule). Ordered after
@@ -105,6 +123,12 @@ public sealed class EfCoreSagaSnapshotStore<TState>(VSagaDbContext db) : ISagaSn
             // applies -- any DbUpdateException lands here, so the original is chained for diagnosis.
             state.Version = expectedVersion;
             throw new SagaAlreadyExistsException(state.SagaType, state.CorrelationId, ex);
+        }
+        catch
+        {
+            Forget(entity);
+            state.Version = expectedVersion;
+            throw;
         }
     }
 
