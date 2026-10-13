@@ -15,6 +15,8 @@
   --status-running: #5b8cff;
   --status-completed: #35c98c;
   --status-failed: #ef5566;
+  /* The red of a solid button with white text: #ef5566 is 3.4:1 against white, this is 5.4:1 (WCAG AA asks 4.5:1). */
+  --danger-solid: #c92a3e;
   --status-compensating: #f2a93b;
   --status-compensated: #b98af2;
   --status-timedout: #f2a93b;
@@ -124,17 +126,18 @@ code, .mono {
   outline-offset: 1px;
 }
 
-/* The destructive one, in the retry row's red: a delete or a reset that asks to be confirmed. */
+/* The destructive one, in the retry row's red: a delete or a reset that asks to be confirmed. The hover
+   darkens: lightening a red under white text would take it below the 4.5:1 contrast the resting colour has. */
 .btn--danger {
-  background: var(--status-failed);
-  border-color: var(--status-failed);
+  background: var(--danger-solid);
+  border-color: var(--danger-solid);
   color: #fff;
 }
 
 .btn--danger:hover:not(:disabled):not([aria-disabled='true']) {
-  border-color: var(--status-failed);
+  border-color: var(--danger-solid);
   color: #fff;
-  filter: brightness(1.1);
+  filter: brightness(0.9);
 }
 
 /* A message across the top of a page or a tab. The base carries the box; `--warning` is a degraded
