@@ -1503,7 +1503,7 @@ have the evidence; each bullet names the commits it rests on.
   real hub service kept it in its module cache, and the hub spec's `vi.mock` was registered too late:
   12 of 20 full runs failed before, none of 24 after. The fix is `"splitting": false` in the `test`
   options of `angular.json`, which makes the builder print a deprecation notice on every run; `isolate:
-  true` was the alternative (about 77 % slower). The option goes when Vitest 5 lands.
+  true` was the alternative (about 77 % slower). The option went with the move to Vitest 5 (see §13).
 
 *Packaging (C02 to C09)*
 
@@ -1663,7 +1663,18 @@ four history files have the evidence and what was never exercised.
   branch. A fork or an installation without GitHub access gets upstream content or nothing, and the copy
   can be newer than the build in use (the guide says so). Serving the guide from the dashboard itself
   would need a Markdown renderer or a pre-rendered page in the image. The link stays one constant
-  (`USER_GUIDE_URL`) so the choice can change later without touching the tours.
+  (`USER_GUIDE_URL`) so the choice can change later without touching the tours. The run of 2026-10-14
+  found the link answering 200 and all seven tour anchors matching headings of the guide, so what is left
+  is the decision, which is the maintainer's.
+- **What a `DeliveryExhausted` entry says about a transient database error.** `UpdateAsync` maps every
+  `DbUpdateException` to `SagaAlreadyExistsException` (its comment says so) and the entry records the outer
+  message, so the timeline of a saga that failed on a dropped connection reads "A '...' saga instance with
+  correlation id '...' already exists." The cause is the inner exception. Mapping only the unique-index
+  violation, or recording the inner message too, is a change to a persistence contract's behaviour and was
+  not made.
+- **A saga's first snapshot being late is not followed up.** The follow-up fetch needs one `StatePersisted`
+  already in the timeline (§5.3), so a snapshot that lands inside the pending window for a saga that has none
+  yet shows "No snapshot was recorded" until the next push.
 
 Limits of the SPA, left as they are:
 
@@ -1673,19 +1684,33 @@ Limits of the SPA, left as they are:
 Limits elsewhere:
 
 - **The identity key ring is stored unencrypted.** `ProtectKeysWithCertificate` is a hardening a deployer
-  adds; vSaga ships no configuration key or code for it (§8.3).
-- **`"splitting": false`** in the `test` options of `angular.json` makes `ng test` print a deprecation
-  notice on every run; it goes when Vitest 5 lands (`dd37bd1`).
+  adds; vSaga ships no configuration key or code for it (§8.3). Seen in the identity database on 2026-10-14:
+  the `DataProtectionKeys` row holds the master key in clear next to `requiresEncryption="true"`. Whether
+  vSaga should ship a certificate setting for it is the maintainer's decision.
+
+Closed since: **`"splitting": false`** (`dd37bd1`) made `ng test` print a deprecation notice on every run. The
+builder prints it with Vitest 4.1.11 and with 5.0.4, so waiting for Vitest 5 was not enough: the project moved to
+Vitest 5.0.4 (the builder accepts `^4.0.8 || ^5.0.0`) and the option is gone (commit "Move the unit tests to
+Vitest 5 and drop the splitting option"). Without the option 12 of 12 runs on 4.1.11 and 12 of 12 on 5.0.4 passed, and under load 20 of 20 and 10 of 10 more
+(the failure it prevented hit 12 of 20 when it was found); `README.md` names the two ways back.
 
 Never exercised in a recorded run, so resting on tests alone: a screen reader, and any browser but
-headless Chromium; a retry that the planner accepts for a `DeliveryExhausted` saga (every fault that could be
-made live left no recorded body, or was deduplicated on redelivery, so the one `DeliveryExhausted` plan seen
-was refused with 422); a retry through the dashboard over MassTransit or Wolverine that reaches the saga host
+headless Chromium; a retry through the dashboard over MassTransit or Wolverine that reaches the saga host
 (the dashboard host runs neither adapter, a retry there answers 502 with the saga restored, which was seen, and
 the targeted redrive itself was exercised by publishing through the two adapters directly); the scoped list's
-`maxPage` 0 refusal in a browser (the sample has seven saga types and the refusal needs more than ten that
-have run); the age window that turns a "pending" snapshot into "missing" and the 1500 ms follow-up fetch.
-What the live run of 2026-10-13 covered and found is in
+`maxPage` 0 refusal on Redis or MongoDB (it was run on Postgres; the bound is computed above the provider).
+
+Closed by the live run of 2026-10-14
+([`../history/2026-10-14-live-verification-round-2.md`](../history/2026-10-14-live-verification-round-2.md)):
+a retry that the planner accepts for a `DeliveryExhausted` saga (made with a transient Postgres fault below
+the engine; the saga went from `Failed` to `Completed` and its three siblings on the correlation id did not
+move; the run also found that a failed snapshot write stayed tracked and kept the saga from being marked
+`Failed`); the scoped list's `maxPage` 0 refusal end to end (60 types, the 400 bodies and the banner in a
+browser; the rows are cleared, not kept, for a `maxPage` of 0); a preset `Dashboard:Setup:Code` and
+`Dashboard:Admin:ResetOnStart` on a real stack; the age window that turns "pending" into "missing" and the
+follow-up fetch (which was one look and is now a chain until the window ends); and an accessibility pass of the
+setup, sign-in, session-expiry, scoped-list and retry-confirmation pages (which found two accessibility
+defects). What the run of 2026-10-13 covered and found is in
 [`../history/2026-10-13-live-verification-of-the-open-paths.md`](../history/2026-10-13-live-verification-of-the-open-paths.md).
 
 ---
