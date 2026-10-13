@@ -348,9 +348,6 @@ describe('SagaDetail', () => {
     expect(fixture.componentInstance.loading()).toBe(false);
   });
 
-  // The page's panel, tabs, empty state and banners are the shared classes of src/styles.scss, which
-  // the unit tests do not load, so the class names are all there is to check. The base `.banner`
-  // carries the box: a modifier on its own would show a banner with no padding.
   // The two views are plain buttons, so the highlighted one is a CSS class a screen reader never sees: each
   // says whether it is the one showing, the way the data overview's At start / At end / Compare buttons do.
   it('tells assistive technology which of Map and Timeline is showing', () => {
@@ -366,6 +363,9 @@ describe('SagaDetail', () => {
     expect(pressed()).toEqual(['false', 'true']);
   });
 
+  // The page's panel, tabs, empty state and banners are the shared classes of src/styles.scss, which
+  // the unit tests do not load, so the class names are all there is to check. The base `.banner`
+  // carries the box: a modifier on its own would show a banner with no padding.
   it('builds its summary card, tabs, empty state and banners from the shared global classes', () => {
     const fixture = setup(makeDetail({ status: 'Completed' }));
     const el: HTMLElement = fixture.nativeElement;
@@ -1721,6 +1721,28 @@ describe('SagaDetail', () => {
 
       vi.advanceTimersByTime(10_000);
       expect(apiMock.getTimeline).toHaveBeenCalledTimes(4);
+    });
+
+    // A fetch that was already in flight when the page went away answers into a destroyed component; its
+    // callback must not start the chain again.
+    it('does not look again once the page has gone while a look was in flight', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T);
+      const fixture = setup(makeDetail({ status: 'Completed' }), awaitingSnapshot());
+
+      push(fixture);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS);
+      const inFlight$ = new Subject<SagaLogEntry[]>();
+      apiMock.getTimeline.mockReturnValue(inFlight$);
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
+
+      fixture.destroy();
+      inFlight$.next(awaitingSnapshot());
+      inFlight$.complete();
+      vi.advanceTimersByTime(10_000);
+
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
     });
 
     it.each([

@@ -143,7 +143,7 @@ inspector open and sampled every 100 ms (absolute times below, UTC).
   page read "No snapshot was recorded for this step" from 22:25:10.42, made timeline requests at 22:25:10.21 (the
   push) and 22:25:11.72 (the follow-up, 1.5 s later) and none after; it was still on screen when sampling ended,
   about nine seconds after the snapshot existed. **Defect (`ddcc688`).** Each follow-up that still finds the
-  snapshot missing now schedules the next, so the chain ends with the window (at most four follow-ups, the last
+  snapshot missing now schedules the next, so the chain ends with the window (about four follow-ups, the last
   just after it). Two specs; one-token mutation `scheduleSnapshotFollowUp` to `cancelSnapshotFollowUp`: 2
   failed, 233 passed in the file. After rebuilding `dashboard-web` the same scenario (`e2c8a88f-...`): push at
   22:35:07.18, "No snapshot was recorded" at 22:35:07.37, follow-ups at 22:35:08.71 and 22:35:10.21, and at

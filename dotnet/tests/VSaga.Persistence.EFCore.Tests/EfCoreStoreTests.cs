@@ -574,6 +574,38 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// B3 of persistence-contracts.md: the race is lost at the commit, not at the version pre-check. The stale
+    /// UPDATE must not stay Modified in the context, or the next save (the dead-letter entry) throws again.
+    /// </summary>
+    [Fact]
+    public async Task Snapshot_UpdateThatLostItsRaceAtTheCommit_DoesNotFailTheNextAppendOnTheSameContext()
+    {
+        var correlationId = Guid.NewGuid();
+        await using (var seed = NewContext())
+            await new EfCoreSagaSnapshotStore<TestState>(seed).InsertAsync(NewState(correlationId, "TestSaga", "Started"));
+
+        await using (var db = new VSagaDbContext(new DbContextOptionsBuilder<VSagaDbContext>()
+            .UseSqlite(_connection)
+            .AddInterceptors(new BumpVersionBeforeSaveInterceptor(_connection))
+            .Options))
+        {
+            var store = new EfCoreSagaSnapshotStore<TestState>(db);
+            var state = await store.FindAsync("TestSaga", correlationId);
+            state!.CurrentState = "StepThatFailed";
+
+            await Assert.ThrowsAsync<SagaConcurrencyException>(() => store.UpdateAsync(state, expectedVersion: 0));
+
+            await new EfCoreSagaEventLogStore(db).AppendAsync(
+                SagaLogEntry.Create(correlationId, "TestSaga", SagaEntryType.DeliveryExhausted, messageId: "m-4"));
+        }
+
+        await using var db2 = NewContext();
+        Assert.Equal("m-4", Assert.Single(await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("TestSaga", correlationId)).MessageId);
+        var stored = await new EfCoreSagaSnapshotStore<TestState>(db2).FindAsync("TestSaga", correlationId);
+        Assert.Equal("Started", stored!.CurrentState);
+    }
+
+    /// <summary>
     /// An update the database rejects (here a business key another instance holds) is mapped to
     /// <see cref="SagaAlreadyExistsException"/>; it must not be re-sent, and rejected again, by the next save on the
     /// context, which would fail the dead-letter record and every later log entry with it.
@@ -636,6 +668,22 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         await using var db2 = NewContext();
         Assert.Equal("m-3", Assert.Single(await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("TestSaga", loser.CorrelationId)).MessageId);
         Assert.Null(await new EfCoreSagaSnapshotStore<TestState>(db2).FindAsync("TestSaga", loser.CorrelationId));
+    }
+
+    /// <summary>A rival write: bumps every saga row's Version on the shared connection just before the context saves.</summary>
+    private sealed class BumpVersionBeforeSaveInterceptor(SqliteConnection connection) : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "UPDATE SagaInstances SET Version = Version + 1";
+                command.ExecuteNonQuery();
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     private sealed class ThrowOnceSaveInterceptor : SaveChangesInterceptor

@@ -914,8 +914,8 @@ line), **Full state**, **Message** where the step's message body was recorded, a
 the browser allows it. When there is no snapshot to show, the inspector says why: the state was over the
 per-snapshot cap or the saga's budget (with the sizes from the marker), the step did not persist a new
 state (an unhandled message, a retry request, a timeout with no outcome), the snapshot is not recorded
-yet (for up to 5 seconds after the step's newest entry; the page fetches the timeline once more 1.5 s
-after a refresh that found it missing), or no snapshot exists (a saga older than snapshots, snapshots
+yet (for up to 5 seconds after the step's newest entry; the page fetches the timeline again every 1.5 s
+after a refresh that found it missing, until those 5 seconds are over), or no snapshot exists (a saga older than snapshots, snapshots
 switched off, or a step that lost a concurrent update and never committed).
 
 **Saga data bar**, under the summary card: a "Saga data" group with **At start** (the message that

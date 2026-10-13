@@ -203,6 +203,13 @@ discard-before-log ordering (`:874-877`).
 
 ### B3 — a persist that loses its race at the commit poisons EF's unit of work (recorded, not fixed here)
 
+> **Fixed 2026-10-14**, outside this sequence, in `6b45335`: `EfCoreSagaSnapshotStore.UpdateAsync` and
+> `InsertAsync` detach their entity when the save throws. It was found again live, through a persist that
+> failed at the commit and kept the dead-letter entry from being written; see
+> [`../history/2026-10-14-live-verification-round-2.md`](../history/2026-10-14-live-verification-round-2.md).
+> The conformance case this section asks for was not added; the EF specs of that commit cover the three
+> shapes (a failure of any kind, a rejected update, a rejected insert) and a lost race at the commit.
+
 Found by commit 5's adversarial review and verified against the code (commit `ffe7568`); **recorded,
 not scheduled** in this sequence.
 
@@ -462,7 +469,7 @@ deleting it, once settled.
 | # | Question | Blocks | Options |
 | --- | --- | --- | --- |
 | Q1 | ~~**How are the mutation tests run?** §6.1 requires breaking each fix to confirm exactly its own cases fail. When commit 5 tried a temporary edit to `InMemorySagaStore.cs` for the same purpose, Claude Code's auto-mode classifier refused it as test-related code removal; every later mutation step is the same kind of edit, so expect the same refusal.~~ **Resolved 2026-09-26, by a fourth option.** For 7–15b the mutation is the fix's own absence: commit 6 landed every case red, so the failing-set diff between the run before a fix and the run after it is exactly "break the change, confirm its own cases fail and nothing else does", and each fix's commit message records that diff. Where a withdrawal has to be run separately — F11's statistical kill, and B1/B2 at 18–19, whose tests land with their fixes — `git stash push -- <file>` withdraws the change and `git stash pop` restores it, a git operation the classifier does not intercept, with a rebuild in between (a `--no-build` run against the stale binary proves nothing; the first F11 attempt made that mistake and was redone). | ~~Commit 7 onward — every fix commit (7–15b) and B1/B2 (18–19)~~ Nothing | ~~(a) add a permission rule allowing the temporary source edit and its revert; (b) the maintainer runs each mutation step by hand from instructions in the commit report; (c) turn auto mode off for those steps only~~ |
-| Q2 | **When is B3 fixed?** §4 records it — a persist that loses its race at `SaveChangesAsync` leaves EF's unit of work unable to commit again, losing the discard path's `DeliveryExhausted` entries — but schedules nothing. | Nothing in this sequence; a conformance case for it would be red on EF with no fix | (a) add it as a fix after 15b, with a case that loses a race at the commit and then commits again in the same unit of work; (b) leave it for a follow-up sequence |
+| Q2 | ~~**When is B3 fixed?**~~ **Fixed 2026-10-14 in `6b45335` (EF only; no conformance case).** §4 records it — a persist that loses its race at `SaveChangesAsync` leaves EF's unit of work unable to commit again, losing the discard path's `DeliveryExhausted` entries — but schedules nothing. | Nothing in this sequence; a conformance case for it would be red on EF with no fix | (a) add it as a fix after 15b, with a case that loses a race at the commit and then commits again in the same unit of work; (b) leave it for a follow-up sequence |
 | Q3 | **Does D10 get a clause?** EF's `InsertAsync` still maps *every* `DbUpdateException` to `SagaAlreadyExistsException` (§1.1), so an infrastructure failure reads as a lost business-key race. No clause states what a store must do, so no case can test it. | Nothing in this sequence | (a) write a clause (only a genuine identity or business-key collision is `SagaAlreadyExistsException`) and a fix; (b) keep it documented as open |
 | Q4 | **Are the provider-specific tests the suite duplicates pruned?** `EfCoreStoreTests`, `InMemoryOutboxStoreTests` and `InMemorySnapshotStoreBusinessKeyTests` overlap the conformance suite. Commit 5 deliberately deleted none of them. | Nothing | (a) prune the exact duplicates in a follow-up; (b) keep them as provider-level smoke tests |
 | Q5 | **Should the suite support xunit.v3?** `VSaga.Persistence.Conformance` depends on xUnit v2's `xunit.assert` and `xunit.extensibility.core`, and its README states that xunit.v3 cannot consume it. Third-party providers on v3 cannot verify themselves. | Nothing in this sequence | (a) stay on v2 until the repo moves; (b) ship a second, v3-targeted package later |

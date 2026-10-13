@@ -725,10 +725,12 @@ export class SagaDetail implements OnInit, OnDestroy {
   /**
    * One timeline fetch SNAPSHOT_FOLLOW_UP_MS from now, when the final step's snapshot may still land. The fetch
    * schedules the next one when it still finds the snapshot missing, so the chain ends with the pending
-   * window: at most four follow-up fetches, the last of them just after the window has run out.
+   * window: about four follow-up fetches, the last of them just after the window has run out (more when the
+   * browser's clock trails the API host's, which widens the window, but never unbounded).
    */
   private scheduleSnapshotFollowUp(): void {
     this.cancelSnapshotFollowUp();
+    if (this.destroyed) return;
     if (!awaitsSnapshot(this.history(), Date.now())) return;
     this.followUp = setTimeout(() => {
       this.followUp = null;
