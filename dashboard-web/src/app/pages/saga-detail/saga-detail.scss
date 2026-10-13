@@ -125,6 +125,15 @@
   cursor: default;
 }
 
+/* Under the row, and no space of its own while it is empty: it is always in the card, for a screen reader. */
+.retry-message {
+  display: block;
+}
+
+.retry-message:not(:empty) {
+  margin-top: 0.5rem;
+}
+
 .retry-confirm-text {
   display: flex;
   flex-direction: column;

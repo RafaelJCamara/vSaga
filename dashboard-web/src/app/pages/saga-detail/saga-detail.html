@@ -148,8 +148,6 @@
             <span id="retry-refusal" class="retry-refusal">{{ reason }}</span>
           }
         }
-        <!-- A live region that is always there, with the text put into it: one inserted together with its text is not reliably announced, and the focus stays on the button, so this is how the answer is heard. -->
-        <span class="retry-message" role="status">{{ retryMessage() }}</span>
       </div>
     } @else if (retryable()) {
       <!-- A saga a retry would accept, shown to a viewer without sagas.retry for its type. -->
@@ -157,6 +155,12 @@
         <span class="retry-hint">You do not have permission to retry {{ sagaType }} sagas.</span>
       </div>
     }
+    <!-- The answer to a retry, in a live region that is always there with the text put into it: one inserted
+         together with its text is not reliably announced, and the focus stays on the button, so this is how
+         the answer is heard. It is not part of the retry row, which goes when the saga's own update says it
+         is running again, before or with the answer: the message is then still said, and lingers a few
+         seconds (see `retryMessageLinger` in saga-detail.ts). -->
+    <span class="retry-message" role="status">{{ retryMessage() }}</span>
   </div>
 
   <app-saga-data-overview

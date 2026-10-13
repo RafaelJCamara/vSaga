@@ -52,6 +52,13 @@ export const REFRESH_AUDIT_MS = 250;
  */
 export const SNAPSHOT_FOLLOW_UP_MS = 1500;
 
+/**
+ * How long the answer to a retry stays on screen after the retry row has gone (the saga runs again, and its
+ * status hides the row): long enough to read, and the screen reader has said it by then. With the row shown it
+ * stays until the next retry is asked, as before.
+ */
+export const RETRY_MESSAGE_LINGER_MS = 6000;
+
 type Tab = 'map' | 'timeline';
 
 /** The tabs a URL may name; the map is the default and is written as no `tab` at all. */
@@ -253,6 +260,8 @@ export class SagaDetail implements OnInit, OnDestroy {
   );
 
   private subs: Subscription[] = [];
+  /** The pending drop of the retry message that outlived its row, if one is scheduled. */
+  private retryMessageLinger: ReturnType<typeof setTimeout> | null = null;
   /** Whether the route has emitted yet — a later emission is the same instance reused for another saga,
    *  whose predecessor's content is dropped. */
   private hasRouted = false;
@@ -306,6 +315,25 @@ export class SagaDetail implements OnInit, OnDestroy {
       if (this.retryShown()) return;
       const row = untracked(this.retryRow)?.nativeElement;
       if (row?.contains(document.activeElement)) this.moveFocus(false, this.sagaHeading);
+    });
+
+    // The answer to a retry is said in a region of its own that the retry row does not hold (the saga's update
+    // can remove the row before or with the answer). Once there is a message and no row it lingers for
+    // RETRY_MESSAGE_LINGER_MS and is dropped, whether or not the row has come back by then (the retried saga
+    // failed again): it describes the attempt before. With the row shown it stays, until the next retry.
+    let lastMessage: string | null = null;
+    effect(() => {
+      const hasRow = this.retryShown();
+      const message = this.retryMessage();
+      untracked(() => {
+        if (message !== lastMessage) this.cancelRetryMessageLinger();
+        lastMessage = message;
+        if (message === null || hasRow || this.retryMessageLinger !== null) return;
+        this.retryMessageLinger = setTimeout(() => {
+          this.retryMessageLinger = null;
+          this.retryMessage.set(null);
+        }, RETRY_MESSAGE_LINGER_MS);
+      });
     });
 
     // The session gained `sagas.view` for this type while the page was open (the interceptor refreshes it
@@ -439,6 +467,13 @@ export class SagaDetail implements OnInit, OnDestroy {
     this.unsubscribe();
     this.subs.forEach((s) => s.unsubscribe());
     this.cancelSnapshotFollowUp();
+    this.cancelRetryMessageLinger();
+  }
+
+  private cancelRetryMessageLinger(): void {
+    if (this.retryMessageLinger === null) return;
+    clearTimeout(this.retryMessageLinger);
+    this.retryMessageLinger = null;
   }
 
   /**

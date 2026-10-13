@@ -21,7 +21,7 @@ import { timedOutInvoice } from '../../testing/timeline-fixtures';
 import { timezoneLabel } from '../../util/time-format';
 import { SagaMap } from '../../components/saga-map/saga-map';
 import { PENDING_SNAPSHOT_MS } from '../../util/saga-transitions';
-import { REFRESH_AUDIT_MS, SNAPSHOT_FOLLOW_UP_MS, SagaDetail } from './saga-detail';
+import { REFRESH_AUDIT_MS, RETRY_MESSAGE_LINGER_MS, SNAPSHOT_FOLLOW_UP_MS, SagaDetail } from './saga-detail';
 
 function makeDetail(overrides: Partial<SagaSummary> = {}): SagaDetailModel {
   return {
@@ -544,12 +544,14 @@ describe('SagaDetail', () => {
     });
 
     describe('the answer to a retry', () => {
-      const region = (el: HTMLElement) => el.querySelector('.retry-row .retry-message') as HTMLElement | null;
+      // In the summary card, beside the retry row and not in it: the row goes when the saga runs again.
+      const region = (el: HTMLElement) => el.querySelector('.summary-card > .retry-message') as HTMLElement | null;
 
-      it('is said in a status region that is already in the retry row, empty, before anything is asked', () => {
+      it('is said in a status region that is already in the card, outside the retry row, empty, before anything is asked', () => {
         const el: HTMLElement = setup(makeDetail({ status: 'Failed' })).nativeElement;
 
         expect(region(el)).not.toBeNull();
+        expect(el.querySelector('.retry-row .retry-message')).toBeNull();
         expect(region(el)?.getAttribute('role')).toBe('status');
         expect(region(el)?.textContent?.trim()).toBe('');
       });
@@ -599,13 +601,150 @@ describe('SagaDetail', () => {
         expect(region(el)).toBe(before);
       });
 
-      it('is not an alert, and a row that is not shown has none', () => {
+      it('is not an alert, and is there, empty, for a saga that has no retry row', () => {
         const el: HTMLElement = setup(makeDetail({ status: 'Failed' })).nativeElement;
         expect(el.querySelector('.retry-message[role="alert"]')).toBeNull();
 
         TestBed.resetTestingModule();
         const running: HTMLElement = setup(makeDetail({ status: 'Running' })).nativeElement;
-        expect(running.querySelector('.retry-message')).toBeNull();
+        expect(running.querySelector('.retry-row')).toBeNull();
+        expect(region(running)?.getAttribute('role')).toBe('status');
+        expect(region(running)?.textContent?.trim()).toBe('');
+      });
+
+      // The saga update can reach the page before the answer to the retry, or with it: the status says
+      // Running, the row (and the button that had the focus) go, and the answer arrives to no row.
+      describe('when the saga runs again and the row goes', () => {
+        const runAgain = (fixture: ReturnType<typeof setup>) => {
+          hubMock.sagaUpdated$.next({ ...makeDetail().summary, status: 'Running', currentState: 'Running', version: 3 });
+          fixture.detectChanges();
+        };
+        const failAgain = (fixture: ReturnType<typeof setup>) => {
+          hubMock.sagaUpdated$.next({ ...makeDetail().summary, status: 'Failed', version: 4 });
+          fixture.detectChanges();
+        };
+
+        it('still says the answer that arrives after the row is gone, in the element that was there', () => {
+          const fixture = setup(makeDetail({ status: 'Failed' }));
+          const el: HTMLElement = fixture.nativeElement;
+          const before = region(el);
+          const response = new Subject<void>();
+          apiMock.retry.mockReturnValue(response);
+          fixture.componentInstance.retry();
+          fixture.detectChanges();
+
+          runAgain(fixture);
+          expect(el.querySelector('.retry-row')).toBeNull();
+          response.next();
+          response.complete();
+          fixture.detectChanges();
+
+          expect(region(el)).toBe(before);
+          expect(region(el)?.textContent).toContain('Retry accepted');
+          expect(region(el)?.getAttribute('role')).toBe('status');
+        });
+
+        it('keeps the answer that was said with the row, through the row going', () => {
+          const fixture = setup(makeDetail({ status: 'Failed' }));
+          const el: HTMLElement = fixture.nativeElement;
+          const before = region(el);
+          apiMock.retry.mockReturnValue(of(undefined));
+          fixture.componentInstance.retry();
+          fixture.detectChanges();
+          expect(region(el)?.textContent).toContain('Retry accepted');
+
+          runAgain(fixture);
+
+          expect(el.querySelector('.retry-row')).toBeNull();
+          expect(region(el)).toBe(before);
+          expect(region(el)?.textContent).toContain('Retry accepted');
+        });
+
+        it('drops the answer after RETRY_MESSAGE_LINGER_MS, and keeps the empty region', () => {
+          vi.useFakeTimers();
+          const fixture = setup(makeDetail({ status: 'Failed' }));
+          const el: HTMLElement = fixture.nativeElement;
+          const before = region(el);
+          apiMock.retry.mockReturnValue(of(undefined));
+          fixture.componentInstance.retry();
+          runAgain(fixture);
+
+          vi.advanceTimersByTime(RETRY_MESSAGE_LINGER_MS - 1);
+          fixture.detectChanges();
+          expect(region(el)?.textContent).toContain('Retry accepted');
+
+          vi.advanceTimersByTime(1);
+          fixture.detectChanges();
+          expect(region(el)).toBe(before);
+          expect(region(el)?.textContent?.trim()).toBe('');
+        });
+
+        // The saga failed again at once: the answer is still said for its time, and then goes, though the row is
+        // back. It describes the attempt before, and nothing else would ever clear it.
+        it('drops the answer at the end of the linger when the row comes back before it', () => {
+          vi.useFakeTimers();
+          const fixture = setup(makeDetail({ status: 'Failed' }));
+          const el: HTMLElement = fixture.nativeElement;
+          apiMock.retry.mockReturnValue(of(undefined));
+          fixture.componentInstance.retry();
+          runAgain(fixture);
+          vi.advanceTimersByTime(RETRY_MESSAGE_LINGER_MS / 2);
+
+          failAgain(fixture);
+          expect(el.querySelector('.retry-row')).not.toBeNull();
+          expect(region(el)?.textContent).toContain('Retry accepted');
+
+          vi.advanceTimersByTime(RETRY_MESSAGE_LINGER_MS / 2);
+          fixture.detectChanges();
+          expect(region(el)?.textContent?.trim()).toBe('');
+        });
+
+        it('lingers for the full time after a later answer, not what is left of an earlier one', () => {
+          vi.useFakeTimers();
+          const fixture = setup(makeDetail({ status: 'Failed' }));
+          const el: HTMLElement = fixture.nativeElement;
+          const response = new Subject<void>();
+          apiMock.retry.mockReturnValue(response);
+          fixture.componentInstance.retry();
+          fixture.detectChanges();
+          fixture.componentInstance.retryMessage.set('An earlier answer.');
+          runAgain(fixture);
+          vi.advanceTimersByTime(RETRY_MESSAGE_LINGER_MS - 1000);
+
+          fixture.componentInstance.retryMessage.set('Retry accepted — redriving the failed step.');
+          fixture.detectChanges();
+          vi.advanceTimersByTime(RETRY_MESSAGE_LINGER_MS - 1);
+          fixture.detectChanges();
+
+          expect(region(el)?.textContent).toContain('Retry accepted');
+        });
+
+        it('leaves an answer that is said with the row where it is, however long the row stays', () => {
+          vi.useFakeTimers();
+          const fixture = setup(makeDetail({ status: 'Failed' }));
+          const el: HTMLElement = fixture.nativeElement;
+          apiMock.retry.mockReturnValue(throwError(() => httpError(409, { error: 'Saga cannot be retried' })));
+          fixture.componentInstance.retry();
+          fixture.detectChanges();
+
+          vi.advanceTimersByTime(10 * RETRY_MESSAGE_LINGER_MS);
+          fixture.detectChanges();
+
+          expect(region(el)?.textContent).toContain('cannot be retried');
+        });
+
+        it('drops nothing after the page was left: the drop is cancelled with it', () => {
+          vi.useFakeTimers();
+          const fixture = setup(makeDetail({ status: 'Failed' }));
+          apiMock.retry.mockReturnValue(of(undefined));
+          fixture.componentInstance.retry();
+          runAgain(fixture);
+
+          fixture.destroy();
+          vi.advanceTimersByTime(RETRY_MESSAGE_LINGER_MS);
+
+          expect(fixture.componentInstance.retryMessage()).toContain('Retry accepted');
+        });
       });
     });
 
