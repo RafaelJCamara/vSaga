@@ -19,9 +19,9 @@ import {
   role,
   team,
 } from '../../testing/admin';
-import { adminFailure } from '../../util/admin-failure';
+import { WRITE_TIMED_OUT, adminFailure } from '../../util/admin-failure';
 import { SaveRole } from './admin.model';
-import { AdminStore, READ_TIMEOUT_MS } from './admin.store';
+import { AdminStore, READ_TIMEOUT_MS, WRITE_TIMEOUT_MS } from './admin.store';
 
 /** What `fn` rejected with, or undefined when it did not reject. */
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -618,6 +618,36 @@ describe('AdminStore', () => {
         expect(store.users().map((u) => u.id)).toEqual(['u-admin']);
       },
     );
+
+    it('gives up a change that is not answered, after the timeout and not before, and reads the lists again', async () => {
+      await loaded();
+      vi.useFakeTimers();
+      try {
+        const saving = rejection(store.saveRole('7', NEW_ROLE));
+        const put = http.expectOne('/api/admin/roles/7');
+
+        await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS - 1);
+        expect(put.cancelled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        const err = await saving;
+
+        expect(put.cancelled).toBe(true);
+        expect(adminFailure(err, 'x')).toEqual({
+          kind: 'failed',
+          code: null,
+          message: WRITE_TIMED_OUT,
+          fieldErrors: {},
+        });
+        // The write may have been applied before the answer was lost: the lists are read again.
+        await vi.advanceTimersByTimeAsync(0);
+        const changed = adminData({ users: [adminData().users[0]] });
+        answerReload(http, changed);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(store.users().map((u) => u.id)).toEqual(['u-admin']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
 
     it('does not leave a full read that is running unanswered for ever when a change finishes meanwhile', async () => {
       await loaded();

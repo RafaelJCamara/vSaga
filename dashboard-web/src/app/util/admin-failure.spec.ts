@@ -1,3 +1,4 @@
+import { TimeoutError } from 'rxjs';
 import { httpError, networkError, problem } from '../testing/http-error';
 import {
   ACCESS_LOST,
@@ -5,6 +6,7 @@ import {
   LAST_ADMINISTRATOR_ADVICE,
   MUST_CHANGE_PASSWORD,
   SESSION_ENDED,
+  WRITE_TIMED_OUT,
   adminFailure,
   belongsToField,
   placeFieldErrors,
@@ -151,6 +153,15 @@ describe('adminFailure', () => {
       'name_taken',
     );
     expect(adminFailure(httpError(500), FALLBACK).code).toBeNull();
+  });
+
+  it('says a change that was not answered in time may or may not have been saved', () => {
+    expect(adminFailure(new TimeoutError(), FALLBACK)).toEqual({
+      kind: 'failed',
+      code: null,
+      message: WRITE_TIMED_OUT,
+      fieldErrors: {},
+    });
   });
 
   it('says the network and the server in the words of the sign-in pages', () => {

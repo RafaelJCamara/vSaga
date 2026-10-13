@@ -1,3 +1,4 @@
+import { TimeoutError } from 'rxjs';
 import { failureText } from './failure-text';
 import { problemOf } from './http-error';
 
@@ -9,6 +10,10 @@ export const SESSION_ENDED = 'Your session has ended. Sign in again.';
 
 /** What a page says when the API answers 403 `password_change_required`: not a missing permission, a password to change first. */
 export const MUST_CHANGE_PASSWORD = 'You must change your password before you can manage access.';
+
+/** What a page says when a change did not get an answer in time: it may or may not have been applied. */
+export const WRITE_TIMED_OUT =
+  'The dashboard API did not answer in time. The change may or may not have been saved: check the list, then try again.';
 
 /** What a page says when the user, team or role it works on is gone (404): someone deleted it meanwhile. */
 export const GONE = 'This no longer exists. It may have been deleted by someone else.';
@@ -45,6 +50,7 @@ export interface AdminFailure {
  * `fallback` is the sentence for a failure that said nothing of its own ("The role could not be saved.").
  */
 export function adminFailure(err: unknown, fallback: string): AdminFailure {
+  if (err instanceof TimeoutError) return { kind: 'failed', code: null, message: WRITE_TIMED_OUT, fieldErrors: {} };
   const problem = problemOf(err, '');
   const { code } = problem;
   switch (problem.status) {

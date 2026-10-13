@@ -20,6 +20,10 @@ import {
  *  "Try again" instead of "Loading…" for good. */
 export const READ_TIMEOUT_MS = 30000;
 
+/** How long a change (a save, a delete, a reset) may take before it counts as failed: a hung write keeps the
+ *  form busy, and a typed password in its draft, for no longer than this. */
+export const WRITE_TIMEOUT_MS = 30000;
+
 const TIMED_OUT = 'The dashboard API did not answer in time. Try again.';
 
 /**
@@ -184,11 +188,12 @@ export class AdminStore {
   private async change<T>(call: Observable<T>): Promise<T> {
     let answer: T;
     try {
-      answer = await firstValueFrom(call);
+      answer = await firstValueFrom(call.pipe(timeout(WRITE_TIMEOUT_MS)));
     } catch (err) {
       const status = problemOf(err, '').status;
-      // Not awaited: the page that made the change shows the refusal at once, and the lists catch up.
-      if (status === 404 || status === 409) void this.reload();
+      // Not awaited: the page that made the change shows the refusal at once, and the lists catch up. A write
+      // that timed out may still have been applied, so the lists are read again then too.
+      if (status === 404 || status === 409 || err instanceof TimeoutError) void this.reload();
       throw err;
     }
     await this.reload();
