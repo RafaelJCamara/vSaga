@@ -454,14 +454,10 @@ export class SagaDetail implements OnInit, OnDestroy {
   }
 
   /**
-   * The API refused the page: nothing to show, and no live updates to ask the hub for. Two limits stay,
-   * both in the hub service, which this page does not change: `subscribeToSaga` writes its record only
-   * after it has awaited the connection, so an unsubscribe that comes before the very first start
-   * finishes is overtaken by it and leaves a record that every reconnect re-sends (a fix belongs in the
-   * service, which could drop a record whose unsubscribe came first; chaining here would make every
-   * unsubscribe asynchronous). And a page opened by URL straight into a 403 never starts the hub
-   * (`subscribe` is not called), so nothing closes a connection to tell it about a grant: it recovers when
-   * the session is read again (the tab shown, a 403), not at once.
+   * The API refused the page: nothing to show, and no live updates to ask the hub for. One limit stays: a
+   * page opened by URL straight into a 403 never starts the hub (`subscribe` is not called), so nothing
+   * closes a connection to tell it about a grant: it recovers when the session is read again (the tab
+   * shown, a 403), not at once.
    */
   private forbid(): void {
     this.forbidden.set(true);

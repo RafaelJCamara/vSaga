@@ -36,6 +36,9 @@ export class SagaHubService implements OnDestroy {
   /** Keyed by `${sagaType}\0${correlationId}` — both halves of the identity, matching the hub's own
    *  per-instance groups — so `onreconnected` knows exactly what to rejoin. */
   private readonly sagaSubscriptions = new Map<string, { sagaType: string; correlationId: string }>();
+  /** The saga subscriptions asked for and not yet unsubscribed, set before the connection is awaited: an
+   *  unsubscribe that comes while the first start is still going leaves nothing for the subscribe to record. */
+  private readonly wantedSagas = new Set<string>();
 
   readonly sagaUpdated$ = new Subject<SagaSummary>();
   readonly timelineEntryAdded$ = new Subject<{ sagaType: string; correlationId: string; entry: SagaLogEntry }>();
@@ -78,6 +81,7 @@ export class SagaHubService implements OnDestroy {
     this.startPromise = null;
     this.listSubscribed = false;
     this.sagaSubscriptions.clear();
+    this.wantedSagas.clear();
     this.connectionState$.next('disconnected');
     // Called now, not awaited. A failure (already stopped, or never fully started) leaves nothing to do.
     void old?.stop().catch(() => undefined);
@@ -264,9 +268,13 @@ export class SagaHubService implements OnDestroy {
   // may track the same correlation id and a detail view must only receive its own instance's entries.
   async subscribeToSaga(sagaType: string, correlationId: string): Promise<void> {
     const generation = this.generation;
+    const key = `${sagaType}\0${correlationId}`;
+    this.wantedSagas.add(key);
     await this.ensureStarted();
     if (!this.active || generation !== this.generation) return;
-    this.sagaSubscriptions.set(`${sagaType}\0${correlationId}`, { sagaType, correlationId });
+    // Unsubscribed while the connection was being awaited: no record and no invoke.
+    if (!this.wantedSagas.has(key)) return;
+    this.sagaSubscriptions.set(key, { sagaType, correlationId });
     // See the comment in subscribeToList() above -- same guard, same reason.
     const connection = this.connection;
     if (connection?.state === signalR.HubConnectionState.Connected) {
@@ -281,7 +289,9 @@ export class SagaHubService implements OnDestroy {
   async unsubscribeFromSaga(sagaType: string, correlationId: string): Promise<void> {
     // Forgotten regardless of connection state -- otherwise a later reconnect would resubscribe to a
     // saga the user already navigated away from.
-    this.sagaSubscriptions.delete(`${sagaType}\0${correlationId}`);
+    const key = `${sagaType}\0${correlationId}`;
+    this.wantedSagas.delete(key);
+    this.sagaSubscriptions.delete(key);
     const connection = this.connection;
     if (connection?.state === signalR.HubConnectionState.Connected) {
       try {

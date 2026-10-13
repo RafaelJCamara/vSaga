@@ -359,6 +359,43 @@ describe('SagaHubService', () => {
     expect(connection.invocations).toEqual([]);
   });
 
+  // The page that subscribes can be left before the first start finishes (a detail page opened and closed at
+  // once): its unsubscribe then comes while the subscribe is still awaiting the connection.
+  it('records nothing and invokes nothing for a saga unsubscribed while the first start was still going', async () => {
+    let finishStart!: () => void;
+    connection.startResult = () => new Promise<void>((resolve) => (finishStart = resolve));
+
+    const subscribing = service.subscribeToSaga('OrderSaga', 'abc-123');
+    await settle();
+    await service.unsubscribeFromSaga('OrderSaga', 'abc-123');
+    finishStart();
+    await subscribing;
+    connection.invocations.length = 0;
+
+    connection.triggerReconnected();
+    await Promise.resolve();
+
+    expect(connection.invocations).toEqual([]);
+  });
+
+  it('subscribes to a saga that was unsubscribed and subscribed again while the first start was still going', async () => {
+    let finishStart!: () => void;
+    connection.startResult = () => new Promise<void>((resolve) => (finishStart = resolve));
+
+    const first = service.subscribeToSaga('OrderSaga', 'abc-123');
+    await settle();
+    await service.unsubscribeFromSaga('OrderSaga', 'abc-123');
+    const second = service.subscribeToSaga('OrderSaga', 'abc-123');
+    finishStart();
+    await Promise.all([first, second]);
+    connection.invocations.length = 0;
+
+    connection.triggerReconnected();
+    await Promise.resolve();
+
+    expect(connection.invocations).toEqual([['SubscribeToSaga', 'OrderSaga', 'abc-123']]);
+  });
+
   it('ngOnDestroy() stops the connection', async () => {
     await service.subscribeToList();
 
