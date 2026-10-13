@@ -21,7 +21,7 @@ namespace VSaga.Transport.Brighter;
 /// (so <see cref="SendAsync{TMessage}"/> can address a queue directly without needing a second exchange —
 /// see the constructor's remarks for why).
 /// </summary>
-public sealed class BrighterTransport : IMessageTransport
+public sealed class BrighterTransport : IMessageTransport, IAsyncDisposable
 {
     /// <summary>
     /// Carries the original (PascalCase) CLR message type name in Brighter's <c>MessageHeader.Bag</c>,
@@ -32,6 +32,8 @@ public sealed class BrighterTransport : IMessageTransport
     public const string MessageTypeHeader = "x-vsaga-message-type";
 
     private readonly RmqMessagingGatewayConnection _connection;
+    private readonly SemaphoreSlim _producerGate = new(1, 1);
+    private RmqMessageProducer? _producer;
     private readonly ILogger<BrighterTransport> _logger;
 
     public BrighterTransport(BrighterOptions options, ILogger<BrighterTransport> logger)
@@ -88,8 +90,61 @@ public sealed class BrighterTransport : IMessageTransport
 
         var message = BuildOutboundMessage(messageTypeName, body, envelope, routingKey);
 
-        await using var producer = new RmqMessageProducer(_connection);
-        await SendWithConfirmationAsync(producer, message, messageTypeName, envelope, routingKey, cancellationToken);
+        // One producer for the transport's lifetime, sends serialised. A producer built and disposed per
+        // publish closed the pooled AMQP connection that every consumer shares each time it was
+        // disposed, so a publish arriving while another subscription was being declared or a message was
+        // being acknowledged interrupted it ("Connection close forced"): a host that published while it
+        // was still subscribing failed to start, and a running one logged a polling error and lost a
+        // second per publish.
+        await _producerGate.WaitAsync(cancellationToken);
+        try
+        {
+            _producer ??= new RmqMessageProducer(_connection);
+            await SendWithConfirmationAsync(_producer, message, messageTypeName, envelope, routingKey, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not (MessageTransportPublishException or OperationCanceledException))
+        {
+            // The connection or channel under the producer is no longer usable; the next publish builds a
+            // fresh one instead of failing on this one for good.
+            var broken = _producer;
+            _producer = null;
+            if (broken is not null)
+                await DisposeProducerQuietlyAsync(broken);
+            throw;
+        }
+        finally
+        {
+            _producerGate.Release();
+        }
+    }
+
+    private static async Task DisposeProducerQuietlyAsync(RmqMessageProducer producer)
+    {
+        try
+        {
+            await producer.DisposeAsync();
+        }
+        catch (Exception)
+        {
+            // Already broken: the caller is about to rethrow the failure that matters.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _producerGate.WaitAsync();
+        try
+        {
+            if (_producer is { } producer)
+            {
+                _producer = null;
+                await producer.DisposeAsync();
+            }
+        }
+        finally
+        {
+            _producerGate.Release();
+        }
     }
 
     private static Message BuildOutboundMessage(string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, RoutingKey routingKey)

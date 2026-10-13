@@ -1,5 +1,6 @@
 using VSaga.Abstractions.Diagnostics;
 using VSaga.Abstractions.Transport;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
@@ -238,5 +239,84 @@ public sealed class BrighterTransportTests : IAsyncLifetime
         var received = await tcs.Task;
         Assert.Equal(headers[VSagaDiagnostics.TraceParentHeader], received.Headers[VSagaDiagnostics.TraceParentHeader]);
         Assert.Equal(headers[VSagaDiagnostics.TraceStateHeader], received.Headers[VSagaDiagnostics.TraceStateHeader]);
+    }
+
+    /// <summary>
+    /// Brighter's gateway keeps one AMQP connection per host in a static pool, and disposing any
+    /// producer or consumer removes that connection for everyone. A producer built and disposed for every
+    /// publish therefore closed the connection every consumer was using ("Connection close forced"): a
+    /// host that published while it was still subscribing (the sample's OrderSubmitter does) failed to
+    /// start, and a running one logged a polling error per publish. Found on a live compose run of the
+    /// Brighter overlay, where order-processing exited on every start.
+    /// </summary>
+    [Fact]
+    public async Task Publish_WhileOtherSubscriptionsAreBeingDeclared_DoesNotInterruptThem()
+    {
+        var logger = new ErrorCapturingLogger();
+        await using var transport = new BrighterTransport(
+            new BrighterOptions { ConnectionString = _container.GetConnectionString(), ExchangeName = ExchangeName + ".churn" }, logger);
+
+        var delivered = 0;
+        var handles = new List<IDisposable>();
+        using var stop = new CancellationTokenSource();
+        Task publisher = Task.CompletedTask;
+        try
+        {
+            Task Handle(ReceivedMessage received, CancellationToken ct)
+            {
+                Interlocked.Increment(ref delivered);
+                return received.Ack.AckAsync(ct);
+            }
+
+            handles.Add(await transport.SubscribeAsync(new TransportSubscription("Hot", [typeof(PingMessage)], "vsaga.brighter.test.churn-hot"), Handle));
+
+            publisher = Task.Run(async () =>
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    await transport.PublishAsync(new PingMessage("churn"), MessageEnvelope.New(Guid.NewGuid()));
+                    await Task.Delay(10);
+                }
+            });
+
+            for (var i = 0; i < 6; i++)
+            {
+                handles.Add(await transport.SubscribeAsync(
+                    new TransportSubscription($"Late{i}", [typeof(PingMessage)], $"vsaga.brighter.test.churn-late-{i}"), Handle));
+            }
+
+            // Let the poll loops run through publishes that arrive after every subscription exists.
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            await stop.CancelAsync();
+            await publisher;
+
+            Assert.Empty(logger.Errors);
+            Assert.True(Volatile.Read(ref delivered) > 0, "no publish reached a subscription");
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            await publisher;
+            foreach (var handle in handles)
+                handle.Dispose();
+        }
+    }
+
+    private sealed class ErrorCapturingLogger : ILogger<BrighterTransport>
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _errors = new();
+
+        public IReadOnlyCollection<string> Errors => _errors;
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Error)
+                _errors.Enqueue(formatter(state, exception) + (exception is null ? string.Empty : " " + exception.Message));
+        }
     }
 }

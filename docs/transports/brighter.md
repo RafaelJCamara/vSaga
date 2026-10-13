@@ -6,9 +6,12 @@
 Brighter's `CommandProcessor` dispatch pipeline, its Outbox/Inbox, or its request-handler routing.
 `AddVSagaBrighter` registers `BrighterOptions` and `BrighterTransport` as plain singletons rather than
 going through `services.AddBrighter(...)`, since that helper wires up the dispatch/outbox stack this
-adapter must not depend on. A new producer is created per publish and a new consumer per subscription,
-all over one shared connection descriptor that Brighter's connection pool resolves to a single AMQP
-connection. Full build history and live-verification detail: [`../history/transport-adapter-brighter.md`](../history/transport-adapter-brighter.md).
+adapter must not depend on. One producer serves every publish (sends are serialised) and a new consumer is
+created per subscription, all over one shared connection descriptor that Brighter's connection pool resolves
+to a single AMQP connection. The producer is long-lived on purpose: Brighter's gateway removes the pooled
+connection when any producer or consumer is disposed, so a producer built and disposed per publish closed the
+connection every consumer was using. For the same reason, disposing one subscription closes the connection
+under the others; that matters at shutdown only. Full build history and live-verification detail: [`../history/transport-adapter-brighter.md`](../history/transport-adapter-brighter.md).
 
 - **No default exchange for a direct send.** Brighter's `RmqMessageProducer` is bound to exactly one
   exchange for its whole lifetime and always publishes using the message's `Topic` as the routing key —
