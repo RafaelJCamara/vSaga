@@ -256,16 +256,17 @@ checks (required, lengths, the confirmation) are made in the component instead o
 directives. `@angular/forms` is already in the initial bundle, so `NgForm` and its validators, which nothing
 else uses, would add about 7 kB to it. Follow the pattern in a new form (see `pages/login/login.ts`).
 
-## Unit tests and `splitting: false`
+## Unit tests
 
-`npx ng test` runs Vitest through `@angular/build:unit-test`, and [`angular.json`](angular.json) sets
-`"splitting": false` on the test target. Without it a spec's `vi.mock` could be bypassed: the builder runs with
-`isolate: false` and code splitting on, so modules several spec files share become one chunk per worker, and a
-worker that has already evaluated that chunk for one spec (the real `saga-hub.service`, say, and the real
-`@microsoft/signalr` it imports) never applies the next spec's mock to it. Without the option 12 of 20 full runs
-failed all 39 hub specs with `Cannot resolve '/hubs/saga'`; with it, 24 consecutive runs passed. The builder marks the option deprecated ("No longer needed with Vitest 5") and says so at the start of
-every run; remove it when the project moves to Vitest 5, or use `"isolate": true`, the more thorough but about
-9 s slower alternative measured at the time.
+`npx ng test` runs Vitest through `@angular/build:unit-test`. On Vitest 4 the test target needed
+`"splitting": false` (`dd37bd1`): the builder runs with `isolate: false` and code splitting on, so modules several
+spec files share become one chunk per worker, and a worker that had already evaluated that chunk for one spec (the
+real `saga-hub.service`, say, and the real `@microsoft/signalr` it imports) never applied the next spec's
+`vi.mock` to it; 12 of 20 full runs failed all 39 hub specs with `Cannot resolve '/hubs/saga'`. The builder marks
+the option deprecated ("No longer needed with Vitest 5") and said so at the start of every run, so the project
+moved to Vitest 5 and the option is gone. If a spec's `vi.mock` is bypassed again, `"splitting": false` on the test
+target, or `"isolate": true` (the more thorough alternative, about 9 s slower when it was measured), are the two
+ways back.
 
 ## The container image
 

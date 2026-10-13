@@ -84,10 +84,7 @@
           "defaultConfiguration": "development"
         },
         "test": {
-          "builder": "@angular/build:unit-test",
-          "options": {
-            "splitting": false
-          }
+          "builder": "@angular/build:unit-test"
         }
       }
     }
