@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -82,6 +83,32 @@ public sealed class SessionSettingsTests : IAsyncLifetime, IAsyncDisposable
         Assert.Equal("/", options.Cookie.Path);
         Assert.Null(options.Cookie.Domain);
         Assert.True(response.Headers.Contains("Strict-Transport-Security"));
+    }
+
+    /// <summary>
+    /// Found on a live run behind a TLS proxy: a request that reached the API over plain HTTP (its own published
+    /// port, or a proxy missing from <c>Dashboard:TrustedProxies</c>) threw out of the antiforgery system, which
+    /// refuses to issue Secure cookies on a non-SSL request, and the caller got an empty 500 and an error log.
+    /// </summary>
+    [Fact]
+    public async Task RequireHttps_APlainHttpRequest_IsRefusedWith400AndTheHealthProbeStillAnswers()
+    {
+        using var host = With((DashboardSecuritySettings.RequireHttpsKey, "true"), ("Dashboard:TrustedProxies", "10.0.0.0/8"));
+        using var plain = host.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://dashboard.example.com") });
+        using var https = host.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://dashboard.example.com") });
+
+        using var refused = await plain.GetAsync("/api/auth/session");
+        using var health = await plain.GetAsync("/health");
+        using var secure = await https.GetAsync("/api/auth/session");
+
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        using var body = System.Text.Json.JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+        Assert.Equal(AuthProblems.HttpsRequiredCode, body.RootElement.GetProperty("code").GetString());
+        Assert.Contains("Dashboard:TrustedProxies", body.RootElement.GetProperty("detail").GetString(), StringComparison.Ordinal);
+        Assert.False(refused.Headers.Contains("Set-Cookie"));
+        Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, secure.StatusCode);
+        Assert.Contains(secure.Headers.GetValues("Set-Cookie"), c => c.StartsWith("XSRF-TOKEN=", StringComparison.Ordinal) && c.Contains("secure", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

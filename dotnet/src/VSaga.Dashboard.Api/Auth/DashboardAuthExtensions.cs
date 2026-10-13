@@ -74,7 +74,10 @@ internal static partial class DashboardAuthExtensions
     internal static WebApplication UseDashboardAuth(this WebApplication app)
     {
         if (app.Services.GetRequiredService<DashboardSecuritySettings>().RequireHttps)
+        {
             app.UseHsts();
+            app.Use(RefusePlainHttpAsync);
+        }
 
         app.UseAuthentication();
         app.UseAuthorization();
@@ -115,6 +118,25 @@ internal static partial class DashboardAuthExtensions
             LogUnknownApiKeyRole(logger, role);
         else if (found.Permissions.Contains(Permissions.AccessManage, StringComparer.Ordinal))
             LogApiKeyRoleManagesAccess(logger, role);
+    }
+
+    /// <summary>
+    /// With <c>RequireHttps</c> a request that is not HTTPS (after the trusted proxy's forwarded scheme is applied) is
+    /// answered 400 <c>https_required</c>, except the health probe, which orchestrators call over plain HTTP. Without
+    /// this the antiforgery system threw on the first token it tried to issue and the caller got an empty 500.
+    /// </summary>
+    private static async Task RefusePlainHttpAsync(HttpContext context, RequestDelegate next)
+    {
+        if (context.Request.IsHttps || context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
+        {
+            await next(context);
+            return;
+        }
+
+        LogPlainHttpRefused(
+            context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(DashboardAuthExtensions).FullName!),
+            context.Request.Method, context.Request.Path.Value ?? "/", context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        await AuthProblems.WriteHttpsRequiredAsync(context);
     }
 
     private static void AddSchemes(IServiceCollection services, DashboardSecuritySettings settings)
@@ -170,4 +192,8 @@ internal static partial class DashboardAuthExtensions
     [LoggerMessage(EventId = 7303, EventName = "ApiKeyRoleManagesAccess", Level = LogLevel.Warning,
         Message = "Dashboard:ApiKeyRole '{Role}' includes access.manage, which the API key never holds; it gets the role's other permissions")]
     private static partial void LogApiKeyRoleManagesAccess(ILogger logger, string role);
+
+    [LoggerMessage(EventId = 7312, EventName = "PlainHttpRefused", Level = LogLevel.Warning,
+        Message = "Refused {Method} {Path} from {RemoteAddress}: Dashboard:Session:RequireHttps is true and the request is plain HTTP. Reach the dashboard through its TLS proxy, and list that proxy in Dashboard:TrustedProxies so its X-Forwarded-Proto is honoured")]
+    private static partial void LogPlainHttpRefused(ILogger logger, string method, string path, string remoteAddress);
 }

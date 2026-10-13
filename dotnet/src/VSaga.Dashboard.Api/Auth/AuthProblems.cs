@@ -34,6 +34,8 @@ public static class AuthProblems
 
     public const string SetupUnavailableCode = "setup_unavailable";
 
+    public const string HttpsRequiredCode = "https_required";
+
     /// <summary>The detail of every failed sign-in, whatever the reason.</summary>
     public const string InvalidCredentialsDetail = "The username or password is not correct, or the account cannot sign in right now.";
 
@@ -64,6 +66,30 @@ public static class AuthProblems
             Detail = UnauthorizedDetail,
             Instance = context.Request.Path,
             Extensions = { ["code"] = UnauthenticatedCode },
+        };
+        return WriteAsync(context, problem);
+    }
+
+    /// <summary>
+    /// Writes 400 <see cref="HttpsRequiredCode"/> for a request that reached an API started with
+    /// <c>Dashboard:Session:RequireHttps</c> over plain HTTP: the session and antiforgery cookies are Secure always,
+    /// so nothing past this point could work, and the antiforgery system throws on such a request.
+    /// </summary>
+    public static Task WriteHttpsRequiredAsync(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Response.HasStarted)
+            return Task.CompletedTask;
+
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status400BadRequest,
+            Title = "HTTPS required",
+            Detail = "This dashboard requires HTTPS. Reach it through its TLS proxy; if you did, the proxy is not in Dashboard:TrustedProxies, "
+                + "so the API ignored its X-Forwarded-Proto header and saw plain HTTP. " + DocumentationPointer,
+            Instance = context.Request.Path,
+            Extensions = { ["code"] = HttpsRequiredCode },
         };
         return WriteAsync(context, problem);
     }

@@ -318,7 +318,8 @@ A browser user opens the dashboard; with no session the SPA sends them to `/logi
   `Dashboard:Session:RequireHttps=true` it is `Secure` always, gets the `__Host-` name prefix, and the API
   sends HSTS; the API then refuses to start unless [`Dashboard:TrustedProxies`](configuration.md#dashboardtrustedproxies)
   is set, because behind a TLS terminator the API sees plain HTTP unless it trusts the proxy's
-  `X-Forwarded-Proto`.
+  `X-Forwarded-Proto`. A request that still arrives as plain HTTP is answered `400` `https_required` (the health
+  probe excepted). The HSTS header is never sent for `localhost`, `127.0.0.1` or `[::1]`, which ASP.NET Core excludes.
 - **What it holds.** The user's id, username and **security stamp**, never what the user may do. On every
   request the API reloads the user, their teams and the roles from the identity store and evaluates access
   afresh, so a revoked grant, a disabled account or a deleted user takes effect on the next request: there is
@@ -523,6 +524,7 @@ docs/dashboard.md#authentication." (the login failure's `invalid_credentials` 40
 | `400` | `invalid_credentials` | A wrong current password (`errors.currentPassword`), a password change on a locked or disabled account (`errors.currentPassword`, the password was not checked), or a wrong setup code (`errors.code`). Not `401`: the session is fine, and the SPA signs out on a `401`. |
 | `400` | `validation` | A body the API cannot accept: an unknown or duplicate member, a wrong type, too large, or values that break a rule. `errors` maps camelCase request paths (`grants[0].sagaTypes`) to messages. |
 | `400` | `antiforgery` | The `X-XSRF-TOKEN` header is missing or does not match the session. See [CSRF protection](#csrf-protection). |
+| `400` | `https_required` | `Dashboard:Session:RequireHttps` is true and the request reached the API over plain HTTP, by its own port or because the proxy is missing from `Dashboard:TrustedProxies`, so its `X-Forwarded-Proto` was ignored. `/health` is exempt. Logged at Warning (7312). |
 | `403` | `forbidden` | The caller lacks a permission: `permission` and `sagaType` members name what was checked (either can be `null`), and the `detail` says it in words ("This needs the sagas.retry permission for saga type 'OrderSaga'."). The hub's origin guard answers `403` `forbidden` too. |
 | `403` | `password_change_required` | The user must change their password first; their access is empty until they do. |
 | `404` | none | A user, team or role id that does not exist (`/api/admin`), as a problem with no `code`. An unknown saga answers a bare `404`. |
@@ -1068,7 +1070,7 @@ reach it. Before anyone else can:
 - **Back up the identity volume, and treat the backup as credentials** ([The identity store](#the-identity-store)).
   Run **one** API instance against it.
 - **Ship the [audit log](#audit-log)** and watch its Warnings: failed sign-ins (7111), lockouts (7112), rate
-  limits (7114), and the hub's rejected origins (7311).
+  limits (7114), the hub's rejected origins (7311) and plain-HTTP requests refused under `RequireHttps` (7312).
 - **Check `/health`**: `identity` should be `healthy`, and an administrator should be able to sign in.
 
 ## Saga Map
