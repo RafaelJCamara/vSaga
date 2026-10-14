@@ -1530,14 +1530,20 @@ describe('SagaDetail', () => {
     const T = Date.parse('2026-01-01T00:00:10Z');
     const at = (offsetMs: number) => new Date(T + offsetMs).toISOString();
 
+    /** The saga's first step committed 400 ms before T, its snapshot not appended yet: no StatePersisted in the timeline. */
+    function firstStepAwaitingSnapshot(): SagaLogEntry[] {
+      return [
+        makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageId: 'm0', occurredAtUtc: at(-1000) }),
+        makeEntry({ sequenceNumber: 2, entryType: 'StepSucceeded', messageId: 'm0', fromState: 'Initial', toState: 'Submitted', occurredAtUtc: at(-400) }),
+      ];
+    }
+
     /** Step 1 with its snapshot; step 2 committed 400 ms before T, its snapshot not appended yet. */
-    function awaitingSnapshot(withSnapshots = true): SagaLogEntry[] {
+    function awaitingSnapshot(): SagaLogEntry[] {
       return [
         makeEntry({ sequenceNumber: 1, entryType: 'SagaStarted', messageId: 'm0', occurredAtUtc: at(-3000) }),
         makeEntry({ sequenceNumber: 2, entryType: 'StepSucceeded', messageId: 'm0', fromState: 'Initial', toState: 'Submitted', occurredAtUtc: at(-2900) }),
-        ...(withSnapshots
-          ? [makeEntry({ sequenceNumber: 3, entryType: 'StatePersisted', messageId: 'm0', payloadJson: '{}', occurredAtUtc: at(-2900) })]
-          : []),
+        makeEntry({ sequenceNumber: 3, entryType: 'StatePersisted', messageId: 'm0', payloadJson: '{}', occurredAtUtc: at(-2900) }),
         makeEntry({ sequenceNumber: 4, entryType: 'MessageReceived', messageId: 'm1', messageType: 'PaymentCaptured', occurredAtUtc: at(-500) }),
         makeEntry({ sequenceNumber: 5, entryType: 'StepSucceeded', messageId: 'm1', fromState: 'Submitted', toState: 'Paid', occurredAtUtc: at(-400) }),
       ];
@@ -1745,13 +1751,56 @@ describe('SagaDetail', () => {
       expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
     });
 
-    it.each([
-      ['the saga records no snapshots', false, 0],
-      ['the final step is older than the pending window', true, PENDING_SNAPSHOT_MS],
-    ])('does not fetch the timeline again when %s', (_case, withSnapshots, ageMs) => {
+    // The first step's snapshot is the one that can be late, and the timeline then holds no StatePersisted at
+    // all: found live (2026-10-14), a snapshot committed at 22:26:55 was shown as "No snapshot was recorded"
+    // from 22:26:56 until the next push, because the follow-up needed an earlier snapshot to start. The age
+    // window alone bounds the chain, so a saga with snapshots switched off gets the same short one.
+    it("keeps looking for the first step's snapshot, and a saga that records none gets the same bounded chain", () => {
       vi.useFakeTimers();
-      vi.setSystemTime(T + ageMs);
-      const fixture = setup(makeDetail({ status: 'Completed' }), awaitingSnapshot(withSnapshots));
+      vi.setSystemTime(T);
+      const fixture = setup(makeDetail({ status: 'Running' }), firstStepAwaitingSnapshot());
+
+      push(fixture);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS + SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
+
+      // The step's newest row is at T - 400, so the window ends at T + 4600: the looks come at T + 1750,
+      // T + 3250 and T + 4750, and the chain ends there.
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(4);
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(5);
+
+      vi.advanceTimersByTime(10_000);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(5);
+    });
+
+    it("shows the first step's snapshot when it lands after a look, and stops looking", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T);
+      const fixture = setup(makeDetail({ status: 'Running' }), firstStepAwaitingSnapshot());
+
+      push(fixture);
+      vi.advanceTimersByTime(REFRESH_AUDIT_MS + SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(3);
+
+      const recorded = [
+        ...firstStepAwaitingSnapshot(),
+        makeEntry({ sequenceNumber: 3, entryType: 'StatePersisted', messageId: 'm0', payloadJson: '{"Paid":false}', occurredAtUtc: at(2500) }),
+      ];
+      apiMock.getTimeline.mockReturnValue(of(recorded));
+      vi.advanceTimersByTime(SNAPSHOT_FOLLOW_UP_MS);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(4);
+      expect(fixture.componentInstance.timeline()).toEqual(recorded);
+
+      vi.advanceTimersByTime(10_000);
+      expect(apiMock.getTimeline).toHaveBeenCalledTimes(4);
+    });
+
+    it('does not fetch the timeline again when the final step is older than the pending window', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T + PENDING_SNAPSHOT_MS);
+      const fixture = setup(makeDetail({ status: 'Completed' }), awaitingSnapshot());
 
       push(fixture);
       vi.advanceTimersByTime(REFRESH_AUDIT_MS + SNAPSHOT_FOLLOW_UP_MS + 1000);

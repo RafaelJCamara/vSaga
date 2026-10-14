@@ -98,13 +98,15 @@ function isRetryable(status: SagaStatus | undefined): boolean {
 
 /**
  * Whether the final step's snapshot may still be on its way: the step has an outcome but no
- * snapshot, its newest row is younger than PENDING_SNAPSHOT_MS (either side of the browser's clock,
- * which can trail the API host's), and the saga records snapshots at all. Without that last test an
- * older saga, or one with snapshots switched off, would fetch again after every push.
+ * snapshot, and its newest row is younger than PENDING_SNAPSHOT_MS (either side of the browser's clock,
+ * which can trail the API host's). The age window alone bounds the chain: an older saga fetches no more.
+ * A saga's first snapshot may be the one that is late, so the timeline holding no StatePersisted yet does
+ * not stop it; the price is that a saga with snapshots switched off, open on this page, gets the same
+ * short chain (about four fetches, none once the window is out) after a push instead of none.
  */
 function awaitsSnapshot(history: SagaHistory, nowMs: number): boolean {
   const last = history.transitions.at(-1);
-  if (!last || history.snapshotCount === 0) return false;
+  if (!last) return false;
   if (last.outcome === 'in-flight' || last.snapshotState !== 'missing') return false;
   const at = toMillis(last.lastOccurredAtUtc);
   return at !== null && Math.abs(nowMs - at) < PENDING_SNAPSHOT_MS;

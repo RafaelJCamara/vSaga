@@ -412,9 +412,10 @@ skipped as a duplicate) and a timeout that was claimed but not handled.
   (`refreshDetail()` never touches `loading` and keeps the summary with the higher version). Pushed
   timeline entries trigger the same refresh instead of being appended. A follow-up timeline fetch
   1500 ms after a push-triggered refresh runs only when the last step has an outcome but no snapshot
-  (`missing`), its newest row is younger than `PENDING_SNAPSHOT_MS` (whatever the saga's status, so a
-  saga that has just finished is covered), and the timeline already holds at least one
-  `StatePersisted`. Each follow-up that still finds the snapshot missing under the same conditions
+  (`missing`) and its newest row is younger than `PENDING_SNAPSHOT_MS` (whatever the saga's status, so a
+  saga that has just finished is covered); the age window alone bounds it, so a saga whose first snapshot is
+  the late one is followed up too, and a saga with snapshots switched off gets the same short chain after a
+  push. Each follow-up that still finds the snapshot missing under the same conditions
   schedules the next one 1500 ms later, so the chain ends with the window (about four follow-up fetches, the last
   just after it; a browser clock that trails the API's widens the window and adds a few): the engine may append a snapshot up to its own five-second deadline after the commit,
   and a single look at 1500 ms left a snapshot that landed at 3.5 s shown as missing (live run of
