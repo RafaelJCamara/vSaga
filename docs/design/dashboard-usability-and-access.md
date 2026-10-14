@@ -1667,15 +1667,11 @@ four history files have the evidence and what was never exercised.
   (`USER_GUIDE_URL`) so the choice can change later without touching the tours. The run of 2026-10-14
   found the link answering 200 and all seven tour anchors matching headings of the guide, so what is left
   is the decision, which is the maintainer's.
-- **What a `DeliveryExhausted` entry says about a transient database error.** `UpdateAsync` maps every
-  `DbUpdateException` to `SagaAlreadyExistsException` (its comment says so) and the entry records the outer
-  message, so the timeline of a saga that failed on a dropped connection reads "A '...' saga instance with
-  correlation id '...' already exists." The cause is the inner exception. Mapping only the unique-index
-  violation, or recording the inner message too, is a change to a persistence contract's behaviour and was
-  not made.
-- **A saga's first snapshot being late is not followed up.** The follow-up fetch needs one `StatePersisted`
-  already in the timeline (§5.3), so a snapshot that lands inside the pending window for a saga that has none
-  yet shows "No snapshot was recorded" until the next push.
+- **Mapping only a unique-index violation to `SagaAlreadyExistsException`.** `UpdateAsync` and `InsertAsync` of
+  the EF stores still map every `DbUpdateException` to it (persistence-contracts.md Q3, clause D10). The timeline no
+  longer misleads, because the entry now carries the innermost message too (`ab8883d`), but the exception type a
+  caller sees for a transient database error is still the collision's. Doing it needs a provider-neutral way to
+  recognise the violation in the EF project and a conformance clause, so it is a contract decision.
 
 Limits of the SPA, left as they are:
 
@@ -1688,6 +1684,16 @@ Limits elsewhere:
   adds; vSaga ships no configuration key or code for it (§8.3). Seen in the identity database on 2026-10-14:
   the `DataProtectionKeys` row holds the master key in clear next to `requiresEncryption="true"`. Whether
   vSaga should ship a certificate setting for it is the maintainer's decision.
+
+Closed since, by [`../history/2026-10-14-small-fixes-round-3.md`](../history/2026-10-14-small-fixes-round-3.md):
+**what a `DeliveryExhausted` entry says about a transient database error** (`ab8883d`: every entry that records an
+exception, `StepFailed`, `CompensationStepFailed` and a failed `.CallHttp` reply as well, now names the innermost
+message after the outer one; seen live as "... already exists. Cause: P0001: ... (instance update)"), **a saga's first
+snapshot being late** (`914d13b`: the age window alone bounds the follow-up chain; before, the page showed "No
+snapshot was recorded" for about 9 s after the snapshot was committed, after, the data appeared 0.13 s after the
+commit, on the second follow-up), and **the missing conformance case for a persist that loses its race at the commit**
+(`ebe9e28`: it runs on InMemory, EF Core on SQLite and Postgres, Redis and MongoDB, and is red on EF Core without
+`Forget`; B3 and Q2 of persistence-contracts.md say so).
 
 Closed since: **`"splitting": false`** (`dd37bd1`) made `ng test` print a deprecation notice on every run. The
 builder prints it with Vitest 4.1.11 and with 5.0.4, so waiting for Vitest 5 was not enough: the project moved to
