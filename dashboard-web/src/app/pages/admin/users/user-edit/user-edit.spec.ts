@@ -2676,6 +2676,39 @@ describe('UserEdit', () => {
       expect(el().querySelector('.locked')).toBeNull();
     });
 
+    it('says when a temporary password expires, and turns it into Password expired when it does while the page is open', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+      await open(
+        '/admin/users/u-alice',
+        adminData({
+          users: [
+            ADMIN,
+            adminUser({
+              ...ALICE,
+              mustChangePassword: true,
+              passwordExpiresAtUtc: '2026-10-03T12:30:00+00:00',
+            }),
+          ],
+        }),
+      );
+      const note = () =>
+        Array.from(el().querySelectorAll('.muted'))
+          .map((e) => e.textContent?.replace(/\s+/g, ' ').trim() ?? '')
+          .find((text) => text.includes('Temporary password'));
+      expect(chips()).toEqual(['Must change password']);
+      expect(note()).toContain('Temporary password expires');
+
+      await vi.advanceTimersByTimeAsync(29 * 60_000);
+      await settle();
+      expect(chips()).toEqual(['Must change password']);
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      await settle();
+      expect(chips()).toEqual(['Password expired']);
+      expect(note()).toContain('Temporary password expired');
+    });
+
     it('leaves no timer behind when the page is left', async () => {
       await openLocked(15);
       expect(vi.getTimerCount()).toBeGreaterThan(0);

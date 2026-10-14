@@ -13,7 +13,9 @@
       @if (state.locked) {
         <span class="chip chip--danger">Locked</span>
       }
-      @if (state.mustChangePassword) {
+      @if (state.passwordExpired) {
+        <span class="chip chip--danger">Password expired</span>
+      } @else if (state.mustChangePassword) {
         <span class="chip">Must change password</span>
       }
     }
@@ -288,6 +290,12 @@
         >
           Reset password
         </button>
+        @if (existing.passwordExpiresAtUtc; as expires) {
+          <span class="muted">
+            {{ status()?.passwordExpired ? 'Temporary password expired' : 'Temporary password expires' }}
+            <app-local-time [value]="expires" format="datetime" />
+          </span>
+        }
         @if (status()?.locked) {
           <span class="locked">
             Locked until

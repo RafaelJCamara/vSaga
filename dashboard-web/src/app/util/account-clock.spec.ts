@@ -1,9 +1,9 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
-import { lockoutClock } from './lockout-clock';
+import { accountClock } from './account-clock';
 
-describe('lockoutClock', () => {
+describe('accountClock', () => {
   const START = Date.parse('2026-10-03T12:00:00Z');
 
   beforeEach(() => {
@@ -14,8 +14,8 @@ describe('lockoutClock', () => {
   afterEach(() => vi.useRealTimers());
 
   /** The clock over `users`, with its effect running (an effect runs when the app does). */
-  function clock(users: () => { lockedUntilUtc: string | null }[]) {
-    const now = TestBed.runInInjectionContext(() => lockoutClock(users));
+  function clock(users: () => { lockedUntilUtc: string | null; passwordExpiresAtUtc?: string | null }[]) {
+    const now = TestBed.runInInjectionContext(() => accountClock(users));
     TestBed.tick();
     return now;
   }
@@ -97,6 +97,44 @@ describe('lockoutClock', () => {
     await vi.advanceTimersByTimeAsync(60_000 + 10);
     TestBed.tick();
     expect(now()).toBeGreaterThan(START + 75 * 60_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('moves the time when a temporary password expires, and not before', async () => {
+    const now = clock(() => [{ lockedUntilUtc: null, passwordExpiresAtUtc: at(30) }]);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(30 * 60_000 - 1);
+    TestBed.tick();
+    expect(now()).toBe(START);
+
+    await vi.advanceTimersByTimeAsync(2);
+    TestBed.tick();
+    expect(now()).toBeGreaterThan(START + 30 * 60_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('waits for the nearer of a lockout end and a password expiry, then for the other', async () => {
+    const now = clock(() => [{ lockedUntilUtc: at(10), passwordExpiresAtUtc: at(5) }]);
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
+    TestBed.tick();
+    expect(now()).toBeGreaterThan(START + 5 * 60_000);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    TestBed.tick();
+    expect(now()).toBeGreaterThan(START + 10 * 60_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('sets no timer for a password expiry that has passed or cannot be read', () => {
+    clock(() => [
+      { lockedUntilUtc: null, passwordExpiresAtUtc: at(-5) },
+      { lockedUntilUtc: null, passwordExpiresAtUtc: 'soon' },
+      { lockedUntilUtc: null, passwordExpiresAtUtc: null },
+    ]);
+
     expect(vi.getTimerCount()).toBe(0);
   });
 

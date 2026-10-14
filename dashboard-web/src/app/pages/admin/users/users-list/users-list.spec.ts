@@ -186,6 +186,30 @@ describe('UsersList', () => {
         rows().map((row) => Array.from(row.querySelectorAll('.chip')).map((c) => c.textContent)),
       ).toEqual([['Disabled'], ['Locked'], ['Must change password']]);
     });
+
+    it('says Password expired, in place of Must change password, once the temporary password has expired', async () => {
+      await render({
+        users: [
+          adminUser({
+            id: 'a',
+            username: 'a',
+            mustChangePassword: true,
+            passwordExpiresAtUtc: '2020-01-01T00:00:00+00:00',
+          }),
+          adminUser({
+            id: 'b',
+            username: 'b',
+            mustChangePassword: true,
+            passwordExpiresAtUtc: '2999-01-01T00:00:00+00:00',
+          }),
+          adminUser({ id: 'c', username: 'c', mustChangePassword: true }),
+        ],
+      });
+
+      expect(
+        rows().map((row) => Array.from(row.querySelectorAll('.chip')).map((c) => c.textContent)),
+      ).toEqual([['Password expired'], ['Must change password'], ['Must change password']]);
+    });
   });
 
   describe('teams', () => {
@@ -404,6 +428,30 @@ describe('UsersList', () => {
       await vi.advanceTimersByTimeAsync(5 * 60_000);
       fixture.detectChanges();
       expect(chipsOf('bbb')).toEqual([]);
+    });
+
+    it('turns Must change password into Password expired when the temporary password expires while the page is open', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+      await render({
+        users: [
+          adminUser({
+            id: 'u-t',
+            username: 'tina',
+            mustChangePassword: true,
+            passwordExpiresAtUtc: '2026-10-03T12:30:00+00:00',
+          }),
+        ],
+      });
+      expect(chipsOf('tina')).toEqual(['Must change password']);
+
+      await vi.advanceTimersByTimeAsync(29 * 60_000);
+      fixture.detectChanges();
+      expect(chipsOf('tina')).toEqual(['Must change password']);
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      fixture.detectChanges();
+      expect(chipsOf('tina')).toEqual(['Password expired']);
     });
 
     it('sets no timer when no listed user is locked, and clears it when the page is destroyed', async () => {

@@ -341,7 +341,9 @@ A browser user opens the dashboard; with no session the SPA sends them to `/logi
   (default 168, a week; `0` never) after it was set, and an administrator sets another one. The refusal is the
   same uniform `401` `invalid_credentials` as any failed sign-in, counts nothing against the account, and is audited as
   `TemporaryPasswordExpired`. Someone already signed in when it expires can still change it; a password the user chose
-  never expires.
+  never expires. The admin user record carries `passwordExpiresAtUtc` for a user who still has to change the password
+  (`null` for anyone else, or when it does not expire), also after it has passed, so the dashboard can say "expires" or
+  "expired" by its own clock.
   Until they do, their access is empty: every saga route answers `403` `password_change_required`, and
   `POST /api/auth/password` is the way out (the SPA sends them to the Account page). The seeded and the
   setup administrator do not have to.

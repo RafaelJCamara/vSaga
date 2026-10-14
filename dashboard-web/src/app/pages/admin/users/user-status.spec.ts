@@ -9,6 +9,7 @@ describe('userStatus', () => {
       disabled: false,
       locked: false,
       mustChangePassword: false,
+      passwordExpired: false,
     });
   });
 
@@ -32,6 +33,19 @@ describe('userStatus', () => {
     expect(lockedAt('2026-10-03T12:00:00Z')).toBe(false);
     expect(lockedAt('2026-10-03T11:59:59Z')).toBe(false);
     expect(lockedAt(null)).toBe(false);
+  });
+
+  it('counts a temporary password as expired from the instant it expires, while the user still has to change it', () => {
+    const expiredAt = (iso: string | null, mustChangePassword = true) =>
+      userStatus(adminUser({ mustChangePassword, passwordExpiresAtUtc: iso }), NOW).passwordExpired;
+
+    expect(expiredAt('2026-10-03T12:00:01Z')).toBe(false);
+    expect(expiredAt('2026-10-03T12:00:00Z')).toBe(true);
+    expect(expiredAt('2026-10-03T11:59:59Z')).toBe(true);
+    expect(expiredAt(null)).toBe(false);
+    expect(expiredAt('soon')).toBe(false);
+    // A password the user keeps has nothing to expire, whatever the field says.
+    expect(expiredAt('2026-10-03T11:59:59Z', false)).toBe(false);
   });
 
   it('reads the seven fractional digits .NET writes', () => {

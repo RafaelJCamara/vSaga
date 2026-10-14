@@ -68,7 +68,7 @@ public sealed class AdminUsersEndpointsTests : IAsyncLifetime, IAsyncDisposable
 
             Assert.Equal(HttpStatusCode.Created, created.StatusCode);
             var user = await ReadNodeAsync(created);
-            AssertMatchesFixture("user.response.json", user, "id", "createdAtUtc");
+            AssertMatchesFixture("user.response.json", user, "id", "createdAtUtc", "passwordExpiresAtUtc");
             Assert.Equal($"{Users}/{user["id"]!.GetValue<Guid>()}", created.Headers.Location?.OriginalString);
 
             using var read = await admin.GetAsync(created.Headers.Location!.OriginalString);
@@ -138,6 +138,21 @@ public sealed class AdminUsersEndpointsTests : IAsyncLifetime, IAsyncDisposable
         }
     }
 
+    /// <summary>The expiry is a week ahead (the default lifetime) for a password the user still has to change, and null for one they keep.</summary>
+    private static void AssertExpiry(JsonNode user, bool temporary)
+    {
+        var expires = user["passwordExpiresAtUtc"];
+        if (!temporary)
+        {
+            Assert.Null(expires);
+            return;
+        }
+
+        Assert.NotNull(expires);
+        var ahead = DateTimeOffset.Parse(expires.GetValue<string>(), CultureInfo.InvariantCulture) - DateTimeOffset.UtcNow;
+        Assert.InRange(ahead, TimeSpan.FromHours(DashboardSecuritySettings.DefaultTemporaryPasswordLifetimeHours - 1), TimeSpan.FromHours(DashboardSecuritySettings.DefaultTemporaryPasswordLifetimeHours));
+    }
+
     [Theory]
     [InlineData("""{"newPassword":"another temporary password"}""", true)]
     [InlineData("""{"newPassword":"another temporary password","mustChangePassword":false}""", false)]
@@ -149,7 +164,9 @@ public sealed class AdminUsersEndpointsTests : IAsyncLifetime, IAsyncDisposable
         {
             using var reset = await admin.PostAsync($"{Users}/{bob.Id}/password", body);
 
-            Assert.Equal(expected, (await ReadNodeAsync(reset))["mustChangePassword"]!.GetValue<bool>());
+            var user = await ReadNodeAsync(reset);
+            Assert.Equal(expected, user["mustChangePassword"]!.GetValue<bool>());
+            AssertExpiry(user, expected);
         }
     }
 
@@ -166,6 +183,7 @@ public sealed class AdminUsersEndpointsTests : IAsyncLifetime, IAsyncDisposable
             Assert.Equal(HttpStatusCode.Created, created.StatusCode);
             var user = await ReadNodeAsync(created);
             Assert.Equal(expected, user["mustChangePassword"]!.GetValue<bool>());
+            AssertExpiry(user, expected);
             Assert.Empty(user["grants"]!.AsArray());
             Assert.Empty(user["teamIds"]!.AsArray());
         }

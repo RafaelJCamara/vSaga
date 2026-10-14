@@ -61,7 +61,9 @@
                 @if (row.status.locked) {
                   <span class="chip chip--danger">Locked</span>
                 }
-                @if (row.status.mustChangePassword) {
+                @if (row.status.passwordExpired) {
+                  <span class="chip chip--danger">Password expired</span>
+                } @else if (row.status.mustChangePassword) {
                   <span class="chip">Must change password</span>
                 }
               </div>

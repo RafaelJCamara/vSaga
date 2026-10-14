@@ -636,7 +636,7 @@ The list has a **Filter by username, name or team** box and a count (**N total**
 | --- | --- |
 | **Username** | A link to the user ("(you)" marks your own account). |
 | **Display name** | The person's name. |
-| **Status** | Chips: **Disabled** (cannot sign in and holds no access), **Locked** (too many wrong passwords) and **Must change password**. |
+| **Status** | Chips: **Disabled** (cannot sign in and holds no access), **Locked** (too many wrong passwords), **Must change password**, and **Password expired** (the temporary password you set has run out: the person cannot sign in until you reset it). |
 | **Teams** | The teams the user is in, as links, or **None**. |
 | **Access** | The user's *own* grants, one line each such as `Operator · all types` or `Viewer · 2 types`, or **None directly**. |
 | **Last sign-in** | A date and time, or **Never**. |
@@ -664,7 +664,9 @@ An existing user's page also has an **Account** section:
 - A password you set for someone, with **Require a change at next sign-in** ticked, is temporary: it is accepted for
   `Dashboard:Password:TemporaryLifetimeHours` (168, a week, by default; `0` never expires) after you set it. Once that
   has passed the person cannot sign in, and sees the same "Sign-in failed" as for a wrong password. Reset their password
-  again to give them a new one. A password they chose themselves never expires.
+  again to give them a new one. A password they chose themselves never expires. The user's page says when a temporary
+  password expires, or expired, next to **Reset password**, and the **Password expired** chip shows in the list and on
+  the page.
 - **Locked until** *time* and **Unlock**, shown while the account is locked.
 - **Delete user**, which asks "Delete the user X? Their grants go with them. This cannot be undone." You cannot
   delete your own account.

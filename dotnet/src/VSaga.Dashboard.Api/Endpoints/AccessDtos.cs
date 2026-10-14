@@ -182,6 +182,11 @@ public sealed record RoleResponse(Guid Id, string Name, string? Description, boo
 /// <param name="IsEnabled">False for a disabled account, which cannot sign in and holds no access.</param>
 /// <param name="MustChangePassword">True while the user must choose a new password before holding any access.</param>
 /// <param name="LockedUntilUtc">When a lockout in force ends; null when the account is not locked now.</param>
+/// <param name="PasswordExpiresAtUtc">
+/// When the temporary password an administrator set stops being accepted at sign-in; null when the user does not have
+/// to change their password or the password does not expire. It is sent once it has passed too, so a client can tell
+/// "expires" from "expired" by its own clock.
+/// </param>
 /// <param name="LastSignInAtUtc">The last successful sign-in, or null if never.</param>
 /// <param name="CreatedAtUtc">When the account was created.</param>
 /// <param name="Grants">The user's own grants.</param>
@@ -193,6 +198,7 @@ public sealed record UserResponse(
     bool IsEnabled,
     bool MustChangePassword,
     DateTimeOffset? LockedUntilUtc,
+    DateTimeOffset? PasswordExpiresAtUtc,
     DateTimeOffset? LastSignInAtUtc,
     DateTimeOffset CreatedAtUtc,
     IReadOnlyList<GrantDto> Grants,
@@ -210,6 +216,7 @@ public sealed record UserResponse(
             user.IsEnabled,
             user.MustChangePassword,
             user.LockoutEndUtc > now ? user.LockoutEndUtc : null,
+            user.MustChangePassword ? user.PasswordExpiresAtUtc : null,
             user.LastSignInAtUtc,
             user.CreatedAtUtc,
             [.. user.Grants.Select(GrantDto.From)],

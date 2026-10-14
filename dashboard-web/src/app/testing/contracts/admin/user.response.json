@@ -5,6 +5,7 @@
   "isEnabled": true,
   "mustChangePassword": true,
   "lockedUntilUtc": null,
+  "passwordExpiresAtUtc": "2026-10-10T09:15:00+00:00",
   "lastSignInAtUtc": null,
   "createdAtUtc": "2026-10-03T09:15:00+00:00",
   "grants": [

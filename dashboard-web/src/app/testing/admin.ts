@@ -64,6 +64,7 @@ export function adminUser(overrides: Partial<AdminUser> = {}): AdminUser {
     isEnabled: true,
     mustChangePassword: false,
     lockedUntilUtc: null,
+    passwordExpiresAtUtc: null,
     lastSignInAtUtc: null,
     createdAtUtc: '2026-10-03T09:15:00+00:00',
     grants: [],

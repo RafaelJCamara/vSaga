@@ -24,7 +24,7 @@ import {
   belongsToField,
   placeFieldErrors,
 } from '../../../../util/admin-failure';
-import { lockoutClock } from '../../../../util/lockout-clock';
+import { accountClock } from '../../../../util/account-clock';
 import { leaveTo, trackDestroyed } from '../../../../util/page-lifecycle';
 import {
   explainAccess,
@@ -110,8 +110,8 @@ export class UserEdit {
     return id === null ? null : (this.store.users().find((u) => u.id === id) ?? this.pending());
   });
   protected readonly creating = computed(() => this.id() === null);
-  /** The time, moved when the user's lockout ends: "Locked" and Unlock do not outlive it. */
-  private readonly now = lockoutClock(() => {
+  /** The time, moved when the user's lockout ends or temporary password expires: "Locked", Unlock and "Password expires" do not outlive it. */
+  private readonly now = accountClock(() => {
     const user = this.user();
     return user === null ? [] : [user];
   });

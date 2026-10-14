@@ -49,6 +49,11 @@ export interface AdminUser {
   mustChangePassword: boolean;
   /** When a lockout in force ends; null when the account is not locked now. */
   lockedUntilUtc: string | null;
+  /**
+   * When the temporary password an administrator set stops being accepted at sign-in; null when the user does not
+   * have to change their password or it does not expire. Sent after it has passed too: compare with the clock.
+   */
+  passwordExpiresAtUtc: string | null;
   /** The last successful sign-in; null if never. */
   lastSignInAtUtc: string | null;
   createdAtUtc: string;

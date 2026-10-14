@@ -9,17 +9,22 @@ export interface UserStatus {
   locked: boolean;
   /** The user must choose a new password at next sign-in, and holds no access until then. */
   mustChangePassword: boolean;
+  /** The temporary password an administrator set has expired: the user cannot sign in until another is set. */
+  passwordExpired: boolean;
 }
 
 /**
  * The status of `user` at `now`. A lockout counts while its end is ahead: the API sends `lockedUntilUtc` only
- * for one in force when it answers, but a page can be open longer than a lockout lasts. Pure.
+ * for one in force when it answers, but a page can be open longer than a lockout lasts; the same goes for
+ * `passwordExpiresAtUtc`, which the API also sends once it has passed. Pure.
  */
 export function userStatus(user: AdminUser, now: number = Date.now()): UserStatus {
   const until = toMillis(user.lockedUntilUtc);
+  const expires = toMillis(user.passwordExpiresAtUtc);
   return {
     disabled: !user.isEnabled,
     locked: until !== null && until > now,
     mustChangePassword: user.mustChangePassword,
+    passwordExpired: user.mustChangePassword && expires !== null && expires <= now,
   };
 }

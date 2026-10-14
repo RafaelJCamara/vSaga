@@ -50,6 +50,7 @@ const USER_KEYS: Record<keyof AdminUser, true> = {
   isEnabled: true,
   mustChangePassword: true,
   lockedUntilUtc: true,
+  passwordExpiresAtUtc: true,
   lastSignInAtUtc: true,
   createdAtUtc: true,
   grants: true,
