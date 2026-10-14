@@ -309,6 +309,58 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
         Assert.Equal(1, stored.Version);
     }
 
+    /// <summary>
+    /// Clause 4 where the race is lost at the commit rather than at a version pre-check (B3, Q2): a rival
+    /// unit of work commits after this update's read and before its write, so the store only learns of it
+    /// when it writes. The unit of work must still be usable afterwards — the dead-letter record the engine
+    /// appends next is a later commit in the same unit of work. EF Core's change tracker is the provider
+    /// this guards: an entity left Modified by the failed save would be re-sent by that commit, which
+    /// throws a raw <c>DbUpdateConcurrencyException</c> and takes the staged row down with it. The loser gets
+    /// <see cref="SagaConcurrencyException"/>, the live object is back at its expected version, the log entry
+    /// and the row staged before the failed update become durable, and the stored row keeps the winner's
+    /// value. (A store that locks across serialising keeps the rival out, so there is no race to lose and
+    /// the case checks only that the update then succeeded.)
+    /// </summary>
+    [Fact]
+    public async Task Update_ThatLosesItsRaceAtTheCommit_LeavesALaterCommitInTheSameUnitOfWorkFree()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var state = new RaceProbeSagaState { CorrelationId = Guid.NewGuid(), SagaType = "OrderSaga", CurrentState = "Started", CreatedAtUtc = T0, UpdatedAtUtc = T0 };
+        await using (var uow = await stores.BeginAsync())
+            await uow.Snapshots<RaceProbeSagaState>().InsertAsync(state);
+
+        await using (var loserUow = await stores.BeginAsync())
+        {
+            var live = (await loserUow.Snapshots<RaceProbeSagaState>().FindAsync("OrderSaga", state.CorrelationId))!;
+            await EnqueueAsync(loserUow, "staged-before", T0, state.CorrelationId);
+            // See Update_WhenARivalWritesMidUpdate for why the hook blocks, and why the wait is bounded.
+            live.OnNextSerialize = () => Task.WhenAny(Task.Run(() => RivalUpdateAsync(stores, state.CorrelationId)), Task.Delay(RivalWindow))
+                .GetAwaiter().GetResult();
+            live.CurrentState = "Lost";
+
+            var thrown = await Record.ExceptionAsync(() => loserUow.Snapshots<RaceProbeSagaState>().UpdateAsync(live, expectedVersion: 0));
+
+            if (thrown is null)
+            {
+                Assert.Equal(1, live.Version);
+                return;
+            }
+
+            Assert.IsType<SagaConcurrencyException>(thrown);
+            Assert.Equal(0, live.Version);
+
+            await loserUow.EventLog.AppendAsync(SagaLogEntry.Create(state.CorrelationId, "OrderSaga", SagaEntryType.DeliveryExhausted, messageId: "m-1", occurredAtUtc: T0));
+            await loserUow.CommitAsync();
+        }
+
+        await using var reader = await stores.BeginAsync();
+        var stored = await reader.Snapshots<RaceProbeSagaState>().FindAsync("OrderSaga", state.CorrelationId);
+        Assert.Equal("Won", stored!.CurrentState);
+        Assert.Equal(1, stored.Version);
+        Assert.Equal("m-1", Assert.Single(await reader.EventLog.GetTimelineAsync("OrderSaga", state.CorrelationId)).MessageId);
+        Assert.Equal(["staged-before"], (await reader.Outbox.ClaimPendingAsync(T0.AddMinutes(1), batchSize: 1000)).Select(m => m.MessageId), StringComparer.Ordinal);
+    }
+
     private static async Task RivalUpdateAsync(IProviderStores stores, Guid correlationId)
     {
         await using var rival = await stores.BeginAsync();
