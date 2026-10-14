@@ -62,8 +62,8 @@ API drops those), but gives a scoped caller short pages and a total over the wro
 ## What a green run covers on reads, nulls and updates
 
 The summary-reader cases hold every item `ListAsync` and `FindChildrenAsync` return to the state that was
-written, field by field — kind, current state, status, version (an instance updated once or twice lists with
-that version, not a constant), parent link and both timestamps (at the `TimestampResolution` you declare) —
+written, field by field — kind, current state, status, version (through `ListAsync`, an instance updated once or
+twice lists with that version, not a constant), parent link and both timestamps (at the `TimestampResolution` you declare) —
 whichever filter selected it, not only to row ids, counts and page numbers; a root saga's parent link comes
 back null. An outbox row enqueued without a destination is claimed
 with a null `Destination`, and an event-log entry written without a source service, destination service or
@@ -75,7 +75,8 @@ business key the update leaves alone still resolves to the instance.
 A write that fails does not poison the unit of work (clause 4): after an update that loses its race at the
 commit, an update onto a business key another instance holds, or an insert whose business key is taken, a
 later log entry and commit in the same unit of work still succeed, and what was staged before the failure
-becomes durable with them. The failed write itself leaves no trace — the live object is back at its expected
+becomes durable with them (a provider that declares `SupportsAtomicUnitOfWork = false` writes an outbox row
+immediately, so for it that half is met trivially). The failed write itself leaves no trace — the live object is back at its expected
 version, the loser is not stored and the holder keeps the key. This is the case a provider with a change
 tracker (EF Core) fails when it leaves the rejected row in the tracker for the next commit to re-send.
 
