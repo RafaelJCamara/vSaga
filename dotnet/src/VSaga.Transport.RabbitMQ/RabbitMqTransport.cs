@@ -56,8 +56,7 @@ public sealed class RabbitMqTransport(
 
     private async Task PublishInternalAsync(string messageTypeName, ReadOnlyMemory<byte> body, MessageEnvelope envelope, string? destinationQueue, CancellationToken cancellationToken)
     {
-        var connection = await connectionManager.GetConnectionAsync(cancellationToken);
-        await using var channel = await connection.CreateChannelAsync(PublishChannelOptions, cancellationToken);
+        await using var channel = await OpenPublishChannelAsync(messageTypeName, envelope, cancellationToken);
 
         var props = new BasicProperties
         {
@@ -100,6 +99,28 @@ public sealed class RabbitMqTransport(
             logger.LogError(ex, "Publish of {MessageType} for correlation id {CorrelationId} was {Outcome} by the broker",
                 messageTypeName, envelope.CorrelationId, ex.IsReturn ? "returned as unroutable" : "nacked");
             throw new MessageTransportPublishException(messageTypeName, envelope.CorrelationId, ex.IsReturn, detail, ex);
+        }
+    }
+
+    // A broker that is down, or that stopped answering, fails here, before any publish: connecting throws
+    // BrokerUnreachableException, and opening a channel on a connection whose broker went quiet throws a
+    // TaskCanceledException after the client's own timeout (about 25 s), neither of which says a publish was
+    // refused. They are wrapped like every other way a hand-off to the broker fails, so a caller that handles
+    // MessageTransportPublishException (the saga engine, the dashboard's retry) sees the cause and the message
+    // that was lost. The caller's own cancellation is not a broker failure and passes through unchanged.
+    private async Task<IChannel> OpenPublishChannelAsync(string messageTypeName, MessageEnvelope envelope, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var connection = await connectionManager.GetConnectionAsync(cancellationToken);
+            return await connection.CreateChannelAsync(PublishChannelOptions, cancellationToken);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogError(ex, "Publish of {MessageType} for correlation id {CorrelationId} could not reach the broker",
+                messageTypeName, envelope.CorrelationId);
+            throw new MessageTransportPublishException(messageTypeName, envelope.CorrelationId, isUnroutable: false,
+                $"could not connect to RabbitMQ or open a channel on it ({ex.GetType().Name}: {ex.Message}) -- is the broker running and answering?", ex);
         }
     }
 

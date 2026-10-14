@@ -271,8 +271,8 @@ public static class SagaEndpoints
         }
         catch (Exception ex)
         {
-            // IMessageTransport does not promise to wrap every failure: RabbitMqTransport, for one, lets a
-            // TaskCanceledException out of opening a channel on a broker that stopped answering. The reset is
+            // IMessageTransport does not promise to wrap every failure: a third-party transport may let its
+            // client library's exception out (RabbitMqTransport used to, for a broker that stopped answering). The reset is
             // committed either way, so it is undone the same way. That is safe even when the publish may have
             // gone out after all: the restore is version-checked, so if the redrive already moved the saga on,
             // the restore loses and reports it.

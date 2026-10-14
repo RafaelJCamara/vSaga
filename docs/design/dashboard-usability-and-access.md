@@ -703,8 +703,9 @@ Worked examples follow (§7.6).
    recorder. Answer 502 as a problem whose detail says whether the saga was restored to its previous
    state and status, with a `restored` boolean extension. A `MessageTransportPublishException`'s message
    goes into the detail; any other exception is logged as an Error and the detail names only its type,
-   because `IMessageTransport` does not promise to wrap every failure (`RabbitMqTransport` lets a
-   `TaskCanceledException` out of opening a channel on a broker that stopped answering). Restoring after
+   because `IMessageTransport` does not promise to wrap every failure (`RabbitMqTransport` let a
+   `TaskCanceledException` out of opening a channel on a broker that stopped answering until it wrapped that too;
+   a third-party transport may still). Restoring after
    an exception whose publish outcome is unknown is still safe: the restore is version-checked, so if
    the redrive did go out and moved the saga on first, the restore loses and the 502 says so.
 
@@ -1688,6 +1689,10 @@ Limits elsewhere:
   the `DataProtectionKeys` row holds the master key in clear next to `requiresEncryption="true"`. Whether
   vSaga should ship a certificate setting for it is the maintainer's decision.
 
+Closed since: **`RabbitMqTransport` wrapping a failure to connect or to open a channel** (a broker that stopped answering made
+`CreateChannelAsync` throw a bare `TaskCanceledException` after 20.0 s on a paused broker; the publish now fails as a
+`MessageTransportPublishException` naming the cause, and the caller's own cancellation still passes through).
+
 Closed since, by [`../history/2026-10-14-small-fixes-round-3.md`](../history/2026-10-14-small-fixes-round-3.md):
 **what a `DeliveryExhausted` entry says about a transient database error** (`ab8883d`: every entry that records an
 exception, `StepFailed`, `CompensationStepFailed` and a failed `.CallHttp` reply as well, now names the innermost
@@ -1736,8 +1741,3 @@ defects). What the run of 2026-10-13 covered and found is in
   browser that has signed in before skip a shared lock). Until then lockout can deny a known username;
   what ends a lock is documented (§8.4).
 - **Single sign-on.**
-- **`RabbitMqTransport` wrapping channel-open failures in `MessageTransportPublishException`.** A broker
-  that stops answering makes `CreateChannelAsync` throw `TaskCanceledException` after about 25 seconds,
-  outside the adapter's wrapping. The retry endpoint restores on any exception (§7.3), so the dashboard
-  no longer depends on it, but the engine's own publish paths and the 502 detail would name the cause
-  better with it.
