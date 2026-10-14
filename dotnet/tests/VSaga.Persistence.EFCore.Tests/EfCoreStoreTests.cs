@@ -15,11 +15,12 @@ public sealed class TestState : SagaState
 /// What the EF Core store tests keep after the provider-neutral conformance suite (<c>VSaga.Persistence.Conformance</c>,
 /// run on SQLite by the <c>Sqlite*ConformanceTests</c> beside this class and on Postgres by the <c>Postgres*</c> ones) took
 /// over the cases it makes too. Every test left here guards something a suite case does not fail for: the change
-/// tracker after a failed save (injected through a <c>SaveChangesInterceptor</c> or a SQLite trigger), SQLite's own
-/// error text, the <c>DbUpdateException</c> chained under <see cref="SagaAlreadyExistsException"/>, an update that must
-/// leave a second saga type's row alone, a null destination and null service-map fields coming back null, and what
-/// <c>ListAsync</c> and <c>FindChildrenAsync</c> project into each summary, which the suite's cases read only for the
-/// row ids. See persistence-contracts.md Q4.
+/// tracker after a failed or rejected save (the suite never commits again after one), SQLite's own error text (a
+/// SQLite trigger, <see cref="SagaErrorText"/>), the <c>DbUpdateException</c> chained under
+/// <see cref="SagaAlreadyExistsException"/>, an update that must leave a second saga type's row alone, a discarded
+/// outbox row that must not reach the table at all (the suite reads Pending rows only), a null destination and null
+/// service-map fields coming back null, and what <c>ListAsync</c> and <c>FindChildrenAsync</c> project into each
+/// summary, which the suite's cases read only for the row ids. See persistence-contracts.md Q4.
 /// </summary>
 public sealed class EfCoreStoreTests : IAsyncDisposable
 {
@@ -43,10 +44,6 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
 
     public ValueTask DisposeAsync() => _connection.DisposeAsync();
 
-    // --- (SagaType, CorrelationId) scoping -------------------------------------------------
-    // The suite has no case that updates one of two instances sharing a correlation id, and none that
-    // pins the order FindByCorrelationIdAsync returns; these two do.
-
     private static TestState NewState(Guid correlationId, string sagaType, string currentState) => new()
     {
         CorrelationId = correlationId,
@@ -57,6 +54,8 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         UpdatedAtUtc = DateTimeOffset.UtcNow,
     };
 
+    // The suite has no case that updates one of two instances sharing a correlation id, and none that
+    // pins the order FindByCorrelationIdAsync returns; this test and the next do.
     [Fact]
     public async Task Update_OnlyAffectsItsOwnSagaTypesRow()
     {
@@ -154,6 +153,35 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
 
             Assert.Empty(await store2.ClaimPendingAsync(now, batchSize: 10)); // already dispatched, shouldn't be claimed twice
         }
+    }
+
+    /// <summary>
+    /// The discard path's real hazard: SagaOrchestrator.DiscardDeferredPublishesAsync writes one event-log
+    /// entry per dropped publish through this same context, and that AppendAsync calls SaveChangesAsync —
+    /// so without an explicit detach, the abandoned rows would be committed by the very code that exists
+    /// to suppress them, and the poller would publish them anyway.
+    /// </summary>
+    [Fact]
+    public async Task Outbox_DiscardPendingAsync_SurvivesALaterSaveOnTheSameContext()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var correlationId = Guid.NewGuid();
+
+        await using (var db = NewContext())
+        {
+            var store = new EfCoreSagaOutboxStore(db);
+            await store.EnqueueAsync("OrderSaga", correlationId, "m4", "InventoryReserved", "{}"u8.ToArray(),
+                destination: null, new Dictionary<string, string>(StringComparer.Ordinal), now.AddMinutes(-1));
+
+            await store.DiscardPendingAsync(["m4"]);
+
+            // Exactly what the discard path does next, through the same shared context.
+            await new EfCoreSagaEventLogStore(db).AppendAsync(SagaLogEntry.Create(correlationId, "OrderSaga",
+                SagaEntryType.DeliveryExhausted, messageType: "InventoryReserved"));
+        }
+
+        await using var db2 = NewContext();
+        Assert.Empty(db2.SagaOutboxMessages);
     }
 
     /// <summary>

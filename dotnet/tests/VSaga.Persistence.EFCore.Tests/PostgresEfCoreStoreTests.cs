@@ -9,7 +9,8 @@ namespace VSaga.Persistence.EFCore.Tests;
 /// What the Postgres-specific tests keep after the provider-neutral conformance suite
 /// (<c>VSaga.Persistence.Conformance</c>, run against the same migrated schema by the <c>Postgres*ConformanceTests</c>)
 /// took over the rest of what this class once re-ran against a real Postgres: the SQL translation of the ordered
-/// lists, the claim ordering, the <c>SKIP LOCKED</c> claims and the business-key index. What is left guards the
+/// lists, of <c>GetSagaTypesAsync</c> and of the topology read, the claim ordering, the <c>SKIP LOCKED</c> claims and the
+/// business-key index. What is left guards the
 /// schema the migrations build (the per-type listing index), the columns an update writes
 /// (which the suite reads back only through the blob), and what a root saga's nullable parent columns hold.
 /// See persistence-contracts.md Q4.
