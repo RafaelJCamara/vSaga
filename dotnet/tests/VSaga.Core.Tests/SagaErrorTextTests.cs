@@ -56,6 +56,27 @@ public sealed class SagaErrorTextTests
         Assert.Equal("outer Cause: " + new string('x', SagaErrorText.MaxCauseLength) + "...", text);
     }
 
+    [Fact]
+    public void Describe_DoesNotCutASurrogatePairInHalf_AtTheBound()
+    {
+        var emoji = char.ConvertFromUtf32(0x1F600);
+        var chain = new InvalidOperationException("outer", new TimeoutException(new string('x', SagaErrorText.MaxCauseLength - 1) + emoji + "tail"));
+
+        var text = SagaErrorText.Describe(chain);
+
+        Assert.Equal("outer Cause: " + new string('x', SagaErrorText.MaxCauseLength - 1) + "...", text);
+        Assert.False(char.IsHighSurrogate(text[^4]));
+    }
+
+    public sealed class NullMessageException : Exception
+    {
+        public override string Message => null!;
+    }
+
+    [Fact]
+    public void Describe_IgnoresAnInnerExceptionWhoseMessageIsNull() =>
+        Assert.Equal("outer", SagaErrorText.Describe(new InvalidOperationException("outer", new NullMessageException())));
+
     // ---- the DeliveryExhausted entry, through the orchestrator ----
 
     /// <summary>Throws the given exception on every append until its budget is spent, then delegates to the real store.</summary>

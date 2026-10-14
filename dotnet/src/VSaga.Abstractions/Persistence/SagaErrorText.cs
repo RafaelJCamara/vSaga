@@ -34,12 +34,16 @@ public static class SagaErrorText
         if (ReferenceEquals(innermost, exception))
             return exception.Message;
 
-        var cause = innermost.Message.Trim();
+        var cause = innermost.Message?.Trim() ?? string.Empty;
         if (cause.Length == 0 || exception.Message.Contains(cause, StringComparison.Ordinal))
             return exception.Message;
 
         if (cause.Length > MaxCauseLength)
-            cause = string.Concat(cause.AsSpan(0, MaxCauseLength), "...");
+        {
+            // A cut between the halves of a surrogate pair would leave an unpaired one that a UTF-8 writer rejects.
+            var cut = char.IsHighSurrogate(cause[MaxCauseLength - 1]) ? MaxCauseLength - 1 : MaxCauseLength;
+            cause = string.Concat(cause.AsSpan(0, cut), "...");
+        }
 
         return $"{exception.Message} Cause: {cause}";
     }

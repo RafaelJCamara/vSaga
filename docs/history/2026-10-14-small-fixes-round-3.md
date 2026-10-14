@@ -13,7 +13,7 @@
 
 | Commit | Defect | Spec and mutation |
 | --- | --- | --- |
-| `ab8883d` | A `DeliveryExhausted` entry for a transient database error read "A '...' saga instance with correlation id '...' already exists." | 14 specs; the helper's `innermost.Message` to `exception.Message`: 6 of 10 Core specs and 3 EF Core specs red |
+| `ab8883d` | A `DeliveryExhausted` entry for a transient database error read "A '...' saga instance with correlation id '...' already exists." | 16 specs; the helper's `innermost.Message` to `exception.Message`: 6 of 12 Core specs and 3 EF Core specs red |
 | `914d13b` | A saga's first snapshot landing inside the pending window was not followed up, so the detail page said "No snapshot was recorded for this step" until the next push | 2 specs; re-adding `\|\| history.snapshotCount === 0` (not one token): 2 red, 236 passed in the file |
 | `ebe9e28` | No provider-neutral case for a persist that loses its race at the commit (B3, Q2): only EF-specific specs existed | 1 case on 5 provider configurations; deleting the statement `Forget(entity);` (not one token): 2 red on EF Core |
 
@@ -35,15 +35,15 @@ entry of a failed `.CallHttp` (the `HttpClient` wrapper "An error occurred while
 socket error). The span status and the dashboard's retry-redrive cause are not timeline entries and keep their
 text. The HTTP shape and the golden fixtures are unchanged: the `errorMessage` field carries more text.
 
-- **Specs (14).** Ten in `VSaga.Core.Tests` (the helper: no inner, innermost not middle, no repeat, blank inner,
-  the bound; `DeliveryExhausted` through the orchestrator for a transient database error, for a real collision
+- **Specs (16).** Twelve in `VSaga.Core.Tests` (the helper: no inner, innermost not middle, no repeat, blank inner,
+  the bound, a surrogate pair at the bound, an inner exception whose `Message` is null; `DeliveryExhausted` through the orchestrator for a transient database error, for a real collision
   that still reads "already exists" and carries the unique-constraint text, and for a plain exception unchanged;
   `StepFailed`; `CompensationStepFailed`), three SQLite specs in `EfCoreStoreTests` (a `RAISE(ABORT)` trigger on
   update and on insert names the database's own error through the real EF exception chain; a business-key
   collision on update still reads as one), one in `VSaga.Http.Tests`. The failed deferred publish has no spec of
   its own (it needs a transport that fails after commit); it is the same call.
 - **Mutation.** One token, `innermost.Message` to `exception.Message` in the helper, rebuilt between mutation and
-  run: 6 of 10 Core specs and 3 of 56 `EfCoreStoreTests` red. Not one token: the five call sites mutated back to the
+  run: 6 of 10 Core specs (of 12 now) and 3 of 56 `EfCoreStoreTests` red. Not one token: the five call sites mutated back to the
   outer message turned the two `DeliveryExhausted` specs, the `StepFailed`, `CompensationStepFailed` and Http specs red.
 - **Live** (base stack `vsaga-r3a`, an exh3-style counting trigger on `SagaEventLog` and a `BEFORE UPDATE`
   trigger on `SagaInstances`, for `OrderSaga`'s `InventoryReserved`; the `errorMessage` of the `DeliveryExhausted`
@@ -100,7 +100,17 @@ unchanged and third-party providers cannot break.
   2 of 2 on EF Core.
 - B3 and Q2 in `persistence-contracts.md` now say the case exists.
 
-## Gates, on the merged result
+## The independent review
+
+A read-only reviewer found no blockers and no majors and two minors, both taken in a follow-up commit: the cut at
+1000 characters could split a surrogate pair (an unpaired surrogate in `ErrorMessage` that a UTF-8 writer rejects;
+the cut now steps back one character), and an inner exception whose `Message` is null threw in the helper
+(`.Trim()` on null, inside a catch block; now treated as blank). Two specs, each broken by its own mutation: the
+cut's `IsHighSurrogate` to `IsLowSurrogate` (1 red of 12), and the null-safe trim back to `.Trim()` (not one token;
+1 red of 12). It also noted, and I did not change, that the older history files still call the first-snapshot item
+open (they are dated records).
+
+## Gates, on the merged result and after the review's follow-up
 
 | Gate | Result |
 | --- | --- |
@@ -108,7 +118,7 @@ unchanged and third-party providers cannot break.
 | `npx ng build` | exit 0, no warning, Initial total 454.97 kB (119.98 kB transfer) |
 | `npx ng test --watch=false` | 58 files, 2,444 tests, exit 0 |
 | `dotnet build dotnet/VSaga.slnx -nologo` | 0 warnings, 0 errors, exit 0 |
-| `dotnet test dotnet/VSaga.slnx --no-build -nologo` | 1,721 passed over 16 assemblies, 0 failed, exit 0 (1,702 on `6891963`, plus 14, plus 5) |
+| `dotnet test dotnet/VSaga.slnx --no-build -nologo` | 1,723 passed over 16 assemblies, 0 failed, exit 0 (1,702 on `6891963`, plus 16, plus 5) |
 
 ## What was not exercised
 
