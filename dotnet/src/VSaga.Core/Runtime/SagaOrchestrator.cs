@@ -153,7 +153,7 @@ public sealed class SagaOrchestrator<TState>(
             }
 
             await LogAsync(SagaLogEntry.Create(resolvedCorrelationId, SagaType, SagaEntryType.DeliveryExhausted,
-                messageType: received.MessageTypeName, messageId: received.MessageId, errorMessage: ex.Message), cancellationToken);
+                messageType: received.MessageTypeName, messageId: received.MessageId, errorMessage: SagaErrorText.Describe(ex)), cancellationToken);
 
             if (markFailed)
             {
@@ -687,7 +687,7 @@ public sealed class SagaOrchestrator<TState>(
 
         await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.StepFailed,
             fromState: fromState, messageType: messageTypeName, messageId: messageId,
-            payloadJson: payloadJson, errorMessage: ex.Message,
+            payloadJson: payloadJson, errorMessage: SagaErrorText.Describe(ex),
             traceId: activity?.TraceId.ToString(), spanId: activity?.SpanId.ToString()), cancellationToken);
 
         // Staged before the persist, like every other outbox row, so the row recording "this saga
@@ -899,7 +899,7 @@ public sealed class SagaOrchestrator<TState>(
                     "Deferred publish failed for saga {SagaType} correlation {CorrelationId} after its step already committed; leaving the saga Running for its own state timeout to rescue it",
                     SagaType, correlationId);
 
-                await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.DeliveryExhausted, errorMessage: ex.Message), cancellationToken);
+                await LogAsync(SagaLogEntry.Create(correlationId, SagaType, SagaEntryType.DeliveryExhausted, errorMessage: SagaErrorText.Describe(ex)), cancellationToken);
             }
         }
     }

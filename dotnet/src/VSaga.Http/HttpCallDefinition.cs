@@ -59,7 +59,7 @@ internal sealed class HttpCallExecutor<TState>(
 
         await log.LogAsync(SagaLogEntry.Create(context.CorrelationId, sagaType, SagaEntryType.MessageReceived,
             messageType: action.DescribeReply(), messageId: Guid.NewGuid().ToString("N"),
-            sourceService: _host, causationId: callId, errorMessage: transportError?.Message), cancellationToken);
+            sourceService: _host, causationId: callId, errorMessage: transportError is null ? null : SagaErrorText.Describe(transportError)), cancellationToken);
 
         await action.ApplyAsync(context, responseBody, cancellationToken);
     }
