@@ -26,7 +26,7 @@ once had are catalogued, with their fixes, in
 [`design/persistence-contracts.md`](design/persistence-contracts.md) §1 and §3; all are fixed.
 
 The suite reads results back field by field, not only by id and count: every item `ListAsync` and
-`FindChildrenAsync` return projects the state that was written (for `ListAsync`, its version after an update included; a root
+`FindChildrenAsync` return projects the state that was written (its version after an update included, a root
 saga's parent link null), an outbox row
 without a destination and an event-log entry without service-map fields come back with those fields null rather
 than empty, and an update writes the projected status and current state, touches only its own saga type's

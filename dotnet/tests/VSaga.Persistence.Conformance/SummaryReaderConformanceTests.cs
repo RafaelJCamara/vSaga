@@ -570,7 +570,8 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
     /// <summary>
     /// Each child <c>FindChildrenAsync</c> returns is the projection of the instance that was written,
     /// parent link included — the link is what puts it in the result, and a caller walking a saga tree
-    /// reads it back off the summary. The two children differ in saga type, kind, state, status and both
+    /// reads it back off the summary. The two children differ in saga type, kind, state, status, version
+    /// (updated through the store once and twice, so a projection that reports a constant fails) and both
     /// timestamps. Left out: a child of the same parent id under another parent type, a child of the same
     /// parent type under another parent instance, and a root saga, none of which name this parent.
     /// </summary>
@@ -592,6 +593,10 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         var otherParentInstance = Child("InvoiceSaga", "FulfilmentSaga", Guid.NewGuid(), T0);
         var root = NewState("OrderSaga");
         await InsertAsync(stores, shipping, otherParentType, root, invoice, otherParentInstance);
+        await RewriteAsync(stores, invoice);
+        await RewriteAsync(stores, shipping);
+        await RewriteAsync(stores, shipping);
+        Assert.Equal([1, 2], [invoice.Version, shipping.Version]);
 
         await using var uow = await stores.BeginAsync();
         var children = await uow.Summaries.FindChildrenAsync("FulfilmentSaga", parentId);

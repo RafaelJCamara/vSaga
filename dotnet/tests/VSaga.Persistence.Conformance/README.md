@@ -62,8 +62,8 @@ API drops those), but gives a scoped caller short pages and a total over the wro
 ## What a green run covers on reads, nulls and updates
 
 The summary-reader cases hold every item `ListAsync` and `FindChildrenAsync` return to the state that was
-written, field by field — kind, current state, status, version (through `ListAsync`, an instance updated once or
-twice lists with that version, not a constant), parent link and both timestamps (at the `TimestampResolution` you declare) —
+written, field by field — kind, current state, status, version (an instance updated once or twice is listed, or
+found as a child, with that version, not a constant), parent link and both timestamps (at the `TimestampResolution` you declare) —
 whichever filter selected it, not only to row ids, counts and page numbers; a root saga's parent link comes
 back null. An outbox row enqueued without a destination is claimed
 with a null `Destination`, and an event-log entry written without a source service, destination service or
