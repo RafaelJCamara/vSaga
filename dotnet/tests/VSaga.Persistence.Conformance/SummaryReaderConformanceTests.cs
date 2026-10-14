@@ -302,16 +302,19 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
     public async Task List_UpdatedSince_IsStrictlyGreaterThan_AndCountsOnlyWhatItKeeps()
     {
         await using var stores = await Fixture.CreateStoresAsync();
-        var newest = NewState("OrderSaga", updatedAtUtc: T0.AddSeconds(2));
-        await InsertAsync(stores, NewState("OrderSaga", updatedAtUtc: T0), NewState("OrderSaga", updatedAtUtc: T0.AddSeconds(1)), newest);
+        var states = Enumerable.Range(0, 5).Select(i => NewState("OrderSaga", updatedAtUtc: T0.AddSeconds(i))).ToArray();
+        await InsertAsync(stores, states[3], states[0], states[4], states[2], states[1]);
 
-        var page = await ListAsync(stores, new SagaListFilter { UpdatedSince = T0.AddSeconds(1) });
-
-        Assert.Equal([newest.CorrelationId], Ids(page));
-        Assert.Equal(1, page.TotalCount);
-
+        // The change poller's own query: ascending by UpdatedAt, paged, from the watermark of a row it already pushed.
+        var page = await ListAsync(stores, new SagaListFilter { UpdatedSince = T0.AddSeconds(2), SortBy = SagaSortColumn.UpdatedAt });
+        var secondChanged = await ListAsync(stores, new SagaListFilter { UpdatedSince = T0.AddSeconds(2), SortBy = SagaSortColumn.UpdatedAt, Page = 2, PageSize = 1 });
         // A watermark sitting on the newest row selects nothing: the poller's quiet tick.
-        var quiet = await ListAsync(stores, new SagaListFilter { UpdatedSince = T0.AddSeconds(2) });
+        var quiet = await ListAsync(stores, new SagaListFilter { UpdatedSince = T0.AddSeconds(4) });
+
+        Assert.Equal([states[3].CorrelationId, states[4].CorrelationId], Ids(page));
+        Assert.Equal(2, page.TotalCount);
+        Assert.Equal([states[4].CorrelationId], Ids(secondChanged));
+        Assert.Equal(2, secondChanged.TotalCount);
         Assert.Empty(quiet.Items);
         Assert.Equal(0, quiet.TotalCount);
     }

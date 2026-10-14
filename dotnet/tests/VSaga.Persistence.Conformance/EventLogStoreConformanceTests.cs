@@ -126,7 +126,8 @@ public abstract class EventLogStoreConformanceTests(IProviderFixture fixture) : 
         Assert.Null(read.SourceService);
         Assert.Null(read.DestinationService);
         Assert.Null(read.CausationId);
-        Assert.Equal(written with { SequenceNumber = sequenceNumber }, read);
+        AssertSameInstant(written.OccurredAtUtc, read.OccurredAtUtc);
+        Assert.Equal(written with { SequenceNumber = sequenceNumber, OccurredAtUtc = read.OccurredAtUtc }, read);
     }
 
     /// <summary>

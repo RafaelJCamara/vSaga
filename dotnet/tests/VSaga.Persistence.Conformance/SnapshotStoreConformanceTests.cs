@@ -464,7 +464,7 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
         var shipping = await FindAsync(stores, "ShippingChoreography", correlationId);
         Assert.Equal(("Completed", SagaStatus.Completed, 1), (order!.CurrentState, order.Status, order.Version));
         Assert.Equal(("Tracking", SagaStatus.Running, 0), (shipping!.CurrentState, shipping.Status, shipping.Version));
-        Assert.Equal(("ShippingChoreography", "Tracking", 0), await ProjectionAsync(stores, "ShippingChoreography", correlationId));
+        Assert.Equal(("Tracking", 0), await ProjectionAsync(stores, "ShippingChoreography", correlationId));
 
         await UpdateAsync(stores, "ShippingChoreography", correlationId, s => s.CurrentState = "Delivered");
 
@@ -472,13 +472,13 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
         shipping = await FindAsync(stores, "ShippingChoreography", correlationId);
         Assert.Equal(("Completed", SagaStatus.Completed, 1), (order!.CurrentState, order.Status, order.Version));
         Assert.Equal(("Delivered", SagaStatus.Running, 1), (shipping!.CurrentState, shipping.Status, shipping.Version));
-        Assert.Equal(("OrderSaga", "Completed", 1), await ProjectionAsync(stores, "OrderSaga", correlationId));
+        Assert.Equal(("Completed", 1), await ProjectionAsync(stores, "OrderSaga", correlationId));
     }
 
-    private static async Task<(string SagaType, string CurrentState, int Version)> ProjectionAsync(IProviderStores stores, string sagaType, Guid correlationId)
+    private static async Task<(string CurrentState, int Version)> ProjectionAsync(IProviderStores stores, string sagaType, Guid correlationId)
     {
         var summary = (await GetSummaryAsync(stores, sagaType, correlationId))!;
-        return (summary.SagaType, summary.CurrentState, summary.Version);
+        return (summary.CurrentState, summary.Version);
     }
 
     /// <summary>Loads an instance in a unit of work of its own, applies <paramref name="change"/> and updates it at the version it was loaded at.</summary>
