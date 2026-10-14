@@ -83,6 +83,13 @@ jobs:
         run: "test -f dist/dashboard-web/browser/index.html && ! grep -Eq '<script>| on[a-z]+=' dist/dashboard-web/browser/index.html"
 
       - name: Test
+        # Two Vitest workers, whatever the runner's size. With fewer workers than spec files a worker runs
+        # several of them and keeps its module cache between them, which is how a spec's vi.mock gets bypassed
+        # (angular.json sets "isolate": true against it; dashboard-web/README.md, "Unit tests"). A machine with
+        # many cores hides that, as it hid it for the three pushes main was red; pinning the count here keeps
+        # the CI run a worst case that does not depend on how big the runner happens to be.
+        env:
+          VITEST_MAX_WORKERS: 2
         run: npx ng test --watch=false
 
   compose:
