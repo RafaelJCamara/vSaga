@@ -52,6 +52,31 @@ public abstract class OutboxStoreConformanceTests(IProviderFixture fixture) : St
         Assert.Empty(await ClaimAllPendingAsync(stores, T0.AddMinutes(1)));
     }
 
+    /// <summary>
+    /// A row enqueued without a destination — a broadcast — is claimed with a null
+    /// <see cref="SagaOutboxMessage.Destination"/>, not empty text: a row describes the message exactly as
+    /// the inline dispatch it backs sent it (<see cref="ISagaOutboxStore.EnqueueAsync"/>'s remarks), and the
+    /// recovery poller republishes by that destination, so an addressed row and a broadcast stay apart.
+    /// The addressed row beside it keeps its destination.
+    /// </summary>
+    [Fact]
+    public async Task ClaimPending_ReturnsABroadcastRowsNullDestinationAsNull()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        await using (var uow = await stores.BeginAsync())
+        {
+            await uow.Outbox.EnqueueAsync("OrderSaga", Guid.NewGuid(), "broadcast", "InventoryReserved", "{}"u8.ToArray(), destination: null, NoHeaders(), T0);
+            await uow.Outbox.EnqueueAsync("OrderSaga", Guid.NewGuid(), "addressed", "InventoryReserved", "{}"u8.ToArray(), "inventory", NoHeaders(), T0.AddSeconds(1));
+            await uow.CommitAsync();
+        }
+
+        var claimed = (await ClaimAllPendingAsync(stores, T0.AddMinutes(1))).ToDictionary(m => m.MessageId, StringComparer.Ordinal);
+
+        Assert.Equal(2, claimed.Count);
+        Assert.Null(claimed["broadcast"].Destination);
+        Assert.Equal("inventory", claimed["addressed"].Destination);
+    }
+
     [Fact]
     public async Task ClaimPending_IncludesARowCreatedExactlyAtTheCutoff()
     {

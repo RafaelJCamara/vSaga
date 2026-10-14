@@ -42,6 +42,73 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         AssertSameInstant(state.UpdatedAtUtc, summary.UpdatedAtUtc);
     }
 
+    /// <summary>
+    /// <see cref="SagaSummary"/> is the projection of one instance, so every item <c>ListAsync</c> returns
+    /// projects the state that was written exactly as <c>GetAsync</c> does — whichever filter selected it.
+    /// The four instances differ in every projected field (status, current state, kind, parent link,
+    /// both timestamps), one of them has no parent, and the last two listings are filtered, so a reader
+    /// whose list projection fills a field from the wrong column, or turns a root saga's null parent
+    /// into empty text, fails here while its ids, counts and page numbers stay right. The second
+    /// listing is the dashboard's status filter; the third composes a saga type with
+    /// <see cref="SagaListFilter.UpdatedSince"/>, which keeps what is strictly newer and drops the other
+    /// type's newer row.
+    /// </summary>
+    [Fact]
+    public async Task List_ProjectsTheWrittenStateOfEveryItem_WhateverFilterSelectedIt()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var parentId = Guid.NewGuid();
+        var order = NewState("OrderSaga", currentState: "AwaitingPayment", status: SagaStatus.Compensating);
+        order.ParentSagaType = "FulfilmentSaga";
+        order.ParentCorrelationId = parentId;
+        order.CreatedAtUtc = T0.AddTicks(1_234_567);
+        order.UpdatedAtUtc = T0.AddMinutes(1).AddTicks(7_654_321);
+        var reorder = NewState("OrderSaga", currentState: "Submitted", status: SagaStatus.Running);
+        reorder.CreatedAtUtc = T0.AddSeconds(10);
+        reorder.UpdatedAtUtc = T0.AddMinutes(3);
+        var shipping = NewState("ShippingChoreography", currentState: "Tracking", status: SagaStatus.Completed);
+        shipping.Kind = SagaKind.Choreographed;
+        shipping.CreatedAtUtc = T0.AddSeconds(20);
+        shipping.UpdatedAtUtc = T0.AddMinutes(2);
+        var invoice = NewState("InvoiceSaga", currentState: "Rejected", status: SagaStatus.Failed);
+        invoice.CreatedAtUtc = T0.AddSeconds(5);
+        invoice.UpdatedAtUtc = T0.AddSeconds(30);
+        await InsertAsync(stores, order, reorder, shipping, invoice);
+
+        var all = await ListAsync(stores, new SagaListFilter());
+        var failed = await ListAsync(stores, new SagaListFilter { Status = SagaStatus.Failed });
+        var newerOrders = await ListAsync(stores, new SagaListFilter { SagaType = "OrderSaga", UpdatedSince = T0.AddSeconds(90) });
+
+        AssertProjectsInOrder([reorder, shipping, order, invoice], all);
+        Assert.Equal(4, all.TotalCount);
+        AssertProjectsInOrder([invoice], failed);
+        Assert.Equal(1, failed.TotalCount);
+        AssertProjectsInOrder([reorder], newerOrders);
+        Assert.Equal(1, newerOrders.TotalCount);
+    }
+
+    private void AssertProjectsInOrder(IReadOnlyList<ConformanceSagaState> written, PagedResult<SagaSummary> page) =>
+        AssertProjectsInOrder(written, page.Items);
+
+    private void AssertProjectsInOrder(IReadOnlyList<ConformanceSagaState> written, IReadOnlyList<SagaSummary> summaries)
+    {
+        Assert.Equal(written.Select(w => w.CorrelationId), summaries.Select(s => s.CorrelationId));
+        for (var i = 0; i < written.Count; i++)
+        {
+            var state = written[i];
+            var summary = summaries[i];
+            Assert.Equal(state.SagaType, summary.SagaType);
+            Assert.Equal(state.Kind, summary.Kind);
+            Assert.Equal(state.CurrentState, summary.CurrentState);
+            Assert.Equal(state.Status, summary.Status);
+            Assert.Equal(0, summary.Version);
+            Assert.Equal(state.ParentSagaType, summary.ParentSagaType);
+            Assert.Equal(state.ParentCorrelationId, summary.ParentCorrelationId);
+            AssertSameInstant(state.CreatedAtUtc, summary.CreatedAtUtc);
+            AssertSameInstant(state.UpdatedAtUtc, summary.UpdatedAtUtc);
+        }
+    }
+
     [Fact]
     public async Task GetAndGetDataJson_ForAnUnknownInstance_ReturnNull()
     {
@@ -242,6 +309,11 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
 
         Assert.Equal([newest.CorrelationId], Ids(page));
         Assert.Equal(1, page.TotalCount);
+
+        // A watermark sitting on the newest row selects nothing: the poller's quiet tick.
+        var quiet = await ListAsync(stores, new SagaListFilter { UpdatedSince = T0.AddSeconds(2) });
+        Assert.Empty(quiet.Items);
+        Assert.Equal(0, quiet.TotalCount);
     }
 
     [Fact]
@@ -476,6 +548,38 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
 
         Assert.Equal([older.CorrelationId, newer.CorrelationId], children.Select(c => c.CorrelationId));
         Assert.Empty(await uow.Summaries.FindChildrenAsync("OrderSaga", parentId));
+    }
+
+    /// <summary>
+    /// Each child <c>FindChildrenAsync</c> returns is the projection of the instance that was written,
+    /// parent link included — the link is what puts it in the result, and a caller walking a saga tree
+    /// reads it back off the summary. The two children differ in saga type, kind, state, status and both
+    /// timestamps. Left out: a child of the same parent id under another parent type, a child of the same
+    /// parent type under another parent instance, and a root saga, none of which name this parent.
+    /// </summary>
+    [Fact]
+    public async Task FindChildren_ProjectsTheWrittenStateOfEveryChild_ParentLinkIncluded()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var parentId = Guid.NewGuid();
+        var invoice = Child("InvoiceSaga", "FulfilmentSaga", parentId, T0.AddTicks(1_234_567));
+        invoice.CurrentState = "Rejected";
+        invoice.Status = SagaStatus.Failed;
+        invoice.UpdatedAtUtc = T0.AddMinutes(1).AddTicks(7_654_321);
+        var shipping = Child("ShippingChoreography", "FulfilmentSaga", parentId, T0.AddSeconds(1));
+        shipping.Kind = SagaKind.Choreographed;
+        shipping.CurrentState = "Tracking";
+        shipping.Status = SagaStatus.Completed;
+        shipping.UpdatedAtUtc = T0.AddMinutes(2);
+        var otherParentType = Child("InvoiceSaga", "BillingSaga", parentId, T0);
+        var otherParentInstance = Child("InvoiceSaga", "FulfilmentSaga", Guid.NewGuid(), T0);
+        var root = NewState("OrderSaga");
+        await InsertAsync(stores, shipping, otherParentType, root, invoice, otherParentInstance);
+
+        await using var uow = await stores.BeginAsync();
+        var children = await uow.Summaries.FindChildrenAsync("FulfilmentSaga", parentId);
+
+        AssertProjectsInOrder([invoice, shipping], children);
     }
 
     private static ConformanceSagaState Child(string sagaType, string parentSagaType, Guid parentCorrelationId, DateTimeOffset createdAtUtc)

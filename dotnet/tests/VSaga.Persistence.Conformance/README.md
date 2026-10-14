@@ -59,6 +59,18 @@ not declare that it lacks it. A reader that ignores it still never shows a calle
 API drops those), but gives a scoped caller short pages and a total over the wrong set. The same rule is stated on
 `ISagaSummaryReader.ListAsync` and `SagaListFilter.SagaTypes`.
 
+## What a green run covers on reads, nulls and updates
+
+The summary-reader cases hold every item `ListAsync` and `FindChildrenAsync` return to the state that was
+written, field by field — kind, current state, status, parent link and both timestamps (at the
+`TimestampResolution` you declare) — whichever filter selected it, not only to row ids, counts and page
+numbers; a root saga's parent link comes back null. An outbox row enqueued without a destination is claimed
+with a null `Destination`, and an event-log entry written without a source service, destination service or
+causation id reads back with all three null — never empty text. After `UpdateAsync` the projected status and
+current state are the new ones (`GetAsync` and a status-filtered `ListAsync` say so), only the updated
+`(sagaType, correlationId)` instance changed when two saga types share a correlation id, and a non-null
+business key the update leaves alone still resolves to the instance.
+
 ## What a green run does not cover, by design
 
 A state blob that is not valid JSON at all must make `FindAsync` throw rather than return null

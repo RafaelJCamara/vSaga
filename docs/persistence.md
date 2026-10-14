@@ -25,6 +25,13 @@ total over the wrong set (never a row outside their scope: the API still drops t
 once had are catalogued, with their fixes, in
 [`design/persistence-contracts.md`](design/persistence-contracts.md) §1 and §3; all are fixed.
 
+The suite reads results back field by field, not only by id and count: every item `ListAsync` and
+`FindChildrenAsync` return projects the state that was written (a root saga's parent link null), an outbox row
+without a destination and an event-log entry without service-map fields come back with those fields null rather
+than empty, and an update writes the projected status and current state, touches only its own saga type's
+instance and keeps an unchanged business key resolvable. The
+[README](../dotnet/tests/VSaga.Persistence.Conformance/README.md) lists them for a third-party provider.
+
 Each provider has a small runnable sample in
 [`dotnet/samples/Persistence/`](../dotnet/samples/Persistence/): the same saga on each store, the
 provider's wiring marked out in its `Program.cs`, and a compose file for its database.

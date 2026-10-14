@@ -443,6 +443,111 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
         AssertSameInstant(state.UpdatedAtUtc, summary.UpdatedAtUtc);
     }
 
+    /// <summary>
+    /// An instance is <c>(sagaType, correlationId)</c>, so updating one of two instances that share a
+    /// correlation id under different saga types writes that instance only: the other keeps its state,
+    /// status and version, and is still updatable at the version it had. Each is updated in turn, so a store
+    /// that finds the row by correlation id alone is wrong whichever of the two it happens to pick.
+    /// </summary>
+    [Fact]
+    public async Task Update_OnlyTouchesItsOwnSagaTypesInstance()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var correlationId = Guid.NewGuid();
+        await InsertAsync(stores,
+            NewState("OrderSaga", correlationId, currentState: "Submitted"),
+            NewState("ShippingChoreography", correlationId, currentState: "Tracking"));
+
+        await UpdateAsync(stores, "OrderSaga", correlationId, s => { s.CurrentState = "Completed"; s.Status = SagaStatus.Completed; });
+
+        var order = await FindAsync(stores, "OrderSaga", correlationId);
+        var shipping = await FindAsync(stores, "ShippingChoreography", correlationId);
+        Assert.Equal(("Completed", SagaStatus.Completed, 1), (order!.CurrentState, order.Status, order.Version));
+        Assert.Equal(("Tracking", SagaStatus.Running, 0), (shipping!.CurrentState, shipping.Status, shipping.Version));
+        Assert.Equal(("ShippingChoreography", "Tracking", 0), await ProjectionAsync(stores, "ShippingChoreography", correlationId));
+
+        await UpdateAsync(stores, "ShippingChoreography", correlationId, s => s.CurrentState = "Delivered");
+
+        order = await FindAsync(stores, "OrderSaga", correlationId);
+        shipping = await FindAsync(stores, "ShippingChoreography", correlationId);
+        Assert.Equal(("Completed", SagaStatus.Completed, 1), (order!.CurrentState, order.Status, order.Version));
+        Assert.Equal(("Delivered", SagaStatus.Running, 1), (shipping!.CurrentState, shipping.Status, shipping.Version));
+        Assert.Equal(("OrderSaga", "Completed", 1), await ProjectionAsync(stores, "OrderSaga", correlationId));
+    }
+
+    private static async Task<(string SagaType, string CurrentState, int Version)> ProjectionAsync(IProviderStores stores, string sagaType, Guid correlationId)
+    {
+        var summary = (await GetSummaryAsync(stores, sagaType, correlationId))!;
+        return (summary.SagaType, summary.CurrentState, summary.Version);
+    }
+
+    /// <summary>Loads an instance in a unit of work of its own, applies <paramref name="change"/> and updates it at the version it was loaded at.</summary>
+    private static async Task UpdateAsync(IProviderStores stores, string sagaType, Guid correlationId, Action<ConformanceSagaState> change)
+    {
+        await using var uow = await stores.BeginAsync();
+        var live = (await uow.Snapshots<ConformanceSagaState>().FindAsync(sagaType, correlationId))!;
+        change(live);
+        await uow.Snapshots<ConformanceSagaState>().UpdateAsync(live, live.Version);
+    }
+
+    /// <summary>
+    /// The queryable columns <see cref="ISagaSummaryReader"/> reads are a projection of the blob
+    /// (<see cref="ISagaSnapshotStore{TState}.FindAsync"/>'s remarks), so an update that changes a saga's
+    /// status and current state changes what a summary and a status-filtered list say about it — not only
+    /// what the blob does, which is all <see cref="Update_BumpsTheVersionInPlaceBeforeWritingTheBlob"/> reads
+    /// back. The dashboard lists by exactly these columns.
+    /// </summary>
+    [Fact]
+    public async Task Update_ProjectsTheNewStatusAndCurrentState()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var state = NewState("OrderSaga", currentState: "Submitted", status: SagaStatus.Running);
+        await InsertAsync(stores, state);
+
+        await UpdateAsync(stores, "OrderSaga", state.CorrelationId, s => { s.CurrentState = "Completed"; s.Status = SagaStatus.Completed; });
+
+        var summary = await GetSummaryAsync(stores, "OrderSaga", state.CorrelationId);
+        Assert.Equal("Completed", summary!.CurrentState);
+        Assert.Equal(SagaStatus.Completed, summary.Status);
+        Assert.Equal(1, summary.Version);
+
+        await using var uow = await stores.BeginAsync();
+        var completed = await uow.Summaries.ListAsync(new SagaListFilter { Status = SagaStatus.Completed });
+        var running = await uow.Summaries.ListAsync(new SagaListFilter { Status = SagaStatus.Running });
+        var listed = Assert.Single(completed.Items);
+        Assert.Equal(state.CorrelationId, listed.CorrelationId);
+        Assert.Equal("Completed", listed.CurrentState);
+        Assert.Equal(1, completed.TotalCount);
+        Assert.Empty(running.Items);
+        Assert.Equal(0, running.TotalCount);
+    }
+
+    /// <summary>
+    /// An update that leaves a non-null business key alone succeeds and keeps the key resolving to the
+    /// instance: only <i>another</i> instance holding the key is a collision
+    /// (<see cref="ISagaSnapshotStore{TState}.UpdateAsync"/>'s remarks), never the instance's own
+    /// reservation. Every case that updates a keyed saga elsewhere changes the key, so the unchanged key is
+    /// held across two updates here, which also reads the key and the new state back through the lookup.
+    /// </summary>
+    [Fact]
+    public async Task Update_LeavingTheBusinessKeyAlone_KeepsItResolvable()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var state = NewState("OrderSaga", currentState: "Submitted", businessKey: "ORD-BK-5");
+        await InsertAsync(stores, state);
+
+        await UpdateAsync(stores, "OrderSaga", state.CorrelationId, s => s.CurrentState = "Paid");
+        await UpdateAsync(stores, "OrderSaga", state.CorrelationId, s => s.CurrentState = "Completed");
+
+        await using var uow = await stores.BeginAsync();
+        var found = await uow.Snapshots<ConformanceSagaState>().FindByBusinessKeyAsync("OrderSaga", "ORD-BK-5");
+        Assert.NotNull(found);
+        Assert.Equal(state.CorrelationId, found.CorrelationId);
+        Assert.Equal("ORD-BK-5", found.BusinessKey);
+        Assert.Equal("Completed", found.CurrentState);
+        Assert.Equal(2, found.Version);
+    }
+
     /// <summary>Clause 12: the stored blob is <c>System.Text.Json</c> with default options, pinned as exact text.</summary>
     [Fact]
     public async Task StateBlob_IsSystemTextJsonWithDefaultOptions()

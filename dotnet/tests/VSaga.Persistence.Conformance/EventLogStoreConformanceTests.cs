@@ -105,6 +105,31 @@ public abstract class EventLogStoreConformanceTests(IProviderFixture fixture) : 
     }
 
     /// <summary>
+    /// The service-map fields are optional: an entry written without a source service, a destination
+    /// service or a causation id — what every entry appended before they existed looks like — reads back with
+    /// all three null, not empty text, and the rest of the entry as written.
+    /// </summary>
+    [Fact]
+    public async Task GetTimeline_RoundTripsNullServiceMapFieldsAsNull()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var correlationId = Guid.NewGuid();
+        var written = SagaLogEntry.Create(correlationId, "OrderSaga", SagaEntryType.SagaStarted, toState: "Started", messageId: "m-1", occurredAtUtc: T0);
+
+        long sequenceNumber;
+        await using (var uow = await stores.BeginAsync())
+            sequenceNumber = await uow.EventLog.AppendAsync(written);
+
+        await using var reader = await stores.BeginAsync();
+        var read = Assert.Single(await reader.EventLog.GetTimelineAsync("OrderSaga", correlationId));
+
+        Assert.Null(read.SourceService);
+        Assert.Null(read.DestinationService);
+        Assert.Null(read.CausationId);
+        Assert.Equal(written with { SequenceNumber = sequenceNumber }, read);
+    }
+
+    /// <summary>
     /// A state snapshot comes back with its type, its message identity, null states and the payload text
     /// byte for byte. System.Text.Json writes an ampersand in a state as a backslash-u0026 escape, so the
     /// blob carries one: a store that parsed and re-wrote the JSON (a jsonb column, a BSON document) would
