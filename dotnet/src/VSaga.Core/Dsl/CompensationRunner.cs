@@ -55,7 +55,7 @@ internal static class CompensationRunner
         }
         catch (Exception ex)
         {
-            await log.LogAsync(SagaLogEntry.Create(context.CorrelationId, sagaType, SagaEntryType.CompensationStepFailed, fromState: stateName, errorMessage: ex.Message), cancellationToken);
+            await log.LogAsync(SagaLogEntry.Create(context.CorrelationId, sagaType, SagaEntryType.CompensationStepFailed, fromState: stateName, errorMessage: SagaErrorText.Describe(ex)), cancellationToken);
         }
     }
 }

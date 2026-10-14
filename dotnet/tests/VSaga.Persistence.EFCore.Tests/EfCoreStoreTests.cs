@@ -670,6 +670,81 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         Assert.Null(await new EfCoreSagaSnapshotStore<TestState>(db2).FindAsync("TestSaga", loser.CorrelationId));
     }
 
+    /// <summary>
+    /// Both stores still map every <c>DbUpdateException</c> to <see cref="SagaAlreadyExistsException"/> (persistence-
+    /// contracts.md Q3 is open), so what a reader of the timeline sees for a failure that is not a collision is the
+    /// text <see cref="SagaErrorText"/> builds: it must carry the database's own error, as a Postgres trigger that
+    /// raised in the UPDATE did in the live run, not only "already exists".
+    /// </summary>
+    [Fact]
+    public async Task Snapshot_UpdateThatFailsForAnotherReasonThanACollision_RecordsTheDatabasesOwnError()
+    {
+        var correlationId = Guid.NewGuid();
+        await using (var seed = NewContext())
+            await new EfCoreSagaSnapshotStore<TestState>(seed).InsertAsync(NewState(correlationId, "TestSaga", "Started"));
+
+        await using (var command = _connection.CreateCommand())
+        {
+            command.CommandText = "CREATE TRIGGER FailEveryUpdate BEFORE UPDATE ON SagaInstances BEGIN SELECT RAISE(ABORT, 'injected transient database failure'); END;";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await using var db = NewContext();
+        var store = new EfCoreSagaSnapshotStore<TestState>(db);
+        var state = await store.FindAsync("TestSaga", correlationId);
+        state!.CurrentState = "StepThatFailed";
+
+        var thrown = await Assert.ThrowsAsync<SagaAlreadyExistsException>(() => store.UpdateAsync(state, expectedVersion: 0));
+
+        var recorded = SagaErrorText.Describe(thrown);
+        Assert.Contains("injected transient database failure", recorded, StringComparison.Ordinal);
+        Assert.DoesNotContain("UNIQUE constraint failed", recorded, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Snapshot_InsertThatFailsForAnotherReasonThanACollision_RecordsTheDatabasesOwnError()
+    {
+        await using (var command = _connection.CreateCommand())
+        {
+            command.CommandText = "CREATE TRIGGER FailEveryInsert BEFORE INSERT ON SagaInstances BEGIN SELECT RAISE(ABORT, 'injected transient database failure'); END;";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await using var db = NewContext();
+
+        var thrown = await Assert.ThrowsAsync<SagaAlreadyExistsException>(
+            () => new EfCoreSagaSnapshotStore<TestState>(db).InsertAsync(NewState(Guid.NewGuid(), "TestSaga", "Started")));
+
+        Assert.Contains("injected transient database failure", SagaErrorText.Describe(thrown), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Snapshot_UpdateThatCollidesOnTheBusinessKey_StillReadsAsACollision()
+    {
+        var first = NewState(Guid.NewGuid(), "TestSaga", "Started");
+        first.BusinessKey = "key-1";
+        var second = NewState(Guid.NewGuid(), "TestSaga", "Started");
+        second.BusinessKey = "key-2";
+
+        await using (var seed = NewContext())
+        {
+            var seedStore = new EfCoreSagaSnapshotStore<TestState>(seed);
+            await seedStore.InsertAsync(first);
+            await seedStore.InsertAsync(second);
+        }
+
+        await using var db = NewContext();
+        var store = new EfCoreSagaSnapshotStore<TestState>(db);
+        var state = await store.FindAsync("TestSaga", second.CorrelationId);
+        state!.BusinessKey = "key-1";
+
+        var thrown = await Assert.ThrowsAsync<SagaAlreadyExistsException>(() => store.UpdateAsync(state, expectedVersion: 0));
+
+        var recorded = SagaErrorText.Describe(thrown);
+        Assert.Contains("already exists", recorded, StringComparison.Ordinal);
+        Assert.Contains("UNIQUE constraint failed", recorded, StringComparison.Ordinal);
+    }
+
     /// <summary>A rival write: bumps every saga row's Version on the shared connection just before the context saves.</summary>
     private sealed class BumpVersionBeforeSaveInterceptor(SqliteConnection connection) : SaveChangesInterceptor
     {

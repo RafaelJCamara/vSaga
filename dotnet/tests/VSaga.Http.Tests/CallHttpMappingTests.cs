@@ -1,4 +1,5 @@
 using System.Net;
+using VSaga.Abstractions.Persistence;
 using VSaga.Abstractions.Sagas;
 
 namespace VSaga.Http.Tests;
@@ -66,6 +67,20 @@ public sealed class CallHttpMappingTests
         var state = await harness.AssertStateAsync(harness.Saga.Failed);
         Assert.Equal(SagaStatus.Failed, state.Status);
         Assert.Null(state.Result); // deserialized from "{}" -- no body to hydrate a reason from
+    }
+
+    [Fact]
+    public async Task NetworkFailure_RecordsTheInnermostCause_OnTheReplyEntry()
+    {
+        // HttpClient wraps the socket error: the outer message alone never says what went wrong.
+        await using var harness = CallHttpTestHarness.Create(_ =>
+            throw new HttpRequestException("An error occurred while sending the request.", new IOException("No connection could be made because the target machine actively refused it.")));
+
+        await harness.WhenAsync(new BeginHttpCall("REQ-4B"));
+
+        var timeline = await harness.GetTimelineAsync();
+        var reply = Assert.Single(timeline, e => e.EntryType == SagaEntryType.MessageReceived && e.ErrorMessage is not null);
+        Assert.Equal("An error occurred while sending the request. Cause: No connection could be made because the target machine actively refused it.", reply.ErrorMessage);
     }
 
     [Fact]
