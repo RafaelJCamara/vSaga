@@ -146,6 +146,57 @@ public sealed class CredentialVerifierTests : IAsyncLifetime
         Assert.True(result.User!.MustChangePassword);
     }
 
+    private Task<DashboardUser> SeedTemporaryAsync(string username, DateTimeOffset? expiresAtUtc) =>
+        _context.SeedTemporaryUserAsync(username, expiresAtUtc);
+
+    [Fact]
+    public async Task Verify_ATemporaryPasswordAtItsExpiry_IsRefusedWithoutCheckingItOrCounting()
+    {
+        var alice = await SeedTemporaryAsync("alice", T0.AddHours(1));
+        _context.Time.Advance(TimeSpan.FromHours(1));
+
+        var right = await _context.NewVerifier().VerifyAsync("alice", StrongPassword, None);
+        var wrong = await _context.NewVerifier().VerifyAsync("alice", "wrong", None);
+
+        Assert.Equal(CredentialFailure.TemporaryPasswordExpired, right.Failure);
+        Assert.Equal(CredentialFailure.TemporaryPasswordExpired, wrong.Failure);
+        var stored = await _context.ReadUserAsync(alice.Id);
+        Assert.Equal(0, stored.FailedSignInCount);
+        Assert.Null(stored.LockoutEndUtc);
+        Assert.Null(stored.LastSignInAtUtc);
+    }
+
+    [Fact]
+    public async Task Verify_ATemporaryPasswordBeforeItsExpiry_SignsIn()
+    {
+        await SeedTemporaryAsync("alice", T0.AddHours(1));
+        _context.Time.Advance(TimeSpan.FromMinutes(59));
+
+        var result = await _context.NewVerifier().VerifyAsync("alice", StrongPassword, None);
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.User!.MustChangePassword);
+    }
+
+    [Fact]
+    public async Task Verify_ATemporaryPasswordWithoutAnExpiry_NeverExpires()
+    {
+        await SeedTemporaryAsync("alice", expiresAtUtc: null);
+        _context.Time.Advance(TimeSpan.FromDays(3650));
+
+        Assert.True((await _context.NewVerifier().VerifyAsync("alice", StrongPassword, None)).Succeeded);
+    }
+
+    /// <summary>A password the user chose does not expire: the expiry only means something while the user still has to change it.</summary>
+    [Fact]
+    public async Task Verify_AnExpiryOnAnAccountThatNoLongerMustChange_IsIgnored()
+    {
+        await _context.SeedTemporaryUserAsync("alice", T0.AddHours(1), mustChangePassword: false);
+        _context.Time.Advance(TimeSpan.FromHours(2));
+
+        Assert.True((await _context.NewVerifier().VerifyAsync("alice", StrongPassword, None)).Succeeded);
+    }
+
     /// <summary>Over-long input is refused before the lookup: even an existing account with such a name is not found.</summary>
     [Fact]
     public async Task Verify_OverLongInput_IsRefusedBeforeAnyLookupOrHashing()
@@ -164,17 +215,18 @@ public sealed class CredentialVerifierTests : IAsyncLifetime
         Assert.Equal(callsAfterStartUp, hasher.Calls);
     }
 
-    /// <summary>Unknown, disabled and locked accounts do the same hashing work as a real check, against the start-up dummy hash.</summary>
+    /// <summary>Unknown, disabled, locked and expired-temporary-password accounts do the same hashing work as a real check, against the start-up dummy hash.</summary>
     [Fact]
     public async Task Verify_RefusedAccounts_VerifyTheDummyHashOnce()
     {
         await _context.SeedUserAsync("disabled", isEnabled: false);
         var locked = await _context.SeedUserAsync("locked");
+        await SeedTemporaryAsync("expired", T0.AddHours(-1));
         await _context.NewStore().RecordFailedSignInAsync(locked.Id, 1, T0, TimeSpan.FromMinutes(15), None);
         var hasher = new CountingHasher(_context.Hasher);
         var verifier = _context.NewVerifier(hasher);
 
-        foreach (var name in new[] { "nobody", "disabled", "locked" })
+        foreach (var name in new[] { "nobody", "disabled", "locked", "expired" })
         {
             hasher.Verified.Clear();
             var result = await verifier.VerifyAsync(name, StrongPassword, None);

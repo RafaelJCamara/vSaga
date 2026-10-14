@@ -26,6 +26,8 @@ public sealed class DashboardUserEntity
 
     public DateTimeOffset? LastSignInAtUtc { get; set; }
 
+    public DateTimeOffset? PasswordExpiresAtUtc { get; set; }
+
     public DateTimeOffset CreatedAtUtc { get; set; }
 
     public DateTimeOffset UpdatedAtUtc { get; set; }

@@ -77,6 +77,17 @@ internal sealed class ServiceTestContext : IAsyncDisposable
         return user;
     }
 
+    /// <summary>A user written straight to the store with a temporary password that stops being accepted at <paramref name="passwordExpiresAtUtc"/>.</summary>
+    public async Task<DashboardUser> SeedTemporaryUserAsync(string username, DateTimeOffset? passwordExpiresAtUtc, bool mustChangePassword = true)
+    {
+        var user = (await SeedUserAsync(username, mustChangePassword: mustChangePassword)) with { PasswordExpiresAtUtc = passwordExpiresAtUtc };
+        var store = NewStore();
+        await using var scope = await store.BeginExclusiveAsync(None);
+        await store.UpdateUserAsync(user, None);
+        await scope.CommitAsync(None);
+        return user;
+    }
+
     /// <summary>An enabled user holding the built-in Administrator role for all saga types.</summary>
     public Task<DashboardUser> SeedAdministratorAsync(string username = "root") =>
         SeedUserAsync(username, grants: AllTypes(BuiltInRoles.AdministratorId));

@@ -661,6 +661,10 @@ An existing user's page also has an **Account** section:
   (ticked by default); **Set password** applies it. It ends the user's sessions, yours included if it is your own
   account (use [Your account](#your-account) to change your own password). It does not clear a lock: select
   **Unlock** as well when the account shows **Locked**.
+- A password you set for someone, with **Require a change at next sign-in** ticked, is temporary: it is accepted for
+  `Dashboard:Password:TemporaryLifetimeHours` (168, a week, by default; `0` never expires) after you set it. Once that
+  has passed the person cannot sign in, and sees the same "Sign-in failed" as for a wrong password. Reset their password
+  again to give them a new one. A password they chose themselves never expires.
 - **Locked until** *time* and **Unlock**, shown while the account is locked.
 - **Delete user**, which asks "Delete the user X? Their grants go with them. This cannot be undone." You cannot
   delete your own account.

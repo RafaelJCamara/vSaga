@@ -15,6 +15,8 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
 {
     public const string PasswordMinLengthKey = "Dashboard:Password:MinLength";
 
+    public const string TemporaryPasswordLifetimeHoursKey = "Dashboard:Password:TemporaryLifetimeHours";
+
     public const string LockoutMaxFailedAttemptsKey = "Dashboard:Lockout:MaxFailedAttempts";
 
     public const string LockoutMinutesKey = "Dashboard:Lockout:Minutes";
@@ -34,6 +36,8 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
     public const int DefaultPasswordMinLength = 12;
 
     public const int DefaultAuthPerMinute = 20;
+
+    public const int DefaultTemporaryPasswordLifetimeHours = 168;
 
     public const int DefaultLockoutMaxFailedAttempts = 5;
 
@@ -58,6 +62,14 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
     /// <summary>The settings with every key at its default.</summary>
     public static DashboardSecuritySettings Default { get; } =
         new(DefaultPasswordMinLength, DefaultLockoutMaxFailedAttempts, TimeSpan.FromMinutes(DefaultLockoutMinutes));
+
+    /// <summary>
+    /// How long a temporary password (one an administrator sets or creates with the user still having to change it)
+    /// is accepted at sign-in, counted from the moment it was set; <see cref="TimeSpan.Zero"/> means it never expires.
+    /// A user who is already signed in can still change it; nobody can sign in with an expired one until an administrator
+    /// sets another.
+    /// </summary>
+    public TimeSpan TemporaryPasswordLifetime { get; init; } = TimeSpan.FromHours(DefaultTemporaryPasswordLifetimeHours);
 
     /// <summary>The session cookie's configured name, without the <see cref="HostCookiePrefix"/>.</summary>
     public string SessionCookieName { get; init; } = DefaultSessionCookieName;
@@ -88,7 +100,8 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
 
     /// <summary>
     /// Reads the keys; an empty or missing key takes its default. <c>Dashboard:Password:MinLength</c> must be
-    /// 8 to 128, <c>Dashboard:Lockout:MaxFailedAttempts</c> 0 (never lock) to 100,
+    /// 8 to 128, <c>Dashboard:Password:TemporaryLifetimeHours</c> 0 (never expires) to 8760 (a year),
+    /// <c>Dashboard:Lockout:MaxFailedAttempts</c> 0 (never lock) to 100,
     /// <c>Dashboard:Lockout:Minutes</c> 1 to 1440 (a day), <c>Dashboard:Session:IdleTimeoutMinutes</c> 1 to
     /// 10080 (a week), <c>Dashboard:Session:AbsoluteTimeoutHours</c> 1 to 720 (30 days),
     /// <c>Dashboard:Session:RequireHttps</c> true or false, <c>Dashboard:Session:CookieName</c> 1 to 128 letters,
@@ -113,6 +126,8 @@ public sealed record DashboardSecuritySettings(int PasswordMinLength, int Lockou
             RequireHttps = ReadBool(configuration, RequireHttpsKey),
             ApiKeyRole = ReadApiKeyRole(configuration[ApiKeyRoleKey]),
             AuthPerMinute = ReadInt(configuration, AuthPerMinuteKey, DefaultAuthPerMinute, 1, 1000),
+            TemporaryPasswordLifetime = TimeSpan.FromHours(
+                ReadInt(configuration, TemporaryPasswordLifetimeHoursKey, DefaultTemporaryPasswordLifetimeHours, 0, 8760)),
         };
     }
 

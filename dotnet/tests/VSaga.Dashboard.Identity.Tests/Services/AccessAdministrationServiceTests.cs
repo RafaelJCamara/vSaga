@@ -42,6 +42,36 @@ public sealed class AccessAdministrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreateUser_ATemporaryPassword_ExpiresAfterTheConfiguredLifetime()
+    {
+        var created = await _context.NewAdministration().CreateUserAsync(
+            new NewUser("bob", "Bob", StrongPassword, MustChangePassword: true, null), Admin, None);
+
+        Assert.Equal(T0.AddHours(DashboardSecuritySettings.DefaultTemporaryPasswordLifetimeHours), (await _context.ReadUserAsync(created.Id)).PasswordExpiresAtUtc);
+    }
+
+    [Fact]
+    public async Task CreateUser_APasswordTheUserKeeps_DoesNotExpire()
+    {
+        var created = await _context.NewAdministration().CreateUserAsync(
+            new NewUser("bob", "Bob", StrongPassword, MustChangePassword: false, null), Admin, None);
+
+        Assert.Null((await _context.ReadUserAsync(created.Id)).PasswordExpiresAtUtc);
+    }
+
+    [Fact]
+    public async Task CreateUser_WithALifetimeOfZero_NeverExpires()
+    {
+        await using var context = await CreateAsync(DashboardSecuritySettings.Default with { TemporaryPasswordLifetime = TimeSpan.Zero });
+        await context.SeedAdministratorAsync();
+
+        var created = await context.NewAdministration().CreateUserAsync(
+            new NewUser("bob", "Bob", StrongPassword, MustChangePassword: true, null), Admin, None);
+
+        Assert.Null((await context.ReadUserAsync(created.Id)).PasswordExpiresAtUtc);
+    }
+
+    [Fact]
     public async Task CreateUser_TakenUsernameIgnoringCase_IsUsernameTaken()
     {
         var error = await Assert.ThrowsAsync<IdentityRuleException>(() => _context.NewAdministration().CreateUserAsync(
@@ -175,6 +205,25 @@ public sealed class AccessAdministrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ResetPassword_StartsANewLifetime_OnlyWhileTheUserMustChangeIt()
+    {
+        var bob = await _context.SeedUserAsync("bob");
+        var administration = _context.NewAdministration();
+
+        await administration.ResetPasswordAsync(bob.Id, "a brand new secret", mustChangePassword: true, Admin, None);
+        var first = (await _context.ReadUserAsync(bob.Id)).PasswordExpiresAtUtc;
+        _context.Time.Advance(TimeSpan.FromHours(10));
+        await administration.ResetPasswordAsync(bob.Id, "another new secret", mustChangePassword: true, Admin, None);
+        var second = (await _context.ReadUserAsync(bob.Id)).PasswordExpiresAtUtc;
+        await administration.ResetPasswordAsync(bob.Id, "one the user keeps", mustChangePassword: false, Admin, None);
+        var kept = (await _context.ReadUserAsync(bob.Id)).PasswordExpiresAtUtc;
+
+        Assert.Equal(T0.AddHours(DashboardSecuritySettings.DefaultTemporaryPasswordLifetimeHours), first);
+        Assert.Equal(T0.AddHours(10 + DashboardSecuritySettings.DefaultTemporaryPasswordLifetimeHours), second);
+        Assert.Null(kept);
+    }
+
+    [Fact]
     public async Task ResetPassword_SetsTheNewPassword_RotatesTheStamp_AndNotifies()
     {
         var bob = await _context.SeedUserAsync("bob");
@@ -230,6 +279,18 @@ public sealed class AccessAdministrationServiceTests : IAsyncLifetime
         Assert.NotEqual(bob.SecurityStamp, stored.SecurityStamp, StringComparer.Ordinal);
         Assert.Equal(PasswordVerificationResult.Success, _context.Hasher.VerifyHashedPassword(stored, stored.PasswordHash, "my own new secret"));
         Assert.Equal([Ids(bob.Id)], _context.Observer.Notified);
+    }
+
+    [Fact]
+    public async Task ChangeOwnPassword_Success_ClearsTheTemporaryPasswordsExpiry()
+    {
+        var bob = await _context.NewAdministration().CreateUserAsync(
+            new NewUser("bob", "Bob", StrongPassword, MustChangePassword: true, null), Admin, None);
+        Assert.NotNull((await _context.ReadUserAsync(bob.Id)).PasswordExpiresAtUtc);
+
+        await _context.NewAdministration().ChangeOwnPasswordAsync(bob.Id, StrongPassword, "my own new secret", Bob(), None);
+
+        Assert.Null((await _context.ReadUserAsync(bob.Id)).PasswordExpiresAtUtc);
     }
 
     [Fact]

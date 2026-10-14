@@ -78,7 +78,10 @@ public sealed class AccessAdministrationService
 
                 var user = new DashboardUser(
                     Guid.NewGuid(), username!, displayName!, hash, SecurityStamps.New(), IsEnabled: true, request.MustChangePassword,
-                    FailedSignInCount: 0, LockoutEndUtc: null, LastSignInAtUtc: null, now, now, grants);
+                    FailedSignInCount: 0, LockoutEndUtc: null, LastSignInAtUtc: null, now, now, grants)
+                {
+                    PasswordExpiresAtUtc = TemporaryPasswordExpiry(request.MustChangePassword, now),
+                };
                 EnsureAdministratorRemains(snapshot with { Users = [.. snapshot.Users, user] });
                 await _store.CreateUserAsync(user, cancellationToken);
                 return new Committed<DashboardUser>(user, user.Id, user.Username, DescribeUser(user), Notification.None);
@@ -150,12 +153,14 @@ public sealed class AccessAdministrationService
             var hash = _hasher.HashPassword(existing, newPassword!);
             return await InScopeAsync(async snapshot =>
             {
+                var now = _timeProvider.GetUtcNow();
                 var updated = snapshot.User(id) with
                 {
                     PasswordHash = hash,
                     SecurityStamp = SecurityStamps.New(),
                     MustChangePassword = mustChangePassword,
-                    UpdatedAtUtc = _timeProvider.GetUtcNow(),
+                    PasswordExpiresAtUtc = TemporaryPasswordExpiry(mustChangePassword, now),
+                    UpdatedAtUtc = now,
                 };
                 EnsureAdministratorRemains(snapshot.WithUser(updated));
                 await _store.UpdateUserAsync(updated, cancellationToken);
@@ -370,6 +375,7 @@ public sealed class AccessAdministrationService
             PasswordHash = hash,
             SecurityStamp = SecurityStamps.New(),
             MustChangePassword = false,
+            PasswordExpiresAtUtc = null,
             FailedSignInCount = 0,
             LockoutEndUtc = null,
             UpdatedAtUtc = _timeProvider.GetUtcNow(),
@@ -377,6 +383,10 @@ public sealed class AccessAdministrationService
         await _store.UpdateUserAsync(updated, cancellationToken);
         return new PasswordChangeResult(PasswordChangeStatus.Changed, updated, null);
     }
+
+    /// <summary>When a password an administrator just set stops being accepted: only one the user still has to change expires, and a lifetime of zero never does.</summary>
+    private DateTimeOffset? TemporaryPasswordExpiry(bool mustChangePassword, DateTimeOffset now) =>
+        mustChangePassword && _settings.TemporaryPasswordLifetime > TimeSpan.Zero ? now + _settings.TemporaryPasswordLifetime : null;
 
     private bool VerifiesCurrent(DashboardUser user, string? currentPassword) =>
         !string.IsNullOrEmpty(currentPassword)

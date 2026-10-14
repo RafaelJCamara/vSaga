@@ -375,6 +375,7 @@ public sealed class EfCoreDashboardIdentityStore(DashboardIdentityDbContext db) 
         entity.FailedSignInCount = user.FailedSignInCount;
         entity.LockoutEndUtc = user.LockoutEndUtc;
         entity.LastSignInAtUtc = user.LastSignInAtUtc;
+        entity.PasswordExpiresAtUtc = user.PasswordExpiresAtUtc;
         entity.CreatedAtUtc = user.CreatedAtUtc;
         entity.UpdatedAtUtc = user.UpdatedAtUtc;
     }
@@ -401,7 +402,10 @@ public sealed class EfCoreDashboardIdentityStore(DashboardIdentityDbContext db) 
         e.LastSignInAtUtc,
         e.CreatedAtUtc,
         e.UpdatedAtUtc,
-        [.. e.Grants.OrderBy(g => g.RoleId).Select(g => new AccessGrant(g.RoleId, g.AllSagaTypes, [.. g.SagaTypes]))]);
+        [.. e.Grants.OrderBy(g => g.RoleId).Select(g => new AccessGrant(g.RoleId, g.AllSagaTypes, [.. g.SagaTypes]))])
+    {
+        PasswordExpiresAtUtc = e.PasswordExpiresAtUtc,
+    };
 
     private static DashboardTeam ToRecord(DashboardTeamEntity e) => new(
         e.Id,

@@ -934,7 +934,9 @@ correlation id, and the username on a retry entry; ADR 0006 lists this.
   body over 16 KiB is a 400 `validation` problem, refused without reading past the cap. Every
   failed sign-in completes no earlier than about 300 ms after the request started, plus jitter. Login
   failures are one uniform 401 `invalid_credentials`.
-- Passwords: `Dashboard:Password:MinLength` (12) to 128, not equal to the username; a new password equal
+- Passwords: `Dashboard:Password:MinLength` (12) to 128, not equal to the username; a password an administrator sets
+  with must-change is refused at sign-in `Dashboard:Password:TemporaryLifetimeHours` (168) after it was set (`0` never),
+  as one more uniform failure that counts nothing, and the user's own change clears it; a new password equal
   to the current one is rejected. A wrong `currentPassword` on `POST /api/auth/password` answers 400
   `invalid_credentials` with `errors.currentPassword`, counts against the account's failure counter, and
   ends the session at the threshold by rotating the stamp, so a copy of the cookie stops working too. On
@@ -1094,6 +1096,7 @@ The SPA shows the server's error text for a 400 on the list and returns to the l
 | `Dashboard:Session:AbsoluteTimeoutHours` | `24` |
 | `Dashboard:Session:RequireHttps` | `false` |
 | `Dashboard:Password:MinLength` | `12` |
+| `Dashboard:Password:TemporaryLifetimeHours` | `168` (0 never expires) |
 | `Dashboard:Lockout:MaxFailedAttempts`, `Dashboard:Lockout:Minutes` | `5` (0 disables), `15` |
 | `Dashboard:RateLimit:AuthPerMinute` | `20` |
 
@@ -1732,8 +1735,6 @@ defects). What the run of 2026-10-13 covered and found is in
 - **The device-cookie lockout bypass** (a Data-Protected, HttpOnly "known device" cookie that lets a
   browser that has signed in before skip a shared lock). Until then lockout can deny a known username;
   what ends a lock is documented (§8.4).
-- **Expiry of temporary passwords** (an administrator-set password that must be changed stays valid until
-  used).
 - **Single sign-on.**
 - **`RabbitMqTransport` wrapping channel-open failures in `MessageTransportPublishException`.** A broker
   that stops answering makes `CreateChannelAsync` throw `TaskCanceledException` after about 25 seconds,

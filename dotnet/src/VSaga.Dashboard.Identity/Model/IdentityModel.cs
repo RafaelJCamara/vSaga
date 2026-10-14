@@ -45,6 +45,13 @@ public sealed record DashboardUser(
     IReadOnlyList<AccessGrant> Grants)
 {
     /// <summary>
+    /// When a temporary password stops being accepted at sign-in: the instant after which a user who still has to change
+    /// their password (<see cref="MustChangePassword"/>) is refused. Null when it never expires: the password is the user's
+    /// own, an administrator set it with a lifetime of zero, or it was set before expiry existed.
+    /// </summary>
+    public DateTimeOffset? PasswordExpiresAtUtc { get; init; }
+
+    /// <summary>
     /// Replaces the generated member list of <see cref="object.ToString"/>, which would print every
     /// property: the password hash and the security stamp are left out, so a user that reaches a log
     /// line, an exception message or an audit event never carries either.
@@ -56,7 +63,7 @@ public sealed record DashboardUser(
             $"Id = {Id}, Username = {Username}, DisplayName = {DisplayName}, IsEnabled = {IsEnabled}, MustChangePassword = {MustChangePassword}, ");
         builder.Append(
             CultureInfo.InvariantCulture,
-            $"FailedSignInCount = {FailedSignInCount}, LockoutEndUtc = {LockoutEndUtc:O}, LastSignInAtUtc = {LastSignInAtUtc:O}, ");
+            $"FailedSignInCount = {FailedSignInCount}, LockoutEndUtc = {LockoutEndUtc:O}, LastSignInAtUtc = {LastSignInAtUtc:O}, PasswordExpiresAtUtc = {PasswordExpiresAtUtc:O}, ");
         builder.Append(
             CultureInfo.InvariantCulture,
             $"CreatedAtUtc = {CreatedAtUtc:O}, UpdatedAtUtc = {UpdatedAtUtc:O}, GrantCount = {Grants.Count}");

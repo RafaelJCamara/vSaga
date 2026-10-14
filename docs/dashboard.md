@@ -337,6 +337,11 @@ A browser user opens the dashboard; with no session the SPA sends them to `/logi
   Without it a detail page that refetches on every live push would keep one session alive indefinitely.
 - **Must change password.** A user an administrator creates, and one whose password an administrator sets,
   has to choose their own password at the next sign-in unless the request said `mustChangePassword: false`.
+  A password that has to be changed is temporary: it stops being accepted at sign-in `Dashboard:Password:TemporaryLifetimeHours`
+  (default 168, a week; `0` never) after it was set, and an administrator sets another one. The refusal is the
+  same uniform `401` `invalid_credentials` as any failed sign-in, counts nothing against the account, and is audited as
+  `TemporaryPasswordExpired`. Someone already signed in when it expires can still change it; a password the user chose
+  never expires.
   Until they do, their access is empty: every saga route answers `403` `password_change_required`, and
   `POST /api/auth/password` is the way out (the SPA sends them to the Account page). The seeded and the
   setup administrator do not have to.

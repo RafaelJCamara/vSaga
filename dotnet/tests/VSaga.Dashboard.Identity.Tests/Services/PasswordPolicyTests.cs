@@ -71,7 +71,17 @@ public sealed class DashboardSecuritySettingsTests
         Assert.Equal(12, settings.PasswordMinLength);
         Assert.Equal(5, settings.LockoutMaxFailedAttempts);
         Assert.Equal(TimeSpan.FromMinutes(15), settings.LockoutDuration);
+        Assert.Equal(TimeSpan.FromDays(7), settings.TemporaryPasswordLifetime);
     }
+
+    [Theory]
+    [InlineData("0", 0)]
+    [InlineData(" 24 ", 24)]
+    [InlineData("8760", 8760)]
+    public void Read_TakesTheTemporaryPasswordLifetimeInHours(string value, int hours) =>
+        Assert.Equal(
+            TimeSpan.FromHours(hours),
+            DashboardSecuritySettings.Read(Configuration((DashboardSecuritySettings.TemporaryPasswordLifetimeHoursKey, value))).TemporaryPasswordLifetime);
 
     [Fact]
     public void Read_TakesEveryKey()
@@ -102,6 +112,9 @@ public sealed class DashboardSecuritySettingsTests
     [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "vsaga;session")]
     [InlineData(DashboardSecuritySettings.SessionCookieNameKey, "__Host-vsaga.session")]
     [InlineData(DashboardSecuritySettings.ApiKeyRoleKey, "r0123456789012345678901234567890123456789012345678901234567890123")]
+    [InlineData(DashboardSecuritySettings.TemporaryPasswordLifetimeHoursKey, "-1")]
+    [InlineData(DashboardSecuritySettings.TemporaryPasswordLifetimeHoursKey, "8761")]
+    [InlineData(DashboardSecuritySettings.TemporaryPasswordLifetimeHoursKey, "a week")]
     [InlineData(DashboardSecuritySettings.AuthPerMinuteKey, "0")]
     [InlineData(DashboardSecuritySettings.AuthPerMinuteKey, "1001")]
     public void Read_InvalidValue_FailsNamingTheKeyAndTheValue(string key, string value)

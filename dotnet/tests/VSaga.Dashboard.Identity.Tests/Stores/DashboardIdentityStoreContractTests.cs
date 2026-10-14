@@ -56,6 +56,7 @@ public abstract class DashboardIdentityStoreContractTests : IAsyncLifetime
             FailedSignInCount = 3,
             LockoutEndUtc = T0.AddMinutes(15),
             LastSignInAtUtc = T0.AddDays(-1),
+            PasswordExpiresAtUtc = T0.AddDays(7),
             CreatedAtUtc = T0.AddDays(-7),
             UpdatedAtUtc = T0,
             Grants =
@@ -201,6 +202,7 @@ public abstract class DashboardIdentityStoreContractTests : IAsyncLifetime
             FailedSignInCount = 2,
             LockoutEndUtc = T0.AddHours(1),
             LastSignInAtUtc = T0.AddMinutes(-3),
+            PasswordExpiresAtUtc = T0.AddDays(2),
             UpdatedAtUtc = T0.AddDays(1),
             Grants =
             [
@@ -795,6 +797,7 @@ public abstract class DashboardIdentityStoreContractTests : IAsyncLifetime
             && x.FailedSignInCount == y.FailedSignInCount
             && x.LockoutEndUtc == y.LockoutEndUtc
             && x.LastSignInAtUtc == y.LastSignInAtUtc
+            && x.PasswordExpiresAtUtc == y.PasswordExpiresAtUtc
             && x.CreatedAtUtc == y.CreatedAtUtc
             && x.UpdatedAtUtc == y.UpdatedAtUtc;
 

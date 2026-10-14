@@ -23,6 +23,12 @@ public enum CredentialFailure
     /// <summary>The account was already locked; the password was not checked.</summary>
     LockedOut,
 
+    /// <summary>
+    /// The account still has the temporary password an administrator set and its lifetime has passed; the password was not
+    /// checked and nothing was counted, so a wrong guess at an expired account is not a lockout. An administrator sets another.
+    /// </summary>
+    TemporaryPasswordExpired,
+
     /// <summary>The password was wrong and the failure was counted; <see cref="CredentialVerification.LockedUntilUtc"/> says whether it locked the account.</summary>
     WrongPassword,
 
@@ -67,7 +73,7 @@ public sealed class DummyPasswordHash
 }
 
 /// <summary>
-/// Checks a username and password (design §8.4). Unknown, disabled and locked accounts verify the
+/// Checks a username and password (design §8.4). Unknown, disabled, locked and temporary-password-expired accounts verify the
 /// <see cref="DummyPasswordHash"/> and count nothing. A wrong password is counted atomically and locks the
 /// account at <see cref="DashboardSecuritySettings.LockoutMaxFailedAttempts"/>. A right one clears the count
 /// and stores a rehash when the hasher asks for one. A username over 64 or a password over 128 characters is
@@ -117,6 +123,7 @@ public sealed class CredentialVerifier(
         null => CredentialFailure.UnknownUser,
         { IsEnabled: false } => CredentialFailure.Disabled,
         _ when user.LockoutEndUtc > now => CredentialFailure.LockedOut,
+        { MustChangePassword: true } when user.PasswordExpiresAtUtc <= now => CredentialFailure.TemporaryPasswordExpired,
         _ => CredentialFailure.None,
     };
 

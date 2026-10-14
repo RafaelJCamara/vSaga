@@ -158,6 +158,9 @@ namespace VSaga.Dashboard.Identity.Sqlite.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("PasswordExpiresAtUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("TEXT");

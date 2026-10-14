@@ -13,6 +13,7 @@ using VSaga.Dashboard.Api.Endpoints;
 using VSaga.Dashboard.Identity;
 using VSaga.Dashboard.Identity.Model;
 using VSaga.Dashboard.Identity.Services;
+using VSaga.Dashboard.Identity.Stores;
 using static VSaga.Dashboard.Api.Tests.TestSessions;
 
 namespace VSaga.Dashboard.Api.Tests;
@@ -164,6 +165,36 @@ public sealed class AuthEndpointsTests : IAsyncLifetime, IAsyncDisposable
         Assert.Single(bodies.Distinct(StringComparer.Ordinal));
         using var problem = JsonDocument.Parse(bodies[0]);
         Assert.Equal(AuthProblems.InvalidCredentialsCode, problem.RootElement.GetProperty("code").GetString());
+    }
+
+    /// <summary>A user an administrator gave a password they still have to change, which stops being accepted at <paramref name="expiresAtUtc"/>.</summary>
+    private async Task CreateTemporaryUserAsync(string username, DateTimeOffset expiresAtUtc)
+    {
+        var user = await CreateUserWithPasswordAsync(_factory.Services, username, Password, grants: AllTypes(BuiltInRoles.ViewerId));
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<IDashboardIdentityStore>();
+        await using var write = await store.BeginExclusiveAsync(CancellationToken.None);
+        await store.UpdateUserAsync(user with { MustChangePassword = true, PasswordExpiresAtUtc = expiresAtUtc }, CancellationToken.None);
+        await write.CommitAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Login_ATemporaryPasswordPastItsExpiry_IsTheSameFailureAsAnUnknownUser_AndOneWithinItSignsIn()
+    {
+        await CreateTemporaryUserAsync("expired", DateTimeOffset.UtcNow.AddMinutes(-1));
+        await CreateTemporaryUserAsync("fresh", DateTimeOffset.UtcNow.AddHours(1));
+        using var client = await SignInClient.StartAsync(_factory);
+
+        using var unknown = await client.LoginAsync("nobody", Password);
+        using var expired = await client.LoginAsync("expired", Password);
+        using var fresh = await client.LoginAsync("fresh", Password);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
+        Assert.Null(SignInClient.SetCookieHeader(expired, CookieName(_factory.Services)));
+        Assert.Equal(await unknown.Content.ReadAsStringAsync(), await expired.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, fresh.StatusCode);
+        var session = await SignInClient.ReadJsonAsync(fresh);
+        Assert.True(session.GetProperty("user").GetProperty("mustChangePassword").GetBoolean());
     }
 
     [Fact]

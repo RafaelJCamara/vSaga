@@ -437,8 +437,11 @@ cannot read is strictly better.
    reaches every saga type on that host that consumes the message, as it does today. A scoped
    `sagas.retry` grant is a boundary only when every engine host on the bus runs at least the release
    that ships ADR 0008's engine change; `docs/dashboard.md` ("Manual retry") states that minimum.
-6. **A temporary password set by an administrator does not expire** if the user never signs in. An
-   expiry is a recorded follow-up.
+6. **A temporary password set by an administrator expires** (2026-10-14): one the user still has to change
+   is refused at sign-in `Dashboard:Password:TemporaryLifetimeHours` after it was set (default 168, `0` never),
+   as a uniform failure that counts nothing against the account and is audited as `TemporaryPasswordExpired`.
+   It gates sign-in only: a session that was already open can still change the password, and a password set
+   before the expiry existed has none.
 
 ---
 
