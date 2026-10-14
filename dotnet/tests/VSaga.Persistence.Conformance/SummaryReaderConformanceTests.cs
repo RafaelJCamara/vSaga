@@ -48,7 +48,10 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
     /// The four instances differ in every projected field (status, current state, kind, parent link,
     /// both timestamps), one of them has no parent, and the last two listings are filtered, so a reader
     /// whose list projection fills a field from the wrong column, or turns a root saga's null parent
-    /// into empty text, fails here while its ids, counts and page numbers stay right. The second
+    /// into empty text, fails here while its ids, counts and page numbers stay right. Two of the
+    /// instances have been updated through the store, once and twice, so their versions differ from
+    /// each other and from the never-updated pair, and a list projection that reports a constant
+    /// <see cref="SagaSummary.Version"/> fails too. The second
     /// listing is the dashboard's status filter; the third composes a saga type with
     /// <see cref="SagaListFilter.UpdatedSince"/>, which keeps what is strictly newer and drops the other
     /// type's newer row.
@@ -74,6 +77,10 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         invoice.CreatedAtUtc = T0.AddSeconds(5);
         invoice.UpdatedAtUtc = T0.AddSeconds(30);
         await InsertAsync(stores, order, reorder, shipping, invoice);
+        await RewriteAsync(stores, order);
+        await RewriteAsync(stores, order);
+        await RewriteAsync(stores, invoice);
+        Assert.Equal([2, 0, 0, 1], [order.Version, reorder.Version, shipping.Version, invoice.Version]);
 
         var all = await ListAsync(stores, new SagaListFilter());
         var failed = await ListAsync(stores, new SagaListFilter { Status = SagaStatus.Failed });
@@ -85,6 +92,13 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         Assert.Equal(1, failed.TotalCount);
         AssertProjectsInOrder([reorder], newerOrders);
         Assert.Equal(1, newerOrders.TotalCount);
+    }
+
+    /// <summary>Updates the instance with exactly what it holds, in a unit of work of its own: the store bumps its version and nothing else.</summary>
+    private static async Task RewriteAsync(IProviderStores stores, ConformanceSagaState state)
+    {
+        await using var uow = await stores.BeginAsync();
+        await uow.Snapshots<ConformanceSagaState>().UpdateAsync(state, state.Version);
     }
 
     private void AssertProjectsInOrder(IReadOnlyList<ConformanceSagaState> written, PagedResult<SagaSummary> page) =>
@@ -101,7 +115,7 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
             Assert.Equal(state.Kind, summary.Kind);
             Assert.Equal(state.CurrentState, summary.CurrentState);
             Assert.Equal(state.Status, summary.Status);
-            Assert.Equal(0, summary.Version);
+            Assert.Equal(state.Version, summary.Version);
             Assert.Equal(state.ParentSagaType, summary.ParentSagaType);
             Assert.Equal(state.ParentCorrelationId, summary.ParentCorrelationId);
             AssertSameInstant(state.CreatedAtUtc, summary.CreatedAtUtc);

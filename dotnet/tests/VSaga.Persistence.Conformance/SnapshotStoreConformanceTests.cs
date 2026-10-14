@@ -79,7 +79,7 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
     public async Task Find_ForARowWhoseBlobIsJsonNull_Throws()
     {
         await using var stores = await Fixture.CreateStoresAsync();
-        var correlationId = await InsertNullBlobAsync(stores, businessKey: null);
+        var correlationId = await InsertBlobStateAsync<NullBlobSagaState>(stores, businessKey: null);
 
         await using var uow = await stores.BeginAsync();
         await Assert.ThrowsAnyAsync<Exception>(() => uow.Snapshots<NullBlobSagaState>().FindAsync("OrderSaga", correlationId));
@@ -90,15 +90,44 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
     public async Task FindByBusinessKey_ForARowWhoseBlobIsJsonNull_Throws()
     {
         await using var stores = await Fixture.CreateStoresAsync();
-        await InsertNullBlobAsync(stores, businessKey: "ORD-NULL-BLOB");
+        await InsertBlobStateAsync<NullBlobSagaState>(stores, businessKey: "ORD-NULL-BLOB");
 
         await using var uow = await stores.BeginAsync();
         await Assert.ThrowsAnyAsync<Exception>(() => uow.Snapshots<NullBlobSagaState>().FindByBusinessKeyAsync("OrderSaga", "ORD-NULL-BLOB"));
     }
 
-    private static async Task<Guid> InsertNullBlobAsync(IProviderStores stores, string? businessKey)
+    /// <summary>
+    /// Clause 11 for a blob that is not JSON at all (a document cut off mid-way), the other half of "a null or
+    /// corrupt state blob": <c>FindAsync</c> throws, never null and never a state. The blob is planted through the
+    /// ordinary <c>InsertAsync</c> by <see cref="MalformedBlobSagaState"/>, whose converter writes the broken
+    /// text with input validation off; the converter's own read consumes the value like any other, so only the
+    /// text being malformed can make this throw. Clause 11 names no exception type, so only a throw is asserted.
+    /// </summary>
+    [Fact]
+    public async Task Find_ForARowWhoseBlobIsMalformedText_Throws()
     {
-        var state = new NullBlobSagaState
+        await using var stores = await Fixture.CreateStoresAsync();
+        var correlationId = await InsertBlobStateAsync<MalformedBlobSagaState>(stores, businessKey: null);
+
+        await using var uow = await stores.BeginAsync();
+        await Assert.ThrowsAnyAsync<Exception>(() => uow.Snapshots<MalformedBlobSagaState>().FindAsync("OrderSaga", correlationId));
+    }
+
+    /// <summary>Clause 11 for a malformed blob, through the business-key lookup, which reads the same blob.</summary>
+    [Fact]
+    public async Task FindByBusinessKey_ForARowWhoseBlobIsMalformedText_Throws()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        await InsertBlobStateAsync<MalformedBlobSagaState>(stores, businessKey: "ORD-MALFORMED-BLOB");
+
+        await using var uow = await stores.BeginAsync();
+        await Assert.ThrowsAnyAsync<Exception>(() => uow.Snapshots<MalformedBlobSagaState>().FindByBusinessKeyAsync("OrderSaga", "ORD-MALFORMED-BLOB"));
+    }
+
+    private static async Task<Guid> InsertBlobStateAsync<TState>(IProviderStores stores, string? businessKey)
+        where TState : SagaState, new()
+    {
+        var state = new TState
         {
             CorrelationId = Guid.NewGuid(),
             SagaType = "OrderSaga",
@@ -109,7 +138,7 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
         };
 
         await using var uow = await stores.BeginAsync();
-        await uow.Snapshots<NullBlobSagaState>().InsertAsync(state);
+        await uow.Snapshots<TState>().InsertAsync(state);
         return state.CorrelationId;
     }
 

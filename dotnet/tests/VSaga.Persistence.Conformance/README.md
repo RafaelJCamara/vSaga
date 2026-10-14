@@ -62,9 +62,10 @@ API drops those), but gives a scoped caller short pages and a total over the wro
 ## What a green run covers on reads, nulls and updates
 
 The summary-reader cases hold every item `ListAsync` and `FindChildrenAsync` return to the state that was
-written, field by field — kind, current state, status, parent link and both timestamps (at the
-`TimestampResolution` you declare) — whichever filter selected it, not only to row ids, counts and page
-numbers; a root saga's parent link comes back null. An outbox row enqueued without a destination is claimed
+written, field by field — kind, current state, status, version (an instance updated once or twice lists with
+that version, not a constant), parent link and both timestamps (at the `TimestampResolution` you declare) —
+whichever filter selected it, not only to row ids, counts and page numbers; a root saga's parent link comes
+back null. An outbox row enqueued without a destination is claimed
 with a null `Destination`, and an event-log entry written without a source service, destination service or
 causation id reads back with all three null — never empty text. After `UpdateAsync` the projected status and
 current state are the new ones (`GetAsync` and a status-filtered `ListAsync` say so), only the updated
@@ -73,10 +74,13 @@ business key the update leaves alone still resolves to the instance.
 
 ## What a green run does not cover, by design
 
-A state blob that is not valid JSON at all must make `FindAsync` throw rather than return null
-(`ISagaSnapshotStore.FindAsync`). The suite writes only through the contracts and `System.Text.Json`,
-which can produce a blob of JSON `null` — and the suite does check that one — but never malformed text;
-verify that case against your own storage.
+A corrupt state blob must make `FindAsync` and `FindByBusinessKeyAsync` throw rather than return null
+or a state (`ISagaSnapshotStore.FindAsync`). The suite writes only through the contracts and
+`System.Text.Json`, so it plants the corrupt blob with a state type whose own converter writes the bad
+text: JSON `null`, and a document cut off mid-way (`Utf8JsonWriter.WriteRawValue` with input validation
+off). Both are checked, through both lookups. A corrupt blob that does not come from the serializer — a row
+damaged in storage, or text your storage would normalise or reject on write (a `jsonb` column, a BSON
+document) — is outside what the suite can write, so verify that against your own storage.
 
 ## Docs
 
