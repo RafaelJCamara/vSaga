@@ -5,9 +5,11 @@ using Microsoft.Extensions.DependencyInjection;
 namespace VSaga.Core.Tests;
 
 /// <summary>
-/// Direct coverage of <see cref="ISagaOutboxStore"/>'s in-memory implementation, independent of
-/// SagaOrchestrator's own use of it (production-readiness §8.8) -- these exercise the store contract's
-/// full id/claim/dispatch shape on its own rather than only incidentally through a saga run.
+/// What the in-memory outbox store keeps of its own tests after the provider-neutral conformance suite
+/// (<c>OutboxStoreConformanceTests</c>, run for this provider by <c>InMemoryOutboxStoreConformanceTests</c>)
+/// took over the rest: a case the suite does not make. Its round-trip enqueues an addressed row, so a store
+/// that returned a null destination as empty text would pass it; this one enqueues a broadcast and checks it
+/// comes back null, which is what the dispatcher branches on. See persistence-contracts.md Q4.
 /// </summary>
 public sealed class InMemoryOutboxStoreTests
 {
@@ -40,65 +42,5 @@ public sealed class InMemoryOutboxStoreTests
         Assert.Equal(SagaOutboxStatus.Dispatched, claimed.Status);
 
         Assert.Empty(await store.ClaimPendingAsync(now, batchSize: 10)); // already dispatched, shouldn't be claimed twice
-    }
-
-    [Fact]
-    public async Task MarkDispatchedDirectly_ExcludesItFromTheRecoveryClaim()
-    {
-        var store = NewStore();
-        var now = DateTimeOffset.UtcNow;
-
-        await store.EnqueueAsync("OrderSaga", Guid.NewGuid(), "m2", "ChargePayment", "{}"u8.ToArray(),
-            destination: "payments", new Dictionary<string, string>(StringComparer.Ordinal), now.AddMinutes(-1));
-
-        var pendingRightNow = await store.ClaimPendingAsync(now.AddMinutes(-10), batchSize: 10);
-        Assert.Empty(pendingRightNow); // not yet past its grace period
-
-        // The inline drain's path: mark dispatched directly by message id, right after sending it
-        // synchronously. Never goes through ClaimPendingAsync.
-        await store.MarkDispatchedAsync("m2");
-
-        Assert.Empty(await store.ClaimPendingAsync(now, batchSize: 10));
-    }
-
-    /// <summary>
-    /// The abandon paths (SagaOrchestrator.DiscardDeferredPublishesAsync: a timeout whose persist lost
-    /// its concurrency race, or a step that threw) must leave nothing for the recovery poller to find —
-    /// otherwise the discard is cosmetic and every dropped publish goes out anyway, one grace period later.
-    /// </summary>
-    [Fact]
-    public async Task DiscardPendingAsync_LeavesNothingForTheRecoveryPoller()
-    {
-        var store = NewStore();
-        var now = DateTimeOffset.UtcNow;
-
-        await store.EnqueueAsync("OrderSaga", Guid.NewGuid(), "kept", "InventoryReserved", "{}"u8.ToArray(),
-            destination: null, new Dictionary<string, string>(StringComparer.Ordinal), now.AddMinutes(-1));
-        await store.EnqueueAsync("OrderSaga", Guid.NewGuid(), "dropped", "ChargePayment", "{}"u8.ToArray(),
-            destination: null, new Dictionary<string, string>(StringComparer.Ordinal), now.AddMinutes(-1));
-
-        await store.DiscardPendingAsync(["dropped"]);
-
-        var claimed = Assert.Single(await store.ClaimPendingAsync(now, batchSize: 10));
-        Assert.Equal("kept", claimed.MessageId);
-    }
-
-    [Fact]
-    public async Task ClaimPendingAsync_RespectsBatchSize()
-    {
-        var store = NewStore();
-        var now = DateTimeOffset.UtcNow;
-
-        for (var i = 0; i < 5; i++)
-        {
-            await store.EnqueueAsync("OrderSaga", Guid.NewGuid(), $"m{i}", "InventoryReserved", "{}"u8.ToArray(),
-                destination: null, new Dictionary<string, string>(StringComparer.Ordinal), now.AddMinutes(-1));
-        }
-
-        var firstBatch = await store.ClaimPendingAsync(now, batchSize: 3);
-        Assert.Equal(3, firstBatch.Count);
-
-        var secondBatch = await store.ClaimPendingAsync(now, batchSize: 3);
-        Assert.Equal(2, secondBatch.Count); // the remaining 2, not reclaiming the first batch's 3
     }
 }
