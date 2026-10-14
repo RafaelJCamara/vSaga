@@ -106,6 +106,24 @@ contradict the toolbar; "the last good page with rows on screen" is the case of 
 (the first request is already refused), 0 rows, and a saga-type dropdown with 61 options (60 types and "All saga
 types"), through which the list is reachable.
 
+**Redis and MongoDB, the same afternoon.** The `redis` and `mongo` overlays (4800 / 5680 and 4700 / 5580, dashboard
+only), 60 types × 3 instances inserted through `AddVSagaRedis` / `AddVSagaMongoDb`'s snapshot stores, the same two
+users. The API answered every shape exactly as on Postgres: for `wide` the default list and `page=2&pageSize=100`
+400 "...more than the 50...", `maxPage: 0`; `sortBy=Status`, `status`, `kind` and `search` 400 "...more than the
+10...", `maxPage: 0`; `sagaType=ExtraType05` 200 with 3 rows. For `mid`: default 200 (36 total, 25 rows), the
+four other shapes 400 "You can see 12 saga types...", `maxPage: 0`, `page=2&pageSize=100` 200 with no rows. In the
+browser on each: `mid` 25 rows and "36 total"; status `Failed` gave the banner, 0 rows and "0 total"; with the type
+`ExtraType05` 1 row and no banner; clearing the type brought the banner back; clearing the status 25 rows; `wide`
+landed on `/sagas` with the 50-type banner, 0 rows and 61 options in the type dropdown. Both stacks were taken
+down with `-v`.
+
+The cases are now automated: `ScopedSagaListerProviderTests` in `VSaga.Dashboard.Api.Tests` runs the real
+`ScopedSagaLister` over the real Redis and MongoDB readers in containers (four cases per provider: the unranked
+shapes refused with `maxPage: 0` and a `sagaType` filter still served, the ranked shape's 12-type success and
+51-type refusal, a 60-name scope narrowed to the types the provider says have run, and the depth bounds' `maxPage`
+of 20 and 100). The mutations `maxPage: 0` to `1` (4 of 8 red) and inverting the narrowing to the types that ran
+(6 of 8 red) fail them.
+
 ## 3. A preset `Dashboard:Setup:Code` and `ResetOnStart`
 
 Stack `vsaga-r2s`, `Dashboard:Setup:Code` = `preset code-for-r2 test-9`.
@@ -255,5 +273,3 @@ Chromium only; keyboard-only for the forms. What the accessibility tree and the 
   not run those adapters).
 - A saga whose first snapshot is late while it stays `Running` and idle with the follow-up working (it is not
   started, by design).
-- A `maxPage` of 0 on Redis or MongoDB (the stack was Postgres); the bound is computed in the API, above the
-  provider.

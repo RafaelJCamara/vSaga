@@ -1697,8 +1697,7 @@ Vitest 5 and drop the splitting option"). Without the option 12 of 12 runs on 4.
 Never exercised in a recorded run, so resting on tests alone: a screen reader, and any browser but
 headless Chromium; a retry through the dashboard over MassTransit or Wolverine that reaches the saga host
 (the dashboard host runs neither adapter, a retry there answers 502 with the saga restored, which was seen, and
-the targeted redrive itself was exercised by publishing through the two adapters directly); the scoped list's
-`maxPage` 0 refusal on Redis or MongoDB (it was run on Postgres; the bound is computed above the provider).
+the targeted redrive itself was exercised by publishing through the two adapters directly).
 
 Closed by the live run of 2026-10-14
 ([`../history/2026-10-14-live-verification-round-2.md`](../history/2026-10-14-live-verification-round-2.md)):
@@ -1706,7 +1705,8 @@ a retry that the planner accepts for a `DeliveryExhausted` saga (made with a tra
 the engine; the saga went from `Failed` to `Completed` and its three siblings on the correlation id did not
 move; the run also found that a failed snapshot write stayed tracked and kept the saga from being marked
 `Failed`); the scoped list's `maxPage` 0 refusal end to end (60 types, the 400 bodies and the banner in a
-browser; the rows are cleared, not kept, for a `maxPage` of 0); a preset `Dashboard:Setup:Code` and
+browser, on Postgres, Redis and MongoDB, and now in `ScopedSagaListerProviderTests` over Redis and MongoDB; the rows
+are cleared, not kept, for a `maxPage` of 0); a preset `Dashboard:Setup:Code` and
 `Dashboard:Admin:ResetOnStart` on a real stack; the age window that turns "pending" into "missing" and the
 follow-up fetch (which was one look and is now a chain until the window ends); and an accessibility pass of the
 setup, sign-in, session-expiry, scoped-list and retry-confirmation pages (which found two accessibility
