@@ -127,7 +127,7 @@ public sealed class VSagaDbContext(DbContextOptions<VSagaDbContext> options) : D
             b.HasIndex(x => new { x.ParentSagaType, x.ParentCorrelationId });
             b.Property(x => x.BusinessKey).HasMaxLength(400);
             // Partial: only sagas that declare CorrelateOn ever have a non-null BusinessKey, and one that
-            // doesn't leaves it null -- see EfCoreStoreTests for the regression test this protects.
+            // doesn't leaves it null -- see SnapshotStoreConformanceTests.Insert_ManyInstancesWithoutABusinessKey_NeverCollide for the regression test this protects.
             // Unique so two concurrent initiates for the same business key can't both win; the race is resolved
             // by reserving before the step runs, not by catching after it -- see production-readiness.md §5.2.
             b.HasIndex(x => new { x.SagaType, x.BusinessKey })
