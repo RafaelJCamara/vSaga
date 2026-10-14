@@ -258,15 +258,17 @@ else uses, would add about 7 kB to it. Follow the pattern in a new form (see `pa
 
 ## Unit tests
 
-`npx ng test` runs Vitest through `@angular/build:unit-test`. On Vitest 4 the test target needed
-`"splitting": false` (`dd37bd1`): the builder runs with `isolate: false` and code splitting on, so modules several
-spec files share become one chunk per worker, and a worker that had already evaluated that chunk for one spec (the
-real `saga-hub.service`, say, and the real `@microsoft/signalr` it imports) never applied the next spec's
-`vi.mock` to it; 12 of 20 full runs failed all 39 hub specs with `Cannot resolve '/hubs/saga'`. The builder marks
-the option deprecated ("No longer needed with Vitest 5") and said so at the start of every run, so the project
-moved to Vitest 5 and the option is gone. If a spec's `vi.mock` is bypassed again, `"splitting": false` on the test
-target, or `"isolate": true` (the more thorough alternative, about 9 s slower when it was measured), are the two
-ways back.
+`npx ng test` runs Vitest through `@angular/build:unit-test`, and the test target sets `"isolate": true`. Without it
+the builder runs every spec file in a worker that keeps its module cache from one file to the next, with code
+splitting on, so modules several spec files share become one chunk per worker; a worker that had already evaluated
+that chunk for one spec (the real `saga-hub.service`, say, and the real `@microsoft/signalr` it imports) never
+applies the next spec's `vi.mock` to it, and all 53 hub specs fail with `Cannot resolve '/hubs/saga'`. It depends on
+how many workers the machine has: with 32 logical processors it is rare, with the 2 workers of a CI runner it was 2
+runs of 4 on Vitest 5.0.4 (and the CI runs of `main` after `adf42af` failed every time). `"isolate": true` gives each
+spec file its own module cache: with it set, 12 of 12 runs passed (8 with 2 workers, 4 with 1), against 2 of 4 failing with 2 workers without it. `"splitting": false` also worked in
+those runs (`dd37bd1` used it on Vitest 4), but the builder marks that option deprecated ("No longer needed with
+Vitest 5") and prints a notice at the start of every run, which is why the project moved away from it in `adf42af`.
+To reproduce a worker shortage on a big machine, run with `VITEST_MAX_WORKERS=2`.
 
 ## The container image
 

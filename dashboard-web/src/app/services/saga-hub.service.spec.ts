@@ -94,6 +94,8 @@ let connection: FakeHubConnection;
  *  background (a reconnect policy's probe) and a test cannot await directly. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+// Relies on `"isolate": true` on the test target in angular.json (see README, "Unit tests"): without it a worker
+// that already evaluated the real saga-hub.service for another spec never applies this mock to it.
 vi.mock('@microsoft/signalr', () => ({
   HubConnectionState: { Disconnected: 'Disconnected', Connected: 'Connected' },
   HubConnectionBuilder: class {
