@@ -15,9 +15,11 @@ public sealed class TestState : SagaState
 /// What the EF Core store tests keep after the provider-neutral conformance suite (<c>VSaga.Persistence.Conformance</c>,
 /// run on SQLite by the <c>Sqlite*ConformanceTests</c> beside this class and on Postgres by the <c>Postgres*</c> ones) took
 /// over the cases it makes too. Every test left here guards something a suite case does not fail for: the change
-/// tracker after a failed or rejected save (the suite never commits again after one), SQLite's own error text (a
-/// SQLite trigger, <see cref="SagaErrorText"/>), the <c>DbUpdateException</c> chained under
-/// <see cref="SagaAlreadyExistsException"/>, the order <c>FindByCorrelationIdAsync</c> returns (the contract promises
+/// tracker after a save that fails for a reason no contract exposes (three tests inject the failure with a
+/// <see cref="SaveChangesInterceptor"/>, a fourth is an append the database rejects on a null saga type, and no
+/// contract names an input an append must refuse; a rejected insert or update, a business key another instance
+/// holds, is a suite case now, clause 4), SQLite's own error text (a SQLite trigger, <see cref="SagaErrorText"/>),
+/// the <c>DbUpdateException</c> chained under <see cref="SagaAlreadyExistsException"/>, the order <c>FindByCorrelationIdAsync</c> returns (the contract promises
 /// none, so the suite sorts before comparing), and a discarded outbox row that must not reach the table at all (the
 /// suite reads Pending rows only, and no contract reads back a Dispatched row that nothing claims). What
 /// <c>ListAsync</c> and <c>FindChildrenAsync</c> project, a null destination and null service-map fields, an update
@@ -250,71 +252,6 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         Assert.Equal("Started", stored!.CurrentState);
         Assert.Equal(0, stored.Version);
         Assert.Equal("m-1", Assert.Single(await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("TestSaga", correlationId)).MessageId);
-    }
-
-    /// <summary>
-    /// An update the database rejects (here a business key another instance holds) is mapped to
-    /// <see cref="SagaAlreadyExistsException"/>; it must not be re-sent, and rejected again, by the next save on the
-    /// context, which would fail the dead-letter record and every later log entry with it.
-    /// </summary>
-    [Fact]
-    public async Task Snapshot_UpdateTheDatabaseRejects_DoesNotFailTheNextAppendOnTheSameContext()
-    {
-        var first = NewState(Guid.NewGuid(), "TestSaga", "Started");
-        first.BusinessKey = "key-1";
-        var second = NewState(Guid.NewGuid(), "TestSaga", "Started");
-        second.BusinessKey = "key-2";
-
-        await using (var seed = NewContext())
-        {
-            var seedStore = new EfCoreSagaSnapshotStore<TestState>(seed);
-            await seedStore.InsertAsync(first);
-            await seedStore.InsertAsync(second);
-        }
-
-        await using (var db = NewContext())
-        {
-            var store = new EfCoreSagaSnapshotStore<TestState>(db);
-            var state = await store.FindAsync("TestSaga", second.CorrelationId);
-            state!.BusinessKey = "key-1";
-
-            await Assert.ThrowsAsync<SagaAlreadyExistsException>(() => store.UpdateAsync(state, expectedVersion: 0));
-
-            await new EfCoreSagaEventLogStore(db).AppendAsync(
-                SagaLogEntry.Create(second.CorrelationId, "TestSaga", SagaEntryType.DeliveryExhausted, messageId: "m-2"));
-        }
-
-        await using var db2 = NewContext();
-        Assert.Equal("m-2", Assert.Single(await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("TestSaga", second.CorrelationId)).MessageId);
-        Assert.Equal("key-2", (await new EfCoreSagaSnapshotStore<TestState>(db2).FindAsync("TestSaga", second.CorrelationId))!.BusinessKey);
-    }
-
-    /// <summary>
-    /// The same for an insert: a row the database rejects (a business key taken by another instance, the lost
-    /// race of §5.2) must not stay Added, or the dead-letter record of the saga that keeps losing it fails too.
-    /// </summary>
-    [Fact]
-    public async Task Snapshot_InsertTheDatabaseRejects_DoesNotFailTheNextAppendOnTheSameContext()
-    {
-        var holder = NewState(Guid.NewGuid(), "TestSaga", "Started");
-        holder.BusinessKey = "key-1";
-        var loser = NewState(Guid.NewGuid(), "TestSaga", "Started");
-        loser.BusinessKey = "key-1";
-
-        await using (var seed = NewContext())
-            await new EfCoreSagaSnapshotStore<TestState>(seed).InsertAsync(holder);
-
-        await using (var db = NewContext())
-        {
-            await Assert.ThrowsAsync<SagaAlreadyExistsException>(() => new EfCoreSagaSnapshotStore<TestState>(db).InsertAsync(loser));
-
-            await new EfCoreSagaEventLogStore(db).AppendAsync(
-                SagaLogEntry.Create(loser.CorrelationId, "TestSaga", SagaEntryType.DeliveryExhausted, messageId: "m-3"));
-        }
-
-        await using var db2 = NewContext();
-        Assert.Equal("m-3", Assert.Single(await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("TestSaga", loser.CorrelationId)).MessageId);
-        Assert.Null(await new EfCoreSagaSnapshotStore<TestState>(db2).FindAsync("TestSaga", loser.CorrelationId));
     }
 
     /// <summary>
