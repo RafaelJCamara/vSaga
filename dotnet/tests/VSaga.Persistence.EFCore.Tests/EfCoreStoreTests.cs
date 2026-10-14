@@ -17,10 +17,12 @@ public sealed class TestState : SagaState
 /// over the cases it makes too. Every test left here guards something a suite case does not fail for: the change
 /// tracker after a failed or rejected save (the suite never commits again after one), SQLite's own error text (a
 /// SQLite trigger, <see cref="SagaErrorText"/>), the <c>DbUpdateException</c> chained under
-/// <see cref="SagaAlreadyExistsException"/>, an update that must leave a second saga type's row alone, a discarded
-/// outbox row that must not reach the table at all (the suite reads Pending rows only), a null destination and null
-/// service-map fields coming back null, and what <c>ListAsync</c> and <c>FindChildrenAsync</c> project into each
-/// summary, which the suite's cases read only for the row ids. See persistence-contracts.md Q4.
+/// <see cref="SagaAlreadyExistsException"/>, the order <c>FindByCorrelationIdAsync</c> returns (the contract promises
+/// none, so the suite sorts before comparing), and a discarded outbox row that must not reach the table at all (the
+/// suite reads Pending rows only, and no contract reads back a Dispatched row that nothing claims). What
+/// <c>ListAsync</c> and <c>FindChildrenAsync</c> project, a null destination and null service-map fields, an update
+/// that must leave a second saga type's row alone and the update-written projection columns are suite cases now.
+/// See persistence-contracts.md Q4.
 /// </summary>
 public sealed class EfCoreStoreTests : IAsyncDisposable
 {
@@ -54,35 +56,8 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         UpdatedAtUtc = DateTimeOffset.UtcNow,
     };
 
-    // The suite has no case that updates one of two instances sharing a correlation id, and none that
-    // pins the order FindByCorrelationIdAsync returns; this test and the next do.
-    [Fact]
-    public async Task Update_OnlyAffectsItsOwnSagaTypesRow()
-    {
-        var correlationId = Guid.NewGuid();
-
-        await using (var db = NewContext())
-        {
-            var store = new EfCoreSagaSnapshotStore<TestState>(db);
-            await store.InsertAsync(NewState(correlationId, "OrderSaga", "Submitted"));
-            await store.InsertAsync(NewState(correlationId, "ShippingChoreography", "Tracking"));
-        }
-
-        await using (var db = NewContext())
-        {
-            var store = new EfCoreSagaSnapshotStore<TestState>(db);
-            var order = await store.FindAsync("OrderSaga", correlationId);
-            order!.CurrentState = "Completed";
-            await store.UpdateAsync(order, expectedVersion: 0);
-        }
-
-        await using var db2 = NewContext();
-        var reader = new EfCoreSagaSnapshotStore<TestState>(db2);
-
-        Assert.Equal("Completed", (await reader.FindAsync("OrderSaga", correlationId))!.CurrentState);
-        Assert.Equal("Tracking", (await reader.FindAsync("ShippingChoreography", correlationId))!.CurrentState);
-    }
-
+    // The contract promises FindByCorrelationIdAsync no order, so the suite sorts before comparing; this pins the
+    // one EF Core returns (SagaType ascending), which is its own, not a clause.
     [Fact]
     public async Task FindByCorrelationId_ReturnsEverySagaTypeTrackingIt()
     {
@@ -118,41 +93,6 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
         // exception, not just a genuine unique-constraint collision -- preserving the original as
         // InnerException keeps an unrelated infra failure's real cause diagnosable instead of discarding it.
         Assert.IsType<DbUpdateException>(ex.InnerException);
-    }
-
-    [Fact]
-    public async Task Outbox_EnqueueRoundTripsEveryFieldAndClaimNeverReturnsItTwice()
-    {
-        var correlationId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
-        var headers = new Dictionary<string, string>(StringComparer.Ordinal) { ["x-vsaga-source-service"] = "OrderSaga" };
-        var body = "{\"OrderId\":\"ORD-1\"}"u8.ToArray();
-
-        await using (var db = NewContext())
-        {
-            var store = new EfCoreSagaOutboxStore(db);
-            await store.EnqueueAsync("OrderSaga", correlationId, "m1", "InventoryReserved", body, destination: null, headers, now.AddMinutes(-1));
-            // EnqueueAsync only stages; in production the snapshot store's own PersistAsync is what
-            // commits this, atomically with the snapshot.
-            await db.SaveChangesAsync();
-        }
-
-        await using (var db2 = NewContext())
-        {
-            var store2 = new EfCoreSagaOutboxStore(db2);
-            var claimed = Assert.Single(await store2.ClaimPendingAsync(now, batchSize: 10));
-
-            Assert.Equal(correlationId, claimed.CorrelationId);
-            Assert.Equal("OrderSaga", claimed.SagaType);
-            Assert.Equal("m1", claimed.MessageId);
-            Assert.Equal("InventoryReserved", claimed.MessageTypeName);
-            Assert.Equal(body, claimed.Body.ToArray());
-            Assert.Null(claimed.Destination);
-            Assert.Equal("OrderSaga", claimed.Headers["x-vsaga-source-service"]);
-            Assert.Equal(SagaOutboxStatus.Dispatched, claimed.Status);
-
-            Assert.Empty(await store2.ClaimPendingAsync(now, batchSize: 10)); // already dispatched, shouldn't be claimed twice
-        }
     }
 
     /// <summary>
@@ -468,183 +408,4 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
             throw Thrown;
         }
     }
-
-    [Fact]
-    public async Task SummaryReader_ListsWithFiltering()
-    {
-        await using (var db = NewContext())
-        {
-            var store = new EfCoreSagaSnapshotStore<TestState>(db);
-            await store.InsertAsync(new TestState { CorrelationId = Guid.NewGuid(), SagaType = "OrderSaga", CurrentState = "A", Status = SagaStatus.Running, CreatedAtUtc = DateTimeOffset.UtcNow, UpdatedAtUtc = DateTimeOffset.UtcNow });
-            await store.InsertAsync(new TestState { CorrelationId = Guid.NewGuid(), SagaType = "OrderSaga", CurrentState = "B", Status = SagaStatus.Failed, CreatedAtUtc = DateTimeOffset.UtcNow, UpdatedAtUtc = DateTimeOffset.UtcNow });
-        }
-
-        await using var db2 = NewContext();
-        var reader = new EfCoreSagaSummaryReader(db2);
-
-        var all = await reader.ListAsync(new SagaListFilter());
-        Assert.Equal(2, all.TotalCount);
-
-        var failedOnly = await reader.ListAsync(new SagaListFilter { Status = SagaStatus.Failed });
-        Assert.Equal(1, failedOnly.TotalCount);
-        Assert.Equal(SagaStatus.Failed, failedOnly.Items[0].Status);
-    }
-
-    /// <summary>
-    /// The dashboard's change poller drains UpdatedAtUtc ascending once a second. Without a server-side
-    /// timestamp predicate it had to fetch and discard the entire unchanged head of the table before
-    /// reaching the changed tail — O(table size) round trips per tick. UpdatedSince pushes that into
-    /// SQL, and this pins the two properties the poller's loop depends on: the predicate is strictly
-    /// greater-than (a row stamped exactly at the watermark was already delivered, so `&gt;=` would
-    /// re-push it forever), and TotalCount describes the *filtered* set, because the poller's
-    /// "consumed everything?" stop check is `page * PageSize &gt;= TotalCount`.
-    /// </summary>
-    [Fact]
-    public async Task SummaryReader_UpdatedSince_KeepsOnlyStrictlyNewerRowsAndScopesTotalCount()
-    {
-        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-
-        await using (var db = NewContext())
-        {
-            var store = new EfCoreSagaSnapshotStore<TestState>(db);
-            for (var i = 0; i < 5; i++)
-            {
-                await store.InsertAsync(new TestState
-                {
-                    CorrelationId = Guid.NewGuid(),
-                    SagaType = "OrderSaga",
-                    CurrentState = "A",
-                    Status = SagaStatus.Running,
-                    CreatedAtUtc = t0,
-                    UpdatedAtUtc = t0.AddSeconds(i),
-                });
-            }
-        }
-
-        await using var db2 = NewContext();
-        var reader = new EfCoreSagaSummaryReader(db2);
-
-        // Baseline: an absent UpdatedSince leaves every existing caller's result untouched.
-        Assert.Equal(5, (await reader.ListAsync(new SagaListFilter())).TotalCount);
-
-        var changed = await reader.ListAsync(new SagaListFilter
-        {
-            UpdatedSince = t0.AddSeconds(2),
-            SortBy = SagaSortColumn.UpdatedAt,
-            SortDescending = false,
-        });
-
-        // t0+2 itself is excluded — strictly greater — leaving only t0+3 and t0+4.
-        Assert.Equal(2, changed.TotalCount);
-        Assert.Equal([t0.AddSeconds(3), t0.AddSeconds(4)], changed.Items.Select(x => x.UpdatedAtUtc).ToList());
-
-        // Paging is over the filtered set too: page 2 of size 1 is the second *changed* row, not the
-        // second row of the table, and TotalCount stays scoped so the poller's stop arithmetic counts
-        // changed rows rather than the whole store.
-        var secondChanged = await reader.ListAsync(new SagaListFilter
-        {
-            UpdatedSince = t0.AddSeconds(2),
-            SortBy = SagaSortColumn.UpdatedAt,
-            SortDescending = false,
-            Page = 2,
-            PageSize = 1,
-        });
-
-        Assert.Equal(2, secondChanged.TotalCount);
-        Assert.Equal(t0.AddSeconds(4), Assert.Single(secondChanged.Items).UpdatedAtUtc);
-
-        // A watermark sitting on the newest row selects nothing, which is what makes a quiet tick cost
-        // exactly one empty round trip instead of a full scan.
-        var none = await reader.ListAsync(new SagaListFilter { UpdatedSince = t0.AddSeconds(4) });
-        Assert.Equal(0, none.TotalCount);
-        Assert.Empty(none.Items);
-    }
-
-    /// <summary>
-    /// UpdatedSince has to compose with the other predicates rather than replace them — the same
-    /// IQueryable feeds CountAsync, so a bug that dropped one of them would silently break both the
-    /// returned page and TotalCount together, and look self-consistent while doing it.
-    /// </summary>
-    [Fact]
-    public async Task SummaryReader_UpdatedSince_ComposesWithTheOtherFilters()
-    {
-        var t0 = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
-
-        await using (var db = NewContext())
-        {
-            var store = new EfCoreSagaSnapshotStore<TestState>(db);
-            await store.InsertAsync(new TestState { CorrelationId = Guid.NewGuid(), SagaType = "OrderSaga", CurrentState = "A", Status = SagaStatus.Running, CreatedAtUtc = t0, UpdatedAtUtc = t0 });
-            await store.InsertAsync(new TestState { CorrelationId = Guid.NewGuid(), SagaType = "OrderSaga", CurrentState = "B", Status = SagaStatus.Running, CreatedAtUtc = t0, UpdatedAtUtc = t0.AddSeconds(5) });
-            await store.InsertAsync(new TestState { CorrelationId = Guid.NewGuid(), SagaType = "ShippingSaga", CurrentState = "C", Status = SagaStatus.Running, CreatedAtUtc = t0, UpdatedAtUtc = t0.AddSeconds(5) });
-        }
-
-        await using var db2 = NewContext();
-        var result = await new EfCoreSagaSummaryReader(db2).ListAsync(new SagaListFilter
-        {
-            SagaType = "OrderSaga",
-            UpdatedSince = t0,
-        });
-
-        Assert.Equal(1, result.TotalCount);
-        Assert.Equal("B", Assert.Single(result.Items).CurrentState);
-    }
-
-    [Fact]
-    public async Task EventLog_PreMigrationRow_ReadsWithNullServiceMapFields()
-    {
-        var correlationId = Guid.NewGuid();
-
-        // Simulates a row written before this feature: no SourceService/DestinationService/CausationId
-        // at all, exactly what EF leaves the new nullable columns as for pre-existing data.
-        await using (var db = NewContext())
-        {
-            await new EfCoreSagaEventLogStore(db).AppendAsync(
-                SagaLogEntry.Create(correlationId, "TestSaga", SagaEntryType.SagaStarted, toState: "Started", messageId: "m1"));
-        }
-
-        await using var db2 = NewContext();
-        var timeline = await new EfCoreSagaEventLogStore(db2).GetTimelineAsync("TestSaga", correlationId);
-
-        var entry = Assert.Single(timeline);
-        Assert.Null(entry.SourceService);
-        Assert.Null(entry.DestinationService);
-        Assert.Null(entry.CausationId);
-    }
-
-    [Fact]
-    public async Task FindChildrenAsync_ReturnsOnlyTheSagasStartedByThatExactParent()
-    {
-        var parentId = Guid.NewGuid();
-        var otherParentId = Guid.NewGuid();
-
-        await using (var db = NewContext())
-        {
-            var store = new EfCoreSagaSnapshotStore<TestState>(db);
-            await store.InsertAsync(NewChild("ChildSaga", parentId, "ParentSaga"));
-            await store.InsertAsync(NewChild("OtherChildSaga", parentId, "ParentSaga"));
-            await store.InsertAsync(NewChild("ChildSaga", otherParentId, "ParentSaga"));      // same type, different parent instance
-            await store.InsertAsync(NewChild("ChildSaga", parentId, "DifferentParentSaga"));  // same id, different parent type
-            await store.InsertAsync(NewChild("RootSaga", parentCorrelationId: null, parentSagaType: null));
-        }
-
-        await using var db2 = NewContext();
-        var children = await new EfCoreSagaSummaryReader(db2).FindChildrenAsync("ParentSaga", parentId);
-
-        Assert.Equal(2, children.Count);
-        Assert.All(children, c => Assert.Equal(parentId, c.ParentCorrelationId));
-        Assert.All(children, c => Assert.Equal("ParentSaga", c.ParentSagaType));
-        Assert.Contains(children, c => string.Equals(c.SagaType, "OtherChildSaga", StringComparison.Ordinal));
-    }
-
-    private static TestState NewChild(string sagaType, Guid? parentCorrelationId, string? parentSagaType) => new()
-    {
-        CorrelationId = Guid.NewGuid(),
-        SagaType = sagaType,
-        CurrentState = "Started",
-        Status = SagaStatus.Running,
-        ParentSagaType = parentSagaType,
-        ParentCorrelationId = parentCorrelationId,
-        CreatedAtUtc = DateTimeOffset.UtcNow,
-        UpdatedAtUtc = DateTimeOffset.UtcNow,
-    };
 }
