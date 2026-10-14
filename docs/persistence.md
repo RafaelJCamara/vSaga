@@ -31,7 +31,8 @@ saga's parent link null), an outbox row
 without a destination and an event-log entry without service-map fields come back with those fields null rather
 than empty, and an update writes the projected status and current state, touches only its own saga type's
 instance and keeps an unchanged business key resolvable; and a row whose state blob is corrupt, JSON `null` or text cut
-off mid-way, makes both lookups throw rather than return null or a state. The
+off mid-way, makes both lookups throw rather than return null or a state, and a write that fails (a lost race
+at the commit, a business key another instance holds) leaves the unit of work usable for the next commit. The
 [README](../dotnet/tests/VSaga.Persistence.Conformance/README.md) lists them for a third-party provider.
 
 Each provider has a small runnable sample in

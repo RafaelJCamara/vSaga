@@ -72,6 +72,13 @@ current state are the new ones (`GetAsync` and a status-filtered `ListAsync` say
 `(sagaType, correlationId)` instance changed when two saga types share a correlation id, and a non-null
 business key the update leaves alone still resolves to the instance.
 
+A write that fails does not poison the unit of work (clause 4): after an update that loses its race at the
+commit, an update onto a business key another instance holds, or an insert whose business key is taken, a
+later log entry and commit in the same unit of work still succeed, and what was staged before the failure
+becomes durable with them. The failed write itself leaves no trace — the live object is back at its expected
+version, the loser is not stored and the holder keeps the key. This is the case a provider with a change
+tracker (EF Core) fails when it leaves the rejected row in the tracker for the next commit to re-send.
+
 ## What a green run does not cover, by design
 
 A corrupt state blob must make `FindAsync` and `FindByBusinessKeyAsync` throw rather than return null

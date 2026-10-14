@@ -454,6 +454,78 @@ public abstract class SnapshotStoreConformanceTests(IProviderFixture fixture) : 
     }
 
     /// <summary>
+    /// Clause 4 after a rejected update rather than a lost race (B3): the update that moves the business key
+    /// onto one another instance holds throws <see cref="SagaAlreadyExistsException"/> at the write, and the
+    /// unit of work must still be usable — the dead-letter record the engine appends next is a later commit in
+    /// the same unit of work. EF Core's change tracker is the provider this guards: an entity left Modified by
+    /// the rejected save would be re-sent by that commit and rejected again, failing the log entry and the
+    /// staged row with it. The log entry and the row staged before the rejected update become durable, the
+    /// holder keeps the key, and the stored row keeps its own key and version.
+    /// </summary>
+    [Fact]
+    public async Task Update_ToABusinessKeyAnotherInstanceHolds_LeavesALaterCommitInTheSameUnitOfWorkFree()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var holder = NewState("OrderSaga", businessKey: "TAKEN-KEY");
+        var mover = NewState("OrderSaga", businessKey: "MOVER-KEY");
+        await InsertAsync(stores, holder, mover);
+
+        await using (var uow = await stores.BeginAsync())
+        {
+            var live = (await uow.Snapshots<ConformanceSagaState>().FindAsync("OrderSaga", mover.CorrelationId))!;
+            await EnqueueAsync(uow, "staged-before", T0, mover.CorrelationId);
+            live.BusinessKey = "TAKEN-KEY";
+
+            await Assert.ThrowsAsync<SagaAlreadyExistsException>(() => uow.Snapshots<ConformanceSagaState>().UpdateAsync(live, expectedVersion: 0));
+            Assert.Equal(0, live.Version);
+
+            await uow.EventLog.AppendAsync(SagaLogEntry.Create(mover.CorrelationId, "OrderSaga", SagaEntryType.DeliveryExhausted, messageId: "m-1", occurredAtUtc: T0));
+            await uow.CommitAsync();
+        }
+
+        await using var reader = await stores.BeginAsync();
+        var store = reader.Snapshots<ConformanceSagaState>();
+        Assert.Equal(holder.CorrelationId, (await store.FindByBusinessKeyAsync("OrderSaga", "TAKEN-KEY"))!.CorrelationId);
+        var stored = (await store.FindAsync("OrderSaga", mover.CorrelationId))!;
+        Assert.Equal("MOVER-KEY", stored.BusinessKey);
+        Assert.Equal(0, stored.Version);
+        Assert.Equal("m-1", Assert.Single(await reader.EventLog.GetTimelineAsync("OrderSaga", mover.CorrelationId)).MessageId);
+        Assert.Equal(["staged-before"], (await reader.Outbox.ClaimPendingAsync(T0.AddMinutes(1), batchSize: 1000)).Select(m => m.MessageId), StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Clause 4 after a rejected insert, the same shape: an insert that loses the business-key reservation
+    /// (the lost race of two concurrent initiates) throws <see cref="SagaAlreadyExistsException"/>, and the
+    /// unit of work still commits what it staged before and the dead-letter record the saga that keeps losing
+    /// it appends after. The loser is not stored and the holder keeps the key.
+    /// </summary>
+    [Fact]
+    public async Task Insert_ABusinessKeyAlreadyReserved_LeavesALaterCommitInTheSameUnitOfWorkFree()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var holder = NewState("OrderSaga", businessKey: "TAKEN-KEY");
+        var loser = NewState("OrderSaga", businessKey: "TAKEN-KEY");
+        await InsertAsync(stores, holder);
+
+        await using (var uow = await stores.BeginAsync())
+        {
+            await EnqueueAsync(uow, "staged-before", T0, loser.CorrelationId);
+
+            await Assert.ThrowsAsync<SagaAlreadyExistsException>(() => uow.Snapshots<ConformanceSagaState>().InsertAsync(loser));
+
+            await uow.EventLog.AppendAsync(SagaLogEntry.Create(loser.CorrelationId, "OrderSaga", SagaEntryType.DeliveryExhausted, messageId: "m-1", occurredAtUtc: T0));
+            await uow.CommitAsync();
+        }
+
+        await using var reader = await stores.BeginAsync();
+        var store = reader.Snapshots<ConformanceSagaState>();
+        Assert.Equal(holder.CorrelationId, (await store.FindByBusinessKeyAsync("OrderSaga", "TAKEN-KEY"))!.CorrelationId);
+        Assert.Null(await store.FindAsync("OrderSaga", loser.CorrelationId));
+        Assert.Equal("m-1", Assert.Single(await reader.EventLog.GetTimelineAsync("OrderSaga", loser.CorrelationId)).MessageId);
+        Assert.Equal(["staged-before"], (await reader.Outbox.ClaimPendingAsync(T0.AddMinutes(1), batchSize: 1000)).Select(m => m.MessageId), StringComparer.Ordinal);
+    }
+
+    /// <summary>
     /// Clause 3 on insert, projection half: the projected timestamps are the caller's, compared at storage
     /// resolution. The blob half is <see cref="Insert_ThenFind_RoundTripsEveryFieldExactly"/>.
     /// </summary>
