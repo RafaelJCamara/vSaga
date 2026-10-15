@@ -1,6 +1,6 @@
 # Design: stuck-saga detection
 
-**Status: built, slices 1 to 6 of §8** (2026-10-15): the filter members and their conformance cases, the options, classifier and sweep (off by default), the notifier, the dashboard API and SPA idle filter, and the docs. **One thing of §10 is not done: the live run on a real stack** (a timeout step that throws, then the log line, gauge and notifier after the threshold, and the retry clearing it). Where the build differs from the text below, §11 says so. Scope, definition and delivery were decided with the maintainer on 2026-10-15 (§1). This closes the "stuck-saga alerting" item that
+**Status: built, slices 1 to 6 of §8** (2026-10-15): the filter members and their conformance cases, the options, classifier and sweep (off by default), the notifier, the dashboard API and SPA idle filter, and the docs. **The live check of §10 was run in process, not on the compose stack** (§11). Where the build differs from the text below, §11 says so. Scope, definition and delivery were decided with the maintainer on 2026-10-15 (§1). This closes the "stuck-saga alerting" item that
 [`production-readiness.md`](production-readiness.md) §1 named as a real gap and kept out of scope.
 
 ---
@@ -256,3 +256,24 @@ Recorded in the commit that built slice 2, so the text above is not silently wro
 - **Redis cost**: with a saga type in the filter the sweep's query is an intersection per status bucket (§6). It
   has not been measured; the cheaper shape (a bounded range of the type's index, then a status check of those rows
   only) is the first thing to build if a large `Running` bucket makes the sweep slow.
+
+### The live run (2026-10-15)
+
+A throwaway console host (not committed) ran the real engine, hosted services and sweep against an EF Core SQLite file
+with the real clock, an in-memory transport, `SweepInterval` 1 s, `TimeoutGrace` 1 s and `IdleThreshold` 3 s. It was
+not the compose stack, and the dashboard's own retry was not exercised: the saga was resolved by publishing the message
+its state handles. What it showed:
+
+- **The lost-timeout path of §2.1 is real and is caught.** A saga in `Waiting` (timeout 1 s) whose timeout step throws:
+  the dispatcher logged `Failed to handle timeout ...` and the saga stayed `Running` in `Waiting` at version 1 with no
+  timeout. The sweep flagged it `TimeoutOverdue` (warning, gauge `TimeoutOverdue=1`, notifier `stuck` with `v1`), and
+  after the saga was resolved it logged `no longer stuck`, the gauge went to 0 and the notifier got `recovered`.
+- **A parked saga with no timeout** was flagged `IdleWithoutTimeout` once idle past 3 s and stayed flagged, as designed.
+  A saga that completed normally was never flagged. The dashboard's idle query (`Statuses` and `UpdatedBefore`) listed
+  exactly the two flagged sagas.
+- **An episode is a version.** The same saga was flagged at version 0 (before its timeout was dispatched), recovered when
+  the timeout's claim persisted it, and flagged again at version 1 once the claim's step had thrown. The notifier saw
+  `stuck`, `recovered`, `stuck`, which is why `Version` is on `StuckSaga`.
+- **A grace shorter than the dispatcher's 5-second poll reports a saga that is only waiting for the poll** (the
+  version-0 flag above). The default is 2 minutes; `configuration.md` now says to keep it well above 5 seconds. It is
+  not validated, because a test host with a fake clock has good reason to set it low.

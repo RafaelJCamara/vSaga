@@ -151,7 +151,7 @@ the sweep cannot work with (a zero or negative interval or threshold, more than 
 | `SweepInterval` | `1 minute` | Time between sweeps. The first runs when the host starts. |
 | `IdleThreshold` | `1 hour` | Idle time that counts as stuck where no timeout applies: a `Running` saga whose state declares none, and every `Compensating` saga. Deliberately long: a human approval is not stuck. |
 | `IdleThresholdBySagaType` | empty | Overrides of `IdleThreshold`, by saga type name (ordinal). |
-| `TimeoutGrace` | `2 minutes` | Added to a state's timeout before a saga idle in it counts as stuck: the timeout dispatcher's 5-second poll, the timeout step's retries and a clock difference between replicas fit inside it. |
+| `TimeoutGrace` | `2 minutes` | Added to a state's timeout before a saga idle in it counts as stuck: the timeout dispatcher's 5-second poll, the timeout step's retries and a clock difference between replicas fit inside it. **Keep it well above 5 seconds**: below the poll, a saga whose timeout is merely waiting for the next poll is reported (seen on a live run with a 1-second grace). |
 | `ExcludedSagaTypes` | empty | Saga types the sweep never reads, for a saga that waits for days by design (ordinal). |
 | `MaxReportedPerSweep` | `200` | The most instances of one saga type logged individually in one sweep; the rest are counted in one further line. The gauge counts every one the sweep read, and the notifier is offered every one. |
 | `MaxScannedPerType` | `10000` | The most instances of one saga type read in one sweep, oldest first. Past it the gauge is a lower bound and a warning says so. |
