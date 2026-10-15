@@ -13,6 +13,12 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
 
         if (filter.Status is { } status)
             query = query.Where(x => x.Status == status);
+        if (filter.Statuses is { } statuses)
+        {
+            var wantedStatuses = statuses.Distinct().ToArray();
+            query = query.Where(x => wantedStatuses.Contains(x.Status));
+        }
+
         if (filter.Kind is { } kind)
             query = query.Where(x => x.Kind == kind);
         if (!string.IsNullOrWhiteSpace(filter.SagaType))
@@ -29,6 +35,8 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
         // Skip/Take arithmetic stays consistent with it.
         if (filter.UpdatedSince is { } updatedSince)
             query = query.Where(x => x.UpdatedAtUtc > updatedSince);
+        if (filter.UpdatedBefore is { } updatedBefore)
+            query = query.Where(x => x.UpdatedAtUtc < updatedBefore);
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
             // Case-insensitive on every provider (SagaListFilter.Search): both the column and the term

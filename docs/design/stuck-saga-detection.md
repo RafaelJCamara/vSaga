@@ -1,7 +1,8 @@
 # Design: stuck-saga detection
 
-**Status: proposed, nothing built.** Scope, definition and delivery were decided with the maintainer on
-2026-10-15 (§1); the rest is a proposal for review. This closes the "stuck-saga alerting" item that
+**Status: slice 1 of §8 is built** (the `Statuses` and `UpdatedBefore` filter members, in all five readers,
+with three conformance cases); slices 2 to 6 are not. Scope, definition and delivery were decided with the
+maintainer on 2026-10-15 (§1); the rest is a proposal for review. This closes the "stuck-saga alerting" item that
 [`production-readiness.md`](production-readiness.md) §1 named as a real gap and kept out of scope.
 
 ---
@@ -160,9 +161,13 @@ Index fit, checked in the code:
 
 - **EF Core**: `(SagaType, UpdatedAtUtc)`, `(SagaType, Status)` and `(Status, UpdatedAtUtc)` already exist
   (`VSagaDbContext.cs:106-119`). No migration.
-- **Redis**: one sorted set per status scored by updated-microseconds, so an idle range is a score-bounded
-  read per status; no scan.
-- **MongoDB**: to be confirmed against its index set in the first slice; add an index only if the plan needs one.
+- **Redis**: one sorted set per status scored by updated-microseconds, so with no other filter an idle range is
+  a score-bounded read per status; no scan. **With a saga type as well (the sweep's own query) it is a
+  server-side intersection of the status bucket and the type's index per status**, which costs the smaller of
+  the two sets, not the idle rows alone, and applies the bounds on the client. Correct and bounded, but not
+  free on a large `Running` bucket; the cheaper shape (a bounded range of the type's index, then a status
+  membership check of just those rows) is not built, and is worth measuring in slice 2 before it is.
+- **MongoDB**: `ix_status_updatedDesc` and `ix_sagaType_updated` already serve both shapes; no new index.
 - **In-memory**: a linear filter.
 
 ## 7. The sweep

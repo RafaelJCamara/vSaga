@@ -149,6 +149,12 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
 
         if (filter.Status is { } status)
             query = query.Where(s => s.Status == status);
+        if (filter.Statuses is { } statuses)
+        {
+            var wantedStatuses = new HashSet<SagaStatus>(statuses);
+            query = query.Where(s => wantedStatuses.Contains(s.Status));
+        }
+
         if (filter.Kind is { } kind)
             query = query.Where(s => s.Kind == kind);
         if (!string.IsNullOrWhiteSpace(filter.SagaType))
@@ -164,6 +170,8 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
         // the EF provider's filter-then-count-then-page order exactly.
         if (filter.UpdatedSince is { } updatedSince)
             query = query.Where(s => s.UpdatedAtUtc > updatedSince);
+        if (filter.UpdatedBefore is { } updatedBefore)
+            query = query.Where(s => s.UpdatedAtUtc < updatedBefore);
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
             var search = filter.Search;

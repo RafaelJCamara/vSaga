@@ -96,7 +96,7 @@ public sealed class ScopedSagaLister(ISagaSummaryReader reader, SagaTypeNameCach
     /// with <c>LIKE</c>, so a searched list gets the tighter bounds of every other shape.
     /// </summary>
     internal static bool IsRankServed(SagaListFilter filter) =>
-        filter.SortBy is null or SagaSortColumn.UpdatedAt && filter.Status is null && filter.Kind is null && string.IsNullOrWhiteSpace(filter.Search);
+        filter.SortBy is null or SagaSortColumn.UpdatedAt && filter.Status is null && filter.Statuses is null && filter.Kind is null && string.IsNullOrWhiteSpace(filter.Search);
 
     /// <summary>
     /// The non-blank saga types the scope names, ordinal ascending: as they stand when there are at most
@@ -143,11 +143,13 @@ public sealed class ScopedSagaLister(ISagaSummaryReader reader, SagaTypeNameCach
     private static SagaListFilter For(SagaListFilter filter, IReadOnlyList<string> types, int page, int pageSize) => new()
     {
         Status = filter.Status,
+        Statuses = filter.Statuses,
         SagaType = types.Count == 1 ? types[0] : null,
         SagaTypes = types.Count == 1 ? null : types,
         Kind = filter.Kind,
         Search = filter.Search,
         UpdatedSince = filter.UpdatedSince,
+        UpdatedBefore = filter.UpdatedBefore,
         Page = page,
         PageSize = pageSize,
         SortBy = filter.SortBy,

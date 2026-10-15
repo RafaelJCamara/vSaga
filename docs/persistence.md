@@ -18,7 +18,7 @@ All four are held to the same written contracts by the cross-provider `VSaga.Per
 suite, which a third-party provider can run against itself; its
 [README](../dotnet/tests/VSaga.Persistence.Conformance/README.md) covers the `IProviderFixture` to
 implement and the xUnit v2 requirement. Every `ISagaSummaryReader` must honour every filter member of
-`SagaListFilter` (`Status`, `SagaType`, `SagaTypes`, `Kind`, `Search`, `UpdatedSince`), `SagaTypes` (the rows of any of several saga types, exact) included: the dashboard serves a
+`SagaListFilter` (`Status`, `Statuses`, `SagaType`, `SagaTypes`, `Kind`, `Search`, `UpdatedSince`, `UpdatedBefore`), `SagaTypes` (the rows of any of several saga types, exact) included: the dashboard serves a
 caller scoped to several saga types with one `ListAsync` call carrying it and keeps no per-type fallback, so
 a reader that ignores it fails the suite and, in the dashboard, gives a scoped caller short pages and a
 total over the wrong set (never a row outside their scope: the API still drops those). The eight divergences and three shared defects the first two

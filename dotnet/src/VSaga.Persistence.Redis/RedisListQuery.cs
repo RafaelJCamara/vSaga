@@ -16,11 +16,19 @@ internal sealed class RedisListQuery
         PageSize = Math.Max(filter.PageSize, 1);
         Search = string.IsNullOrWhiteSpace(filter.Search) ? null : filter.Search;
         SinceMicroseconds = filter.UpdatedSince is { } since ? RedisTimestamps.ToMicroseconds(since) : null;
+        BeforeMicroseconds = filter.UpdatedBefore is { } before ? RedisTimestamps.ToMicroseconds(before) : null;
         ByStatus = filter.SortBy == SagaSortColumn.Status;
         // EfCoreSagaSummaryReader.ApplySort: a Status sort follows the flag; on UpdatedAt only an explicit
         // ascending sort ascends, and the default (no column) descends whatever the flag says.
         Descending = ByStatus ? filter.SortDescending : filter.SortBy != SagaSortColumn.UpdatedAt || filter.SortDescending;
-        StatusFilter = filter.Status;
+
+        // Status and Statuses both restrict the status: a row must satisfy both. One status left is that
+        // status's own index (the cheapest, and every existing path); two or more are a union of buckets.
+        var statuses = EffectiveStatuses(filter);
+        if (statuses is { Count: 0 })
+            MatchesNothing = true;
+        StatusFilter = statuses is { Count: 1 } ? statuses[0] : null;
+        StatusSet = statuses is { Count: > 1 } ? statuses : null;
 
         // SagaType and SagaTypes both restrict the type: a row must satisfy both. A set that reduces to one name
         // is that name's own index (the cheapest, ranked), so only two or more names need the member-suffix and
@@ -32,7 +40,7 @@ internal sealed class RedisListQuery
             var names = new HashSet<string>(sagaTypes.Where(name => name is not null), StringComparer.Ordinal);
             if (sagaType is not null)
             {
-                MatchesNothing = !names.Contains(sagaType);
+                MatchesNothing |= !names.Contains(sagaType);
             }
             else if (names.Count == 0)
             {
@@ -52,7 +60,7 @@ internal sealed class RedisListQuery
         var indexes = new List<RedisKey>(3);
         if (sagaType is not null)
             indexes.Add(keys.IndexType(sagaType));
-        if (filter.Status is { } status)
+        if (StatusFilter is { } status)
             indexes.Add(keys.IndexStatus(status));
         if (filter.Kind is { } kind)
             indexes.Add(keys.IndexKind(kind));
@@ -60,7 +68,7 @@ internal sealed class RedisListQuery
 
         // For the Status sort, each status bucket is itself the driving index, so the status filter (if
         // any) only decides which buckets are walked and the other indexes intersect with each bucket.
-        NonStatusIndexes = indexes.Where(i => filter.Status is not { } s || i != keys.IndexStatus(s)).ToList();
+        NonStatusIndexes = indexes.Where(i => StatusFilter is not { } s || i != keys.IndexStatus(s)).ToList();
         Driving = indexes.Count > 0 ? indexes[0] : keys.IndexUpdated;
     }
 
@@ -83,11 +91,17 @@ internal sealed class RedisListQuery
 
     public long? SinceMicroseconds { get; }
 
+    public long? BeforeMicroseconds { get; }
+
     public bool ByStatus { get; }
 
     public bool Descending { get; }
 
+    /// <summary>The one status every row must have, when the filter leaves exactly one; null otherwise.</summary>
     public SagaStatus? StatusFilter { get; }
+
+    /// <summary>Two or more statuses a row must be one of, in <see cref="SagaStatus"/>'s declared order; null when the filter leaves at most one.</summary>
+    public IReadOnlyList<SagaStatus>? StatusSet { get; }
 
     public IReadOnlyList<RedisKey> EqualityIndexes { get; }
 
@@ -98,17 +112,21 @@ internal sealed class RedisListQuery
     /// <summary>The lower score bound: exclusive of the watermark's microsecond, which is exactly the contract's strict <c>&gt;</c> at storage resolution.</summary>
     public double MinScore => SinceMicroseconds ?? double.NegativeInfinity;
 
-    public Exclude Exclude => SinceMicroseconds is null ? Exclude.None : Exclude.Start;
+    /// <summary>The upper score bound: exclusive of <c>UpdatedBefore</c>'s microsecond, the strict <c>&lt;</c> at storage resolution as the lower bound is the strict <c>&gt;</c>.</summary>
+    public double MaxScore => BeforeMicroseconds ?? double.PositiveInfinity;
+
+    public Exclude Exclude =>
+        (SinceMicroseconds is null ? Exclude.None : Exclude.Start) | (BeforeMicroseconds is null ? Exclude.None : Exclude.Stop);
 
     /// <summary>True when one sorted set answers the whole query by rank, with no client-side filtering.</summary>
-    public bool IsRankable => Search is null && EqualityIndexes.Count <= 1 && TypeSet is null;
+    public bool IsRankable => Search is null && EqualityIndexes.Count <= 1 && TypeSet is null && StatusSet is null;
 
     /// <summary>
     /// True when a set of saga types alone (no status, kind or search) restricts an <c>UpdatedAt</c> list: each
     /// type has its own sorted set that answers its window by rank, and the windows merge, so the cost follows
     /// the page and not the number of rows the types hold.
     /// </summary>
-    public bool IsTypeRankable => TypeSet is not null && Search is null && EqualityIndexes.Count == 0;
+    public bool IsTypeRankable => TypeSet is not null && Search is null && EqualityIndexes.Count == 0 && StatusSet is null;
 
     /// <summary>
     /// True when the saga type of <paramref name="member"/>, the part after its first <c>|</c>, is in
@@ -126,8 +144,22 @@ internal sealed class RedisListQuery
     /// <summary>The buckets a Status sort walks, in <see cref="SagaStatus"/>'s declared order, reversed when descending.</summary>
     public IEnumerable<SagaStatus> StatusBuckets()
     {
-        IEnumerable<SagaStatus> buckets = StatusFilter is { } only ? [only] : Enum.GetValues<SagaStatus>().Order();
+        IEnumerable<SagaStatus> buckets = StatusFilter is { } only ? [only] : StatusSet ?? Enum.GetValues<SagaStatus>().Order().ToList();
         return Descending ? buckets.Reverse() : buckets;
+    }
+
+    /// <summary>
+    /// The statuses a row may have once <see cref="SagaListFilter.Status"/> and <see cref="SagaListFilter.Statuses"/> are
+    /// both applied, in declared order and without repeats; null when neither is set (no restriction), empty when
+    /// they exclude every status.
+    /// </summary>
+    private static List<SagaStatus>? EffectiveStatuses(SagaListFilter filter)
+    {
+        var statuses = filter.Statuses?.Distinct().Order().ToList();
+        if (filter.Status is not { } only)
+            return statuses;
+
+        return statuses is null ? [only] : statuses.Where(s => s == only).ToList();
     }
 
     public static RedisListQuery From(SagaListFilter filter, RedisKeySpace keys) => new(filter, keys);

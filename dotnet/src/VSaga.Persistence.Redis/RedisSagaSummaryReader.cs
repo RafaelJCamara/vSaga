@@ -43,6 +43,8 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
         (List<string> Members, int Total) page;
         if (query.ByStatus)
             page = await ListByStatusAsync(db, query);
+        else if (query.StatusSet is not null)
+            page = await ListByStatusSetAsync(db, query);
         else if (query.IsRankable)
             page = await ListByRankAsync(db, query);
         else if (query.IsTypeRankable)
@@ -56,8 +58,8 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
     /// <summary>One sorted set, one score range, offset paging: the change poller's shape, O(log n + page).</summary>
     private static async Task<(List<string> Members, int Total)> ListByRankAsync(IDatabase db, RedisListQuery query)
     {
-        var total = (int)await db.SortedSetLengthAsync(query.Driving, query.MinScore, double.PositiveInfinity, query.Exclude);
-        var members = await db.SortedSetRangeByScoreAsync(query.Driving, query.MinScore, double.PositiveInfinity, query.Exclude,
+        var total = (int)await db.SortedSetLengthAsync(query.Driving, query.MinScore, query.MaxScore, query.Exclude);
+        var members = await db.SortedSetRangeByScoreAsync(query.Driving, query.MinScore, query.MaxScore, query.Exclude,
             query.Descending ? Order.Descending : Order.Ascending, query.Skip, query.PageSize);
 
         return (members.Select(m => m.ToString()).ToList(), total);
@@ -74,13 +76,13 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
         var window = query.Skip + query.PageSize;
         var order = query.Descending ? Order.Descending : Order.Ascending;
         var counts = await Task.WhenAll(query.TypeIndexes
-            .Select(index => db.SortedSetLengthAsync(index, query.MinScore, double.PositiveInfinity, query.Exclude)));
+            .Select(index => db.SortedSetLengthAsync(index, query.MinScore, query.MaxScore, query.Exclude)));
 
         // A type is asked for no more rows than it holds, so a deep page over small types reads only what exists.
         var windows = await Task.WhenAll(query.TypeIndexes
             .Zip(counts, (index, count) => (index, take: (int)Math.Min(count, window)))
             .Where(read => read.take > 0)
-            .Select(read => db.SortedSetRangeByScoreWithScoresAsync(read.index, query.MinScore, double.PositiveInfinity, query.Exclude, order, 0, read.take)));
+            .Select(read => db.SortedSetRangeByScoreWithScoresAsync(read.index, query.MinScore, query.MaxScore, query.Exclude, order, 0, read.take)));
 
         var merged = windows.SelectMany(w => w).ToList();
         merged.Sort(query.Descending ? static (first, second) => CompareEntries(second, first) : CompareEntries);
@@ -118,6 +120,25 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
     }
 
     /// <summary>
+    /// Two or more statuses over an <c>UpdatedAt</c> list: each status's bucket materialised on its own, with the
+    /// other indexes intersected and the score bounds applied, and the buckets merged in the index's order, score then
+    /// member. A row has one status, so the buckets are disjoint and the total is the sum of their sizes. With no
+    /// other filter each bucket is one score-bounded range read, which for a stale-rows query (<c>UpdatedBefore</c>)
+    /// reads only the stale rows.
+    /// </summary>
+    private async Task<(List<string> Members, int Total)> ListByStatusSetAsync(IDatabase db, RedisListQuery query)
+    {
+        var buckets = await Task.WhenAll(query.StatusSet!.Select(status => MaterializeAsync(db, query, [keys.IndexStatus(status), .. query.NonStatusIndexes])));
+        var candidates = buckets.SelectMany(bucket => bucket).ToList();
+        candidates.Sort(CompareEntries);
+        if (query.Descending)
+            candidates.Reverse();
+
+        var page = candidates.Skip(query.Skip).Take(query.PageSize).Select(e => e.Element.ToString()).ToList();
+        return (page, candidates.Count);
+    }
+
+    /// <summary>
     /// The seven buckets in <see cref="SagaStatus"/>'s declared order, each read newest-first so the
     /// <c>UpdatedAtUtc</c> tiebreak descends in both directions, as EF Core's does; paging across
     /// buckets is arithmetic over their counts.
@@ -132,11 +153,11 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
             var bucket = keys.IndexStatus(status);
             if (query.Search is null && query.NonStatusIndexes.Count == 0 && query.TypeSet is null)
             {
-                var count = (int)await db.SortedSetLengthAsync(bucket, query.MinScore, double.PositiveInfinity, query.Exclude);
+                var count = (int)await db.SortedSetLengthAsync(bucket, query.MinScore, query.MaxScore, query.Exclude);
                 var (offset, take) = window.Slice(count);
                 if (take > 0)
                 {
-                    var members = await db.SortedSetRangeByScoreAsync(bucket, query.MinScore, double.PositiveInfinity, query.Exclude, Order.Descending, offset, take);
+                    var members = await db.SortedSetRangeByScoreAsync(bucket, query.MinScore, query.MaxScore, query.Exclude, Order.Descending, offset, take);
                     window.Members.AddRange(members.Select(m => m.ToString()));
                 }
 
@@ -163,7 +184,7 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
     private static async Task<SortedSetEntry[]> ReadTypeIndexesAsync(IDatabase db, RedisListQuery query)
     {
         var reads = query.TypeIndexes
-            .Select(index => db.SortedSetRangeByScoreWithScoresAsync(index, query.MinScore, double.PositiveInfinity, query.Exclude))
+            .Select(index => db.SortedSetRangeByScoreWithScoresAsync(index, query.MinScore, query.MaxScore, query.Exclude))
             .ToList();
         return [.. (await Task.WhenAll(reads)).SelectMany(entries => entries)];
     }
@@ -211,13 +232,19 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
             : indexes.Count switch
             {
                 0 => await ReadTypeIndexesAsync(db, query),
-                1 => await db.SortedSetRangeByScoreWithScoresAsync(indexes[0], query.MinScore, double.PositiveInfinity, query.Exclude),
+                1 => await db.SortedSetRangeByScoreWithScoresAsync(indexes[0], query.MinScore, query.MaxScore, query.Exclude),
                 _ => await db.SortedSetCombineWithScoresAsync(SetOperation.Intersect, indexes.ToArray(), weights: null, Aggregate.Max),
             };
 
         IEnumerable<SortedSetEntry> filtered = entries;
-        if ((intersectPerType || indexes.Count >= 2) && query.SinceMicroseconds is { } since)
-            filtered = filtered.Where(e => e.Score > since);
+        if (intersectPerType || indexes.Count >= 2)
+        {
+            // A combined read carries no score range, so the bounds are applied here, both strict.
+            if (query.SinceMicroseconds is { } since)
+                filtered = filtered.Where(e => e.Score > since);
+            if (query.BeforeMicroseconds is { } before)
+                filtered = filtered.Where(e => e.Score < before);
+        }
         if (!intersectPerType && indexes.Count > 0 && query.TypeSet is not null)
             filtered = filtered.Where(e => query.InTypeSet(e.Element.ToString()));
 

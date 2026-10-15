@@ -27,6 +27,22 @@ public sealed class SagaListFilter
 {
     public SagaStatus? Status { get; init; }
 
+    /// <summary>
+    /// Keeps only instances whose <see cref="SagaSummary.Status"/> is one of these; null (the default) puts no
+    /// limit on the status, so existing callers are unaffected. An empty collection matches nothing, and a
+    /// repeated status counts once. When <see cref="Status"/> is also set, an instance must satisfy both, so
+    /// the two together keep at most that one status. It composes with every other member as a filter does:
+    /// applied before the count, the sort and the page, so <see cref="PagedResult{T}.TotalCount"/> is over the
+    /// filtered set.
+    /// <para>
+    /// Added for the stuck-saga sweep, which asks for the <c>Running</c> and <c>Compensating</c> instances in
+    /// one query. Every <see cref="ISagaSummaryReader"/> must honour it: a reader that ignores it returns rows
+    /// of the other statuses, which the sweep would report as stuck. The <c>VSaga.Persistence.Conformance</c>
+    /// suite fails such a reader.
+    /// </para>
+    /// </summary>
+    public IReadOnlyCollection<SagaStatus>? Statuses { get; init; }
+
     public string? SagaType { get; init; }
 
     /// <summary>
@@ -67,6 +83,20 @@ public sealed class SagaListFilter
     /// </para>
     /// </summary>
     public DateTimeOffset? UpdatedSince { get; init; }
+
+    /// <summary>
+    /// Keeps only instances whose <see cref="SagaSummary.UpdatedAtUtc"/> is <em>strictly</em> less than this
+    /// value; null (the default) keeps everything, so existing callers are unaffected. The mirror of
+    /// <see cref="UpdatedSince"/>, and composable with it: both set keeps the open interval between them.
+    /// <para>
+    /// Strictly-less, not <c>&lt;=</c>, so that <c>UpdatedSince = t</c> and <c>UpdatedBefore = t</c> split the
+    /// rows at <c>t</c> with the row at exactly <c>t</c> in neither. The comparison is at the provider's
+    /// declared timestamp resolution, as <see cref="UpdatedSince"/>'s is. Implementations must apply it before
+    /// sorting and paging so the page/total arithmetic is over the filtered set. The stuck-saga sweep asks for
+    /// the instances idle since before <c>now - threshold</c>, oldest first.
+    /// </para>
+    /// </summary>
+    public DateTimeOffset? UpdatedBefore { get; init; }
 
     public int Page { get; init; } = 1;
 

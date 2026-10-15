@@ -333,6 +333,132 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
         Assert.Equal(0, quiet.TotalCount);
     }
 
+    /// <summary>
+    /// Strictly less-than, the mirror of <c>UpdatedSince</c>: a row sitting exactly on the bound is in neither
+    /// the rows <c>UpdatedSince</c> keeps nor the rows <c>UpdatedBefore</c> keeps at that value, applied before
+    /// paging so the total counts only what it keeps, and in the order a list always has. The stuck-saga sweep's
+    /// own query asks for the oldest first.
+    /// </summary>
+    [Fact]
+    public async Task List_UpdatedBefore_IsStrictlyLessThan_AndCountsOnlyWhatItKeeps()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var states = Enumerable.Range(0, 5).Select(i => NewState("OrderSaga", updatedAtUtc: T0.AddSeconds(i))).ToArray();
+        await InsertAsync(stores, states[3], states[0], states[4], states[2], states[1]);
+
+        var oldestFirst = await ListAsync(stores, new SagaListFilter { UpdatedBefore = T0.AddSeconds(3), SortBy = SagaSortColumn.UpdatedAt });
+        var secondOldest = await ListAsync(stores, new SagaListFilter { UpdatedBefore = T0.AddSeconds(3), SortBy = SagaSortColumn.UpdatedAt, Page = 2, PageSize = 1 });
+        var newestFirst = await ListAsync(stores, new SagaListFilter { UpdatedBefore = T0.AddSeconds(3) });
+        var descendingByFlag = await ListAsync(stores, new SagaListFilter { UpdatedBefore = T0.AddSeconds(3), SortBy = SagaSortColumn.UpdatedAt, SortDescending = true });
+        // Nothing is older than the oldest row: a bound sitting on it selects nothing.
+        var none = await ListAsync(stores, new SagaListFilter { UpdatedBefore = T0 });
+        // Both bounds keep the open interval between them, the rows at either end excluded.
+        var between = await ListAsync(stores, new SagaListFilter { UpdatedSince = T0.AddSeconds(1), UpdatedBefore = T0.AddSeconds(4), SortBy = SagaSortColumn.UpdatedAt });
+        var empty = await ListAsync(stores, new SagaListFilter { UpdatedSince = T0.AddSeconds(2), UpdatedBefore = T0.AddSeconds(2) });
+
+        Assert.Equal([states[0].CorrelationId, states[1].CorrelationId, states[2].CorrelationId], Ids(oldestFirst));
+        Assert.Equal(3, oldestFirst.TotalCount);
+        Assert.Equal([states[1].CorrelationId], Ids(secondOldest));
+        Assert.Equal(3, secondOldest.TotalCount);
+        Assert.Equal([states[2].CorrelationId, states[1].CorrelationId, states[0].CorrelationId], Ids(newestFirst));
+        Assert.Equal([states[2].CorrelationId, states[1].CorrelationId, states[0].CorrelationId], Ids(descendingByFlag));
+        Assert.Empty(none.Items);
+        Assert.Equal(0, none.TotalCount);
+        Assert.Equal([states[2].CorrelationId, states[3].CorrelationId], Ids(between));
+        Assert.Equal(2, between.TotalCount);
+        Assert.Empty(empty.Items);
+        Assert.Equal(0, empty.TotalCount);
+    }
+
+    /// <summary>
+    /// <see cref="SagaListFilter.Statuses"/> keeps the instances whose status is any of the listed ones: null
+    /// puts no limit, an empty list matches nothing, a repeated status counts once, and with
+    /// <see cref="SagaListFilter.Status"/> also set a row must satisfy both. Every status sort and every direction
+    /// sees the same rows, and the total is over the kept set.
+    /// </summary>
+    [Fact]
+    public async Task List_Statuses_KeepsOnlyTheListedStatuses_AndComposesWithStatus()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var running = NewState("OrderSaga", status: SagaStatus.Running, updatedAtUtc: T0.AddSeconds(1));
+        var compensating = NewState("OrderSaga", status: SagaStatus.Compensating, updatedAtUtc: T0.AddSeconds(2));
+        var failed = NewState("OrderSaga", status: SagaStatus.Failed, updatedAtUtc: T0.AddSeconds(3));
+        var completed = NewState("OrderSaga", status: SagaStatus.Completed, updatedAtUtc: T0.AddSeconds(4));
+        var otherRunning = NewState("PaymentSaga", status: SagaStatus.Running, updatedAtUtc: T0.AddSeconds(5));
+        await InsertAsync(stores, completed, running, otherRunning, failed, compensating);
+        SagaStatus[] live = [SagaStatus.Running, SagaStatus.Compensating];
+
+        var liveOnes = await ListAsync(stores, new SagaListFilter { Statuses = live });
+        var unrestricted = await ListAsync(stores, new SagaListFilter { Statuses = null });
+        var none = await ListAsync(stores, new SagaListFilter { Statuses = [] });
+        var repeated = await ListAsync(stores, new SagaListFilter { Statuses = [SagaStatus.Running, SagaStatus.Running] });
+        var one = await ListAsync(stores, new SagaListFilter { Statuses = [SagaStatus.Failed] });
+        var narrowed = await ListAsync(stores, new SagaListFilter { Statuses = live, Status = SagaStatus.Running });
+        var disjoint = await ListAsync(stores, new SagaListFilter { Statuses = live, Status = SagaStatus.Failed });
+        var oldestFirst = await ListAsync(stores, new SagaListFilter { Statuses = live, SortBy = SagaSortColumn.UpdatedAt });
+        var byStatus = await ListAsync(stores, new SagaListFilter { Statuses = live, SortBy = SagaSortColumn.Status });
+        var byStatusDescending = await ListAsync(stores, new SagaListFilter { Statuses = live, SortBy = SagaSortColumn.Status, SortDescending = true });
+        var secondPage = await ListAsync(stores, new SagaListFilter { Statuses = live, SortBy = SagaSortColumn.UpdatedAt, Page = 2, PageSize = 2 });
+
+        Assert.Equal([otherRunning.CorrelationId, compensating.CorrelationId, running.CorrelationId], Ids(liveOnes));
+        Assert.Equal(3, liveOnes.TotalCount);
+        Assert.Equal(5, unrestricted.TotalCount);
+        Assert.Empty(none.Items);
+        Assert.Equal(0, none.TotalCount);
+        Assert.Equal([otherRunning.CorrelationId, running.CorrelationId], Ids(repeated));
+        Assert.Equal(2, repeated.TotalCount);
+        Assert.Equal([failed.CorrelationId], Ids(one));
+        Assert.Equal([otherRunning.CorrelationId, running.CorrelationId], Ids(narrowed));
+        Assert.Equal(2, narrowed.TotalCount);
+        Assert.Empty(disjoint.Items);
+        Assert.Equal(0, disjoint.TotalCount);
+        Assert.Equal([running.CorrelationId, compensating.CorrelationId, otherRunning.CorrelationId], Ids(oldestFirst));
+        // Status's declared order puts Running before Compensating; the rows within one status keep UpdatedAt descending.
+        Assert.Equal([otherRunning.CorrelationId, running.CorrelationId, compensating.CorrelationId], Ids(byStatus));
+        Assert.Equal([compensating.CorrelationId, otherRunning.CorrelationId, running.CorrelationId], Ids(byStatusDescending));
+        Assert.Equal([otherRunning.CorrelationId], Ids(secondPage));
+        Assert.Equal(3, secondPage.TotalCount);
+    }
+
+    /// <summary>
+    /// The stuck-saga sweep's own query: one saga type, the statuses a saga is still alive in, idle since before a
+    /// bound, oldest first, in pages. Every member composes with the others before the count, the sort and the page.
+    /// </summary>
+    [Fact]
+    public async Task List_StatusesAndUpdatedBefore_ComposeWithSagaTypeKindSearchAndPaging()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var oldRunning = NewState("OrderSaga", status: SagaStatus.Running, updatedAtUtc: T0.AddSeconds(1));
+        var oldCompensating = NewState("OrderSaga", status: SagaStatus.Compensating, updatedAtUtc: T0.AddSeconds(2));
+        var oldFailed = NewState("OrderSaga", status: SagaStatus.Failed, updatedAtUtc: T0.AddSeconds(3));
+        var recentRunning = NewState("OrderSaga", status: SagaStatus.Running, updatedAtUtc: T0.AddSeconds(9));
+        var onTheBound = NewState("OrderSaga", status: SagaStatus.Running, updatedAtUtc: T0.AddSeconds(6));
+        var oldOther = NewState("PaymentSaga", status: SagaStatus.Running, updatedAtUtc: T0.AddSeconds(4));
+        var oldChoreographed = NewState("ShippingChoreography", status: SagaStatus.Compensating, updatedAtUtc: T0.AddSeconds(5));
+        oldChoreographed.Kind = SagaKind.Choreographed;
+        await InsertAsync(stores, recentRunning, oldOther, onTheBound, oldFailed, oldRunning, oldChoreographed, oldCompensating);
+        SagaStatus[] live = [SagaStatus.Running, SagaStatus.Compensating];
+        var bound = T0.AddSeconds(6);
+
+        var sweep = await ListAsync(stores, new SagaListFilter { SagaType = "OrderSaga", Statuses = live, UpdatedBefore = bound, SortBy = SagaSortColumn.UpdatedAt });
+        var sweepPage2 = await ListAsync(stores, new SagaListFilter { SagaType = "OrderSaga", Statuses = live, UpdatedBefore = bound, SortBy = SagaSortColumn.UpdatedAt, Page = 2, PageSize = 1 });
+        var typeSet = await ListAsync(stores, new SagaListFilter { SagaTypes = ["OrderSaga", "PaymentSaga"], Statuses = live, UpdatedBefore = bound, SortBy = SagaSortColumn.UpdatedAt });
+        var choreographed = await ListAsync(stores, new SagaListFilter { Kind = SagaKind.Choreographed, Statuses = live, UpdatedBefore = bound });
+        var searched = await ListAsync(stores, new SagaListFilter { Search = "pay", Statuses = live, UpdatedBefore = bound });
+        var everyone = await ListAsync(stores, new SagaListFilter { Statuses = live, UpdatedBefore = bound, UpdatedSince = T0.AddSeconds(1), SortBy = SagaSortColumn.UpdatedAt });
+
+        Assert.Equal([oldRunning.CorrelationId, oldCompensating.CorrelationId], Ids(sweep));
+        Assert.Equal(2, sweep.TotalCount);
+        Assert.Equal([oldCompensating.CorrelationId], Ids(sweepPage2));
+        Assert.Equal(2, sweepPage2.TotalCount);
+        Assert.Equal([oldRunning.CorrelationId, oldCompensating.CorrelationId, oldOther.CorrelationId], Ids(typeSet));
+        Assert.Equal(3, typeSet.TotalCount);
+        Assert.Equal([oldChoreographed.CorrelationId], Ids(choreographed));
+        Assert.Equal([oldOther.CorrelationId], Ids(searched));
+        Assert.Equal([oldCompensating.CorrelationId, oldOther.CorrelationId, oldChoreographed.CorrelationId], Ids(everyone));
+        Assert.Equal(3, everyone.TotalCount);
+    }
+
     [Fact]
     public async Task List_DefaultOrder_IsMostRecentlyUpdatedFirst()
     {

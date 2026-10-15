@@ -36,8 +36,8 @@ public interface ISagaSummaryReader
     /// consumes a cross-provider-identical order, so the contract deliberately does not require one.
     /// </para>
     /// <para>
-    /// Every filter member of <see cref="SagaListFilter"/> (<c>Status</c>, <c>SagaType</c>, <c>SagaTypes</c>,
-    /// <c>Kind</c>, <c>Search</c>, <c>UpdatedSince</c>) must be honoured by the provider, applied before
+    /// Every filter member of <see cref="SagaListFilter"/> (<c>Status</c>, <c>Statuses</c>, <c>SagaType</c>,
+    /// <c>SagaTypes</c>, <c>Kind</c>, <c>Search</c>, <c>UpdatedSince</c>, <c>UpdatedBefore</c>) must be honoured by the provider, applied before
     /// the count, the sort and the page, so that <see cref="PagedResult{T}.TotalCount"/> is over the
     /// filtered set. That includes <see cref="SagaListFilter.SagaTypes"/>, which was added after the others:
     /// it has no opt-out and nothing in the dashboard falls back to one call per type, so a reader written

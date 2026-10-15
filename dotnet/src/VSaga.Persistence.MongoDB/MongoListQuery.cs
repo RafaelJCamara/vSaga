@@ -20,6 +20,8 @@ internal static class MongoListQuery
         var predicate = Filter.Empty;
         if (filter.Status is { } status)
             predicate &= Filter.Eq(d => d.Status, status);
+        if (filter.Statuses is { } statuses)
+            predicate &= Filter.In(d => d.Status, statuses.Distinct());
         if (filter.Kind is { } kind)
             predicate &= Filter.Eq(d => d.Kind, kind);
         if (!string.IsNullOrWhiteSpace(filter.SagaType))
@@ -30,6 +32,9 @@ internal static class MongoListQuery
         // count and the page alike, so TotalCount describes the filtered set.
         if (filter.UpdatedSince is { } since)
             predicate &= Filter.Gt(d => d.UpdatedAtTicks, MongoTimestamps.ToTicks(since));
+        // Strictly less-than, on the same exact ticks (SagaListFilter.UpdatedBefore).
+        if (filter.UpdatedBefore is { } before)
+            predicate &= Filter.Lt(d => d.UpdatedAtTicks, MongoTimestamps.ToTicks(before));
         if (!string.IsNullOrWhiteSpace(filter.Search))
             predicate &= Filter.Or(Filter.Regex(d => d.SagaTypeLower, SearchPattern(filter.Search)), Filter.Regex(d => d.CorrelationId, SearchPattern(filter.Search)));
 
