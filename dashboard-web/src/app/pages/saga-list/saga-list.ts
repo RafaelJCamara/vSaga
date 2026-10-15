@@ -15,6 +15,17 @@ import { viewScopeKey } from '../../util/session-access';
 const STATUSES: SagaStatus[] = ['Running', 'Completed', 'Failed', 'Compensating', 'Compensated', 'TimedOut', 'Cancelled'];
 const KINDS: SagaKind[] = ['Orchestrated', 'Choreographed'];
 const PAGE_SIZES = [25, 50, 75, 100];
+/**
+ * The "idle for" choices: a Running or Compensating saga not updated for at least this long, the sagas the engine's
+ * stuck-saga sweep looks for. The API takes any number of seconds; the toolbar offers these, and a link's value
+ * outside them is ignored like any other unknown one.
+ */
+const IDLE_CHOICES: readonly { seconds: number; label: string }[] = [
+  { seconds: 900, label: 'Idle for over 15 minutes' },
+  { seconds: 3600, label: 'Idle for over 1 hour' },
+  { seconds: 21600, label: 'Idle for over 6 hours' },
+  { seconds: 86400, label: 'Idle for over 24 hours' },
+];
 const SEARCH_DEBOUNCE_MS = 300;
 
 type SortDirection = 'asc' | 'desc';
@@ -43,6 +54,7 @@ function maxPageOf(err: unknown): number | null {
 export class SagaList implements OnInit, OnDestroy {
   readonly statuses = STATUSES;
   readonly kinds = KINDS;
+  readonly idleChoices = IDLE_CHOICES;
 
   readonly sagas = signal<SagaSummary[]>([]);
   readonly sagaTypes = signal<SagaTypeInfo[]>([]);
@@ -91,6 +103,8 @@ export class SagaList implements OnInit, OnDestroy {
   kind: SagaKind | '' = '';
   sagaType = '';
   search = '';
+  /** The chosen "idle for" in seconds, as the select's value; empty for no limit. */
+  idleFor = '';
 
   private subs: Subscription[] = [];
   private readonly searchChange$ = new Subject<void>();
@@ -257,6 +271,9 @@ export class SagaList implements OnInit, OnDestroy {
     const search = params.get('search');
     if (search) this.search = search;
 
+    const idleFor = params.get('idleFor');
+    if (idleFor && IDLE_CHOICES.some((c) => String(c.seconds) === idleFor)) this.idleFor = idleFor;
+
     const page = Number(params.get('page'));
     if (Number.isInteger(page) && page > 0) this.page.set(page);
 
@@ -280,6 +297,7 @@ export class SagaList implements OnInit, OnDestroy {
       kind: this.kind || null,
       sagaType: this.sagaType || null,
       search: this.search || null,
+      idleFor: this.idleFor || null,
       page: this.page() > 1 ? this.page() : null,
       pageSize: this.pageSize !== PAGE_SIZES[0] ? this.pageSize : null,
       sortBy: this.sortColumn(),
@@ -368,7 +386,7 @@ export class SagaList implements OnInit, OnDestroy {
 
   /** The filters, sort and page size of the next request: what a page number is relative to. */
   private requestKey(): string {
-    return JSON.stringify([this.status, this.kind, this.sagaType, this.search, this.sortColumn(), this.sortDirection(), this.pageSize]);
+    return JSON.stringify([this.status, this.kind, this.sagaType, this.search, this.idleFor, this.sortColumn(), this.sortDirection(), this.pageSize]);
   }
 
   /** `notice` is the message a rejected request left behind, kept on show while the page it sent the list to loads. */
@@ -388,6 +406,7 @@ export class SagaList implements OnInit, OnDestroy {
         kind: this.kind || undefined,
         sagaType: this.sagaType || undefined,
         search: this.search || undefined,
+        idleForSeconds: Number(this.idleFor) || undefined,
         page: requestedPage,
         pageSize: this.pageSize,
         sortBy: this.sortColumn() ?? undefined,
@@ -492,6 +511,14 @@ export class SagaList implements OnInit, OnDestroy {
     );
 
     if (index >= 0) {
+      // An update is the saga moving, so under the idle filter the row it belongs to no longer qualifies: it goes,
+      // and the total with it (a refresh would say the same), instead of staying under a heading it contradicts.
+      if (!this.isIdleEnough(summary)) {
+        this.sagas.set(current.filter((_, i) => i !== index));
+        this.totalCount.set(Math.max(0, this.totalCount() - 1));
+        return;
+      }
+
       const next = current.slice();
       next[index] = summary;
       next.sort((a, b) => this.compareSagas(a, b));
@@ -529,10 +556,22 @@ export class SagaList implements OnInit, OnDestroy {
     return (valueA - valueB) * direction;
   }
 
+  /**
+   * True when no "idle for" is chosen, or when the saga is Running or Compensating and was last updated at least that
+   * long ago (the API's own test, read against this browser's clock: a pushed summary is a fresh update, so it fails).
+   */
+  private isIdleEnough(summary: SagaSummary): boolean {
+    const seconds = Number(this.idleFor);
+    if (!seconds) return true;
+    if (summary.status !== 'Running' && summary.status !== 'Compensating') return false;
+    return Date.now() - new Date(summary.updatedAtUtc).getTime() >= seconds * 1000;
+  }
+
   private matchesFilter(summary: SagaSummary): boolean {
     if (this.status && summary.status !== this.status) return false;
     if (this.kind && summary.kind !== this.kind) return false;
     if (this.sagaType && summary.sagaType !== this.sagaType) return false;
+    if (!this.isIdleEnough(summary)) return false;
 
     const term = this.search.trim().toLowerCase();
     if (term) {

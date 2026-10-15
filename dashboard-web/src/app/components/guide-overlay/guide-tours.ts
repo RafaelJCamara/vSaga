@@ -62,7 +62,7 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
     {
       id: 'list-filters',
       title: 'Narrow the list',
-      body: 'Filter by status, kind or saga type, or search by saga type or correlation id. Filters, sort and page live in the address bar, so a view can be bookmarked or shared.',
+      body: 'Filter by status, kind, saga type or how long a saga has been idle, or search by saga type or correlation id. Filters, sort and page live in the address bar, so a view can be bookmarked or shared.',
       anchor: 'list-filters',
     },
     {

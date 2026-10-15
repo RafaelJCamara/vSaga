@@ -1,6 +1,6 @@
 <div class="page-header">
   <h1>Sagas</h1>
-  <span class="count" *ngIf="signedIn() && hasAccess() && !loading()">{{ totalCount() }} total</span>
+  <span class="count" *ngIf="signedIn() && hasAccess() && !loading()">{{ totalCount() }} {{ idleFor ? 'idle' : 'total' }}</span>
 </div>
 
 @if (!signedIn()) {
@@ -26,6 +26,11 @@
     <select class="input" aria-label="Filter by saga type" [(ngModel)]="sagaType" (change)="onFilterChange()">
       <option value="">All saga types</option>
       <option *ngFor="let t of sagaTypes()" [value]="t.sagaType">{{ t.sagaType }}</option>
+    </select>
+
+    <select class="input" aria-label="Filter by idle time" [(ngModel)]="idleFor" (change)="onFilterChange()">
+      <option value="">Any activity</option>
+      <option *ngFor="let c of idleChoices" [value]="c.seconds">{{ c.label }}</option>
     </select>
 
     <input

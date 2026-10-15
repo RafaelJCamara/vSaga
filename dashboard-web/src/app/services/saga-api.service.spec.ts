@@ -34,6 +34,7 @@ describe('SagaApiService', () => {
     expect(req.request.params.has('sagaType')).toBe(false);
     expect(req.request.params.has('kind')).toBe(false);
     expect(req.request.params.has('search')).toBe(false);
+    expect(req.request.params.has('idleForSeconds')).toBe(false);
     req.flush(empty);
   });
 
@@ -50,6 +51,18 @@ describe('SagaApiService', () => {
     expect(req.request.params.get('page')).toBe('2');
     expect(req.request.params.get('pageSize')).toBe('10');
     req.flush({ items: [], page: 2, pageSize: 10, totalCount: 0 });
+  });
+
+  it('list() forwards idleForSeconds as a query param, and omits it when it is not set', () => {
+    service.list({ idleForSeconds: 3600 }).subscribe();
+    const idle = httpMock.expectOne((r) => r.url === `${API_BASE_URL}/api/sagas`);
+    expect(idle.request.params.get('idleForSeconds')).toBe('3600');
+    idle.flush({ items: [], page: 1, pageSize: 25, totalCount: 0 });
+
+    service.list({ idleForSeconds: undefined }).subscribe();
+    const none = httpMock.expectOne((r) => r.url === `${API_BASE_URL}/api/sagas`);
+    expect(none.request.params.has('idleForSeconds')).toBe(false);
+    none.flush({ items: [], page: 1, pageSize: 25, totalCount: 0 });
   });
 
   it('get() requests the saga detail endpoint by id', () => {

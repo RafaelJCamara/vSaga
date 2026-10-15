@@ -396,6 +396,7 @@ describe('SagaList', () => {
       'Filter by status',
       'Filter by kind',
       'Filter by saga type',
+      'Filter by idle time',
     ]);
   });
 
@@ -407,7 +408,7 @@ describe('SagaList', () => {
     const el: HTMLElement = fixture.nativeElement;
 
     expect(el.querySelector('.page-header > h1')).not.toBeNull();
-    expect(el.querySelectorAll('.toolbar > select.input, .toolbar > input.input')).toHaveLength(4);
+    expect(el.querySelectorAll('.toolbar > select.input, .toolbar > input.input')).toHaveLength(5);
     expect(el.querySelector('table.data-table')).not.toBeNull();
     expect(el.querySelectorAll('.pagination select.input, .pagination input.input')).toHaveLength(2);
 
@@ -679,6 +680,184 @@ describe('SagaList', () => {
         queryParams: expect.objectContaining({ status: 'Failed', page: null }),
       }),
     );
+  });
+
+  describe('the idle-for filter', () => {
+    const HOUR = 3600;
+
+    function idleIso(secondsAgo: number): string {
+      return new Date(Date.now() - secondsAgo * 1000).toISOString();
+    }
+
+    function setupWithLink(queryParams: Record<string, string>) {
+      apiMock = {
+        list: vi.fn().mockReturnValue(of({ items: [], page: 1, pageSize: 25, totalCount: 0 })),
+        getSagaTypes: vi.fn().mockReturnValue(of([])),
+      };
+      hubMock = {
+        sagaUpdated$: new Subject<SagaSummary>(),
+        connectionState$: new BehaviorSubject<SagaHubConnectionState>('connected'),
+        subscribeToList: vi.fn().mockResolvedValue(undefined),
+      };
+      TestBed.configureTestingModule({
+        imports: [SagaList],
+        providers: [
+          provideRouter([]),
+          provideAuthMock(),
+          { provide: SagaApiService, useValue: apiMock },
+          { provide: SagaHubService, useValue: hubMock },
+          { provide: ActivatedRoute, useValue: { snapshot: { queryParamMap: convertToParamMap(queryParams) } } },
+        ],
+      });
+      const fixture = TestBed.createComponent(SagaList);
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    it('sends idleForSeconds only when a choice is made, and offers the four choices after "Any activity"', () => {
+      const fixture = setup();
+      expect(apiMock.list.mock.calls.at(-1)![0].idleForSeconds).toBeUndefined();
+
+      const select: HTMLSelectElement = fixture.nativeElement.querySelector('select[aria-label="Filter by idle time"]');
+      expect(Array.from(select.options, (o) => [o.value, o.textContent?.trim()])).toEqual([
+        ['', 'Any activity'],
+        ['900', 'Idle for over 15 minutes'],
+        ['3600', 'Idle for over 1 hour'],
+        ['21600', 'Idle for over 6 hours'],
+        ['86400', 'Idle for over 24 hours'],
+      ]);
+
+      select.value = '3600';
+      select.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+
+      expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ idleForSeconds: HOUR, page: 1 }));
+
+      select.value = '';
+      select.dispatchEvent(new Event('change'));
+      expect(apiMock.list.mock.calls.at(-1)![0].idleForSeconds).toBeUndefined();
+    });
+
+    it('lands back on page 1 when the choice changes', () => {
+      const fixture = setup({ items: [], page: 1, pageSize: 25, totalCount: 100 });
+      fixture.componentInstance.page.set(3);
+
+      fixture.componentInstance.idleFor = '900';
+      fixture.componentInstance.onFilterChange();
+
+      expect(fixture.componentInstance.page()).toBe(1);
+    });
+
+    it('counts "idle" in the header under the filter and "total" without it', () => {
+      const fixture = setup({ items: [makeSummary()], page: 1, pageSize: 25, totalCount: 7 });
+      const count = () => fixture.nativeElement.querySelector('.page-header .count').textContent.trim();
+      expect(count()).toBe('7 total');
+
+      const select: HTMLSelectElement = fixture.nativeElement.querySelector('select[aria-label="Filter by idle time"]');
+      select.value = '3600';
+      select.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+
+      expect(count()).toBe('7 idle');
+    });
+
+    it('writes the choice to the URL', () => {
+      const fixture = setup();
+      const router = TestBed.inject(Router);
+      const navigate = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+
+      fixture.componentInstance.idleFor = '21600';
+      fixture.componentInstance.onFilterChange();
+      expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ idleFor: '21600' }) }));
+
+      fixture.componentInstance.idleFor = '';
+      fixture.componentInstance.onFilterChange();
+      expect(navigate).toHaveBeenLastCalledWith([], expect.objectContaining({ queryParams: expect.objectContaining({ idleFor: null }) }));
+    });
+
+    it('reads a known choice from a link and sends it', () => {
+      const fixture = setupWithLink({ idleFor: '3600' });
+
+      expect(fixture.componentInstance.idleFor).toBe('3600');
+      expect(apiMock.list.mock.calls[0][0].idleForSeconds).toBe(3600);
+    });
+
+    it.each(['7', 'abc', '-3600', '3600.5'])('ignores idleFor=%s from a link rather than trusting it', (fromLink) => {
+      const fixture = setupWithLink({ idleFor: fromLink });
+
+      expect(fixture.componentInstance.idleFor).toBe('');
+      expect(apiMock.list.mock.calls[0][0].idleForSeconds).toBeUndefined();
+    });
+
+    it('drops a row a live update shows has moved, and the total with it', () => {
+      const stale = makeSummary({ correlationId: 'stale', status: 'Running', updatedAtUtc: idleIso(2 * HOUR) });
+      const other = makeSummary({ correlationId: 'other', status: 'Running', updatedAtUtc: idleIso(3 * HOUR) });
+      const fixture = setup({ items: [stale, other], page: 1, pageSize: 25, totalCount: 2 });
+      fixture.componentInstance.idleFor = '3600';
+
+      hubMock.sagaUpdated$.next({ ...stale, status: 'Running', updatedAtUtc: new Date().toISOString() });
+
+      expect(fixture.componentInstance.sagas().map((s) => s.correlationId)).toEqual(['other']);
+      expect(fixture.componentInstance.totalCount()).toBe(1);
+    });
+
+    it('drops a row that finished, however long it had been idle', () => {
+      const row = makeSummary({ correlationId: 'row', status: 'Running', updatedAtUtc: idleIso(5 * HOUR) });
+      const fixture = setup({ items: [row], page: 1, pageSize: 25, totalCount: 1 });
+      fixture.componentInstance.idleFor = '3600';
+
+      hubMock.sagaUpdated$.next({ ...row, status: 'Failed' });
+
+      expect(fixture.componentInstance.sagas()).toEqual([]);
+      expect(fixture.componentInstance.totalCount()).toBe(0);
+    });
+
+    it('keeps a row an update leaves idle enough, and never counts below zero', () => {
+      const row = makeSummary({ correlationId: 'row', status: 'Running', updatedAtUtc: idleIso(5 * HOUR) });
+      const fixture = setup({ items: [row], page: 1, pageSize: 25, totalCount: 0 });
+      fixture.componentInstance.idleFor = '3600';
+
+      const same = { ...row, currentState: 'Elsewhere' };
+      hubMock.sagaUpdated$.next(same);
+      expect(fixture.componentInstance.sagas()).toEqual([same]);
+
+      hubMock.sagaUpdated$.next({ ...row, updatedAtUtc: new Date().toISOString() });
+      expect(fixture.componentInstance.sagas()).toEqual([]);
+      expect(fixture.componentInstance.totalCount()).toBe(0);
+    });
+
+    it('does not add a freshly updated saga, but adds one that is old enough and matches', () => {
+      const fixture = setup({ items: [], page: 1, pageSize: 25, totalCount: 0 });
+      fixture.componentInstance.idleFor = '3600';
+
+      hubMock.sagaUpdated$.next(makeSummary({ correlationId: 'fresh', status: 'Running', updatedAtUtc: new Date().toISOString() }));
+      expect(fixture.componentInstance.sagas()).toEqual([]);
+
+      const old = makeSummary({ correlationId: 'old', status: 'Compensating', updatedAtUtc: idleIso(2 * HOUR) });
+      hubMock.sagaUpdated$.next(old);
+      expect(fixture.componentInstance.sagas()).toEqual([old]);
+      expect(fixture.componentInstance.totalCount()).toBe(1);
+    });
+
+    it('treats a page number as relative to the idle choice too, so changing it is a new request', () => {
+      const fixture = setup({ items: [makeSummary()], page: 1, pageSize: 25, totalCount: 1 });
+      const component = fixture.componentInstance as unknown as { requestKey(): string };
+      const before = component.requestKey();
+
+      fixture.componentInstance.idleFor = '900';
+
+      expect(component.requestKey()).not.toBe(before);
+    });
+
+    it('a status filter and the idle choice together send both', () => {
+      const fixture = setup();
+      fixture.componentInstance.status = 'Compensating';
+      fixture.componentInstance.idleFor = '86400';
+
+      fixture.componentInstance.refresh();
+
+      expect(apiMock.list).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'Compensating', idleForSeconds: 86400 }));
+    });
   });
 
   describe('the anchors of the guide tour', () => {

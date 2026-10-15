@@ -24,6 +24,7 @@ export class SagaApiService {
     if (filter.sagaType) params = params.set('sagaType', filter.sagaType);
     if (filter.kind) params = params.set('kind', filter.kind);
     if (filter.search) params = params.set('search', filter.search);
+    if (filter.idleForSeconds) params = params.set('idleForSeconds', filter.idleForSeconds);
     params = params.set('page', filter.page ?? 1);
     params = params.set('pageSize', filter.pageSize ?? 25);
     if (filter.sortBy) params = params.set('sortBy', filter.sortBy).set('sortDescending', filter.sortDescending ?? false);

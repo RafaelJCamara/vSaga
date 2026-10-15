@@ -132,6 +132,8 @@ export interface SagaListFilter {
   sagaType?: string;
   kind?: SagaKind;
   search?: string;
+  /** Keep only the Running and Compensating sagas not updated for this many seconds (the API's `idleForSeconds`). */
+  idleForSeconds?: number;
   page?: number;
   pageSize?: number;
   sortBy?: SagaSortColumn;
