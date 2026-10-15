@@ -20,7 +20,7 @@ namespace VSaga.Core.Tests;
 /// saga's ending — <c>Finalize(Func&lt;TState, SagaStatus?&gt;)</c>.
 /// </para>
 /// </summary>
-public sealed class ParallelFanOutJoinTests : IAsyncDisposable
+public sealed class ParallelFanOutJoinTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -42,7 +42,9 @@ public sealed class ParallelFanOutJoinTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

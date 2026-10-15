@@ -17,7 +17,7 @@ namespace VSaga.Core.Tests;
 /// via the exact same <c>AddSaga&lt;TDefinition, TState&gt;()</c> call, confirming the runtime needed no
 /// changes to drive a choreographed definition.
 /// </summary>
-public sealed class ChoreographedSagaTests : IAsyncDisposable
+public sealed class ChoreographedSagaTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -39,7 +39,9 @@ public sealed class ChoreographedSagaTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace VSaga.Core.Tests;
 
-public sealed class SagaOrchestratorTests : IAsyncDisposable
+public sealed class SagaOrchestratorTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -33,7 +33,9 @@ public sealed class SagaOrchestratorTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

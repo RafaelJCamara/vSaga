@@ -24,7 +24,7 @@ namespace VSaga.Core.Tests;
 /// MessageReceived records the message body, which is what lets the retry replay a step other than
 /// the initiating one.
 /// </summary>
-public sealed class TargetedRedriveTests : IAsyncDisposable
+public sealed class TargetedRedriveTests : IAsyncLifetime
 {
     public sealed record RedriveOrderPlaced(string OrderId);
 
@@ -142,7 +142,9 @@ public sealed class TargetedRedriveTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

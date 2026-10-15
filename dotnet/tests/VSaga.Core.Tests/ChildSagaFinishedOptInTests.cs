@@ -24,7 +24,7 @@ namespace VSaga.Core.Tests;
 /// container is what makes "never even subscribed" an observable, not just an inferred, property.
 /// </para>
 /// </summary>
-public sealed class ChildSagaFinishedOptInTests : IAsyncDisposable
+public sealed class ChildSagaFinishedOptInTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -50,7 +50,9 @@ public sealed class ChildSagaFinishedOptInTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

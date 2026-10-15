@@ -16,7 +16,7 @@ namespace VSaga.Core.Tests;
 /// docs/design/mixed-sagas.md §3.1/§5: HandleTimeoutAsync's own drain of ctx.PublishAfterCommitAsync, and the
 /// discard path for the race it can't avoid. See TimeoutDrainFixtures for the saga this exercises.
 /// </summary>
-public sealed class TimeoutDrainTests : IAsyncDisposable
+public sealed class TimeoutDrainTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -38,7 +38,9 @@ public sealed class TimeoutDrainTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

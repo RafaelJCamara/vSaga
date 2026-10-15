@@ -24,7 +24,7 @@ namespace VSaga.Core.Tests;
 /// that state and publishing under it.
 /// </para>
 /// </summary>
-public sealed class NotifyParentAsyncTests : IAsyncDisposable
+public sealed class NotifyParentAsyncTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -49,7 +49,9 @@ public sealed class NotifyParentAsyncTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

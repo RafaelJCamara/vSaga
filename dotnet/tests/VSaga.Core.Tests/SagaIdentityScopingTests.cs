@@ -23,7 +23,7 @@ namespace VSaga.Core.Tests;
 /// messages were discarded as duplicates of the other saga's; and cancelling a timeout for a
 /// same-named state reached across into the other saga's pending timeout.
 /// </summary>
-public sealed class SagaIdentityScopingTests : IAsyncDisposable
+public sealed class SagaIdentityScopingTests : IAsyncLifetime
 {
     private const string OrderSagaType = nameof(TestOrderSaga);
     private const string ChoreographyType = nameof(TestShippingChoreography);
@@ -51,7 +51,9 @@ public sealed class SagaIdentityScopingTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

@@ -24,7 +24,7 @@ namespace VSaga.Core.Tests;
 /// <c>SagaOrchestrator</c> reading the headers back off the wire.
 /// </para>
 /// </summary>
-public sealed class SubSagaCompositionTests : IAsyncDisposable
+public sealed class SubSagaCompositionTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -53,7 +53,9 @@ public sealed class SubSagaCompositionTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

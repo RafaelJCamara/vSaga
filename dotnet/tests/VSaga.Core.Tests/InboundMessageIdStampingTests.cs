@@ -19,7 +19,7 @@ namespace VSaga.Core.Tests;
 /// .CallHttp request in VSaga.Http.Tests) as their CausationId. The timeout path has no inbound message
 /// and leaves its entries as they were.
 /// </summary>
-public sealed class InboundMessageIdStampingTests : IAsyncDisposable
+public sealed class InboundMessageIdStampingTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -43,7 +43,9 @@ public sealed class InboundMessageIdStampingTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

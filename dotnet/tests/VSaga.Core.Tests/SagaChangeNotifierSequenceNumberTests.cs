@@ -17,7 +17,7 @@ namespace VSaga.Core.Tests;
 /// numbers, so every entry the orchestrator notifies with must carry the number the event log
 /// assigned when it stored that entry, not the 0 an entry is created with.
 /// </summary>
-public sealed class SagaChangeNotifierSequenceNumberTests : IAsyncDisposable
+public sealed class SagaChangeNotifierSequenceNumberTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -41,7 +41,9 @@ public sealed class SagaChangeNotifierSequenceNumberTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

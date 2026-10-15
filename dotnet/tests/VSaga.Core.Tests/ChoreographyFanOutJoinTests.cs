@@ -17,7 +17,7 @@ namespace VSaga.Core.Tests;
 /// <c>PostShipmentChoreography</c> is built on: the saga completes when the last of three independent
 /// branches reports, with no branch assuming it is last.
 /// </summary>
-public sealed class ChoreographyFanOutJoinTests : IAsyncDisposable
+public sealed class ChoreographyFanOutJoinTests : IAsyncLifetime
 {
     private readonly ServiceProvider _provider;
     private readonly InMemoryMessageTransport _transport;
@@ -39,7 +39,9 @@ public sealed class ChoreographyFanOutJoinTests : IAsyncDisposable
             hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public async ValueTask DisposeAsync()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         foreach (var hosted in _provider.GetServices<IHostedService>())
             await hosted.StopAsync(CancellationToken.None);

@@ -26,7 +26,7 @@ public sealed class TestState : SagaState
 /// that must leave a second saga type's row alone and the update-written projection columns are suite cases now.
 /// See persistence-contracts.md Q4.
 /// </summary>
-public sealed class EfCoreStoreTests : IAsyncDisposable
+public sealed class EfCoreStoreTests : IAsyncLifetime, IAsyncDisposable
 {
     private readonly SqliteConnection _connection;
     private readonly DbContextOptions<VSagaDbContext> _options;
@@ -45,6 +45,11 @@ public sealed class EfCoreStoreTests : IAsyncDisposable
     }
 
     private VSagaDbContext NewContext() => new(_options);
+
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    // xunit 2 calls IAsyncLifetime.DisposeAsync, never a test class's IAsyncDisposable.
+    Task IAsyncLifetime.DisposeAsync() => DisposeAsync().AsTask();
 
     public ValueTask DisposeAsync() => _connection.DisposeAsync();
 
