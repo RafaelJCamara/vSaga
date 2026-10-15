@@ -20,11 +20,13 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<SagaOrchestratorOptions>();
         services.TryAddSingleton<SagaOutboxOptions>();
+        services.TryAddSingleton<SagaStuckOptions>();
         services.TryAddSingleton<ISagaChangeNotifier>(NullSagaChangeNotifier.Instance);
         services.AddSingleton<ISagaRetryDispatcher, SagaRetryDispatcher>();
         services.AddHostedService<SagaEngineHostedService>();
         services.AddHostedService<SagaTimeoutDispatcherHostedService>();
         services.AddHostedService<SagaOutboxDispatcherHostedService>();
+        services.AddHostedService<SagaStuckSweepHostedService>();
 
         configure(new SagaEngineBuilder(services));
 
@@ -96,6 +98,22 @@ public sealed class SagaEngineBuilder(IServiceCollection services)
     {
         var options = new SagaOutboxOptions();
         configure(options);
+        services.AddSingleton(options);
+        return this;
+    }
+
+    /// <summary>
+    /// Turns on the stuck-saga sweep and configures it (<see cref="SagaStuckOptions"/>): the sagas of this process that
+    /// have been idle past their threshold are counted in the <c>vsaga.saga.stuck</c> gauge and logged. Calling it is the
+    /// opt-in, so <see cref="SagaStuckOptions.Enabled"/> is true when the delegate runs and a bound configuration can
+    /// still set it false. Throws <see cref="ArgumentOutOfRangeException"/> for a value the sweep cannot work with. See
+    /// <see cref="ConfigureOrchestrator"/> for why this, not <c>services.Configure&lt;T&gt;</c>, is the way to set these.
+    /// </summary>
+    public SagaEngineBuilder ConfigureStuckDetection(Action<SagaStuckOptions>? configure = null)
+    {
+        var options = new SagaStuckOptions { Enabled = true };
+        configure?.Invoke(options);
+        options.Validate();
         services.AddSingleton(options);
         return this;
     }

@@ -42,6 +42,14 @@ public interface ISagaDefinition<TState> where TState : SagaState, new()
     TimeSpan? GetTimeout(string forState);
 
     /// <summary>
+    /// The shortest timeout any state declares, or null when none does. The stuck-saga sweep uses it to bound
+    /// which instances it reads: the earliest a saga can be overdue is that timeout plus the grace. The default
+    /// is null, which a definition that cannot say gets the sweep's own idle threshold as that bound, and so
+    /// misses a timeout-overdue saga idle for longer than its timeout but shorter than the idle threshold.
+    /// </summary>
+    TimeSpan? ShortestTimeout => null;
+
+    /// <summary>
     /// Extracts <paramref name="message"/>'s business-key correlation value, if this saga declared one via
     /// <c>CorrelateOn(...)</c> and registered a <c>CorrelateBy</c> extractor for this message's CLR type.
     /// Null means this message carries no business key — the caller should fall back to the transport

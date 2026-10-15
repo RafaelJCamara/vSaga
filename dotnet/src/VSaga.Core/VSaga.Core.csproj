@@ -16,6 +16,9 @@
          otherwise race the harness's own deterministic AdvanceTimeByAsync claim-and-handle path the
          moment its FakeTimeProvider is advanced. -->
     <InternalsVisibleTo Include="VSaga.Testing" />
+    <!-- The stuck-saga classifier and sweep are internal, and their tests drive them directly: every boundary of the
+         definition of "stuck" is a unit case, without a host and a clock. -->
+    <InternalsVisibleTo Include="VSaga.Core.Tests" />
   </ItemGroup>
 
   <ItemGroup>

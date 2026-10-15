@@ -90,6 +90,9 @@ public abstract class OrchestratedSagaDefinition<TState> : ISagaDefinition<TStat
     public TimeSpan? GetTimeout(string forState) =>
         _model.Timeouts.TryGetValue(forState, out var timeout) ? timeout.Delay : null;
 
+    public TimeSpan? ShortestTimeout =>
+        _model.Timeouts.Count == 0 ? null : _model.Timeouts.Values.Min(t => t.Delay);
+
     public async Task<SagaStepOutcome> HandleAsync(ISagaContext<TState> context, object message, CancellationToken cancellationToken)
     {
         var fromState = context.Saga.CurrentState;

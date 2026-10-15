@@ -18,6 +18,10 @@ internal sealed class SagaRuntime<TState>(IServiceScopeFactory scopeFactory, ISa
 
     public SagaKind Kind => definition.Kind;
 
+    public TimeSpan? GetTimeout(string state) => definition.GetTimeout(state);
+
+    public TimeSpan? ShortestTimeout => definition.ShortestTimeout;
+
     public TransportSubscription Subscription { get; } =
         new(definition.SagaType, definition.MessageTypes.ToList(), $"vsaga.saga.{definition.SagaType}");
 

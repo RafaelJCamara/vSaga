@@ -1,7 +1,8 @@
 # Design: stuck-saga detection
 
-**Status: slice 1 of §8 is built** (the `Statuses` and `UpdatedBefore` filter members, in all five readers,
-with three conformance cases); slices 2 to 6 are not. Scope, definition and delivery were decided with the
+**Status: slices 1 and 2 of §8 are built** (slice 1: the `Statuses` and `UpdatedBefore` filter members, in all five
+readers, with three conformance cases; slice 2: the options, the classifier, and the sweep with its gauge and log, off
+by default); slices 3 to 6 are not. Where the build differs from the text below, §11 says so. Scope, definition and delivery were decided with the
 maintainer on 2026-10-15 (§1); the rest is a proposal for review. This closes the "stuck-saga alerting" item that
 [`production-readiness.md`](production-readiness.md) §1 named as a real gap and kept out of scope.
 
@@ -73,13 +74,14 @@ one.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `Enabled` | `false` | **Opt-in.** An upgrade adds no polling query and no log line on its own. |
+| `Enabled` | `false` | **Opt-in.** An upgrade adds no polling query and no log line on its own. `ConfigureStuckDetection` sets it `true` before running its delegate, so calling it is the opt-in, and a bound configuration can still switch it off. |
 | `SweepInterval` | `00:01:00` | Time between sweeps. |
 | `IdleThreshold` | `01:00:00` | Idle time that counts as stuck where no timeout applies. Deliberately long: a human approval is not stuck. |
 | `IdleThresholdBySagaType` | empty | Overrides by saga type name (ordinal). |
 | `TimeoutGrace` | `00:02:00` | Added to a state's timeout. Covers the dispatcher's 5 s poll, the step's own retries and a clock difference between replicas. |
 | `ExcludedSagaTypes` | empty | Types never swept, for a saga that waits for days by design. |
-| `MaxReportedPerSweep` | `200` | Cap per saga type on instances listed and notified; the gauge still counts every one (§5.1). |
+| `MaxReportedPerSweep` | `200` | Cap per saga type on instances logged individually (and, from slice 3, notified) in one sweep; the rest are counted in one further line, and the gauge counts every one it read (§5.1). |
+| `MaxScannedPerType` | `10000` | Cap per saga type on instances read in one sweep, oldest first. Past it the gauge is a lower bound and a warning says so. |
 
 The defaults are a proposal. The two that matter most, `IdleThreshold` and `TimeoutGrace`, are chosen to
 prefer a missed flag over a false one, since a flag on a healthy saga teaches operators to ignore the signal.
@@ -197,8 +199,9 @@ One commit each, per this repo's habit; each leaves the build green.
    cases (including the strict bound, the empty `Statuses`, and composition with `SagaTypes` and paging).
    `ScopedSagaLister` passes them through.
 2. **Detection.** `SagaStuckOptions`, `ConfigureStuckDetection`, the classifier as a pure function over
-   `(summary, definition, options, now)` with its own unit tests, and the hosted service with the gauge and log.
-3. **Notifier.** `ISagaStuckNotifier`, `StuckSaga`, `StuckCause`, the no-op default, and the diff of the reported set.
+   `(summary, state timeout, options, now)` with its own unit tests, and the hosted service with the gauge, the log and
+   the reported-set diff that makes the log edge-triggered.
+3. **Notifier.** `ISagaStuckNotifier`, the no-op default, and its calls from the reported-set diff.
 4. **Dashboard API.** The `idleFor` filter on the saga list, scope-checked.
 5. **Dashboard SPA.** The idle filter and count, with the accessibility and tour conventions the other
    filters follow. Separable: slices 1 to 4 are useful without it.
@@ -225,3 +228,23 @@ One commit each, per this repo's habit; each leaves the build green.
 - **Live**, on the compose stack, for the one path that has no unit test's honesty: make a timeout step throw
   (path 1 of §2), confirm the saga stays `Running` with no pending timeout, then confirm the log line, the
   gauge and the notifier all fire after the threshold, and that the dashboard's retry clears it.
+
+## 11. Where the build differs from the design
+
+Recorded in the commit that built slice 2, so the text above is not silently wrong:
+
+- **`MaxScannedPerType` is new.** The design capped what is reported but not what is read; the gauge must count
+  every stuck instance, so the sweep reads in pages of 200 until the store has no more past the floor, and an
+  upper bound on that walk was needed. The page walk is not a snapshot: an instance that recovers between two
+  pages shifts the later rows up by one, so a row can be missed for one sweep and is read on the next.
+- **`ISagaDefinition<TState>.ShortestTimeout`** (a default interface member, null by default) is new, because the
+  sweep's floor needs the shortest timeout and the definition only answered per state. Both DSL base classes
+  implement it. A custom definition that does not gets the idle threshold as its floor and misses a
+  timeout-overdue saga idle for longer than its timeout but shorter than that threshold.
+- **The reported-set diff and the log are slice 2, not 3**, because the log is edge-triggered by it. Slice 3 adds the
+  notifier calls to the same diff. `StuckSaga` and `StuckCause` are in `VSaga.Abstractions` already, since the
+  classifier returns them.
+- **A sweep that fails keeps the last reading** for two more sweeps and withdraws it on the third failure in a row
+  (§7 said "marked stale after three"), logging an error each time. A sweep that then succeeds restores it.
+- **`SagaStuckMetrics.Publish` takes a reading per saga type and cause, zeros included**, so an alert rule sees a
+  recovery as a value and not as a series that stopped.

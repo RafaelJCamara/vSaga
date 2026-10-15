@@ -38,6 +38,9 @@ public static class VSagaDiagnostics
     public const string TagFromState = "saga.from_state";
     public const string TagToState = "saga.to_state";
 
+    /// <summary>The <c>StuckCause</c> a <c>vsaga.saga.stuck</c> measurement counts, by name (e.g. <c>TimeoutOverdue</c>).</summary>
+    public const string TagStuckCause = "saga.stuck_cause";
+
     /// <summary>Tagged on a consumer span only when this delivery is a retry (production-readiness.md §6's "redelivery keeps the same trace" -- a retried delivery gets this tag instead of a fresh linked span).</summary>
     public const string TagDeliveryAttempt = "delivery.attempt";
 
