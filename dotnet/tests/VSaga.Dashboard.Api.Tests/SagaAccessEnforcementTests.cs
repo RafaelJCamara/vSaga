@@ -180,6 +180,30 @@ public sealed class SagaAccessEnforcementTests : IAsyncLifetime, IAsyncDisposabl
     }
 
     [Fact]
+    public async Task TheIdleList_ShowsOnlyVisibleTypes_ForOneTypeAndForSeveral()
+    {
+        var idle = TimeSpan.FromHours(3);
+        await SeedAsync(_host, Order, SagaStatus.Running, idle: idle);
+        await SeedAsync(_host, Order, SagaStatus.Compensating, idle: idle);
+        await SeedAsync(_host, Order, SagaStatus.Failed, idle: idle);
+        await SeedAsync(_host, Order, SagaStatus.Running);
+        await SeedAsync(_host, Payment, SagaStatus.Running, idle: idle);
+        await SeedAsync(_host, "ShippingSaga", SagaStatus.Running, idle: idle);
+        using var one = await SignInAsync("one", TestSessions.ForTypes(BuiltInRoles.ViewerId, Order));
+        using var two = await SignInAsync("two", TestSessions.ForTypes(BuiltInRoles.ViewerId, Order, Payment));
+
+        var ofOne = await ReadAsync(await one.GetAsync("/api/sagas?idleForSeconds=3600"));
+        var ofTwo = await ReadAsync(await two.GetAsync("/api/sagas?idleForSeconds=3600"));
+        var outsideScope = await ReadAsync(await one.GetAsync("/api/sagas?idleForSeconds=3600&sagaType=ShippingSaga"));
+
+        Assert.Equal(2, ofOne.GetProperty("totalCount").GetInt32());
+        Assert.All(ofOne.GetProperty("items").EnumerateArray(), s => Assert.Equal(Order, s.GetProperty("sagaType").GetString()));
+        Assert.Equal(3, ofTwo.GetProperty("totalCount").GetInt32());
+        Assert.DoesNotContain(ofTwo.GetProperty("items").EnumerateArray(), s => string.Equals(s.GetProperty("sagaType").GetString(), "ShippingSaga", StringComparison.Ordinal));
+        Assert.Equal(0, outsideScope.GetProperty("totalCount").GetInt32());
+    }
+
+    [Fact]
     public async Task TheList_PastItsBound_Is400WithTheErrorAndTheLastReachablePage()
     {
         // Eleven types that have all run: a status filter can merge ten, and narrowing the names to the
@@ -330,10 +354,11 @@ public sealed class SagaAccessEnforcementTests : IAsyncLifetime, IAsyncDisposabl
     }
 
     private static async Task<Guid> SeedAsync(
-        WebApplicationFactory<Program> host, string sagaType, SagaStatus status, Guid? correlationId = null, (string Type, Guid Id)? parent = null)
+        WebApplicationFactory<Program> host, string sagaType, SagaStatus status, Guid? correlationId = null, (string Type, Guid Id)? parent = null, TimeSpan? idle = null)
     {
         var id = correlationId ?? Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
+        var updated = now - (idle ?? TimeSpan.Zero);
         await host.Services.GetRequiredService<ISagaSnapshotStore<DashboardTestState>>().InsertAsync(new DashboardTestState
         {
             CorrelationId = id,
@@ -343,7 +368,7 @@ public sealed class SagaAccessEnforcementTests : IAsyncLifetime, IAsyncDisposabl
             ParentSagaType = parent?.Type,
             ParentCorrelationId = parent?.Id,
             CreatedAtUtc = now,
-            UpdatedAtUtc = now,
+            UpdatedAtUtc = updated,
         });
         return id;
     }

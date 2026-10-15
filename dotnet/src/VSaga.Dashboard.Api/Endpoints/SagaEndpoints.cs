@@ -24,6 +24,12 @@ public static class SagaEndpoints
     public const int MaxPageSize = 500;
 
     /// <summary>
+    /// The longest <c>idleForSeconds</c> the list endpoint accepts: ten years, the same bound the stuck-saga sweep puts on its
+    /// thresholds, so the cut-off instant it computes is always a representable date.
+    /// </summary>
+    public const int MaxIdleForSeconds = 315_360_000;
+
+    /// <summary>
     /// Maps the saga endpoints, each with the permission policy docs/design/dashboard-usability-and-access.md §8.5
     /// gives it. A per-instance route names its saga type, so <see cref="DashboardPolicies.SagasView"/> and
     /// <see cref="DashboardPolicies.SagasRetry"/> are checked for that type and answer 403 before the handler
@@ -124,11 +130,19 @@ public static class SagaEndpoints
         return Results.Ok(new SagaDetail(summary, dataJson));
     }
 
-    private static async Task<IResult> ListSagasAsync(HttpContext context, ScopedSagaLister lister, SagaStatus? status, string? sagaType, SagaKind? kind, string? search, int page = 1, int pageSize = 25, SagaSortColumn? sortBy = null, bool sortDescending = false, CancellationToken ct = default)
+    /// <summary>The statuses a saga is still alive in: the only ones the <c>idleForSeconds</c> filter can mean, since a finished saga is not idle, it is done.</summary>
+    private static readonly SagaStatus[] IdleStatuses = [SagaStatus.Running, SagaStatus.Compensating];
+
+    private static async Task<IResult> ListSagasAsync(HttpContext context, ScopedSagaLister lister, TimeProvider timeProvider, SagaStatus? status, string? sagaType, SagaKind? kind, string? search, int? idleForSeconds = null, int page = 1, int pageSize = 25, SagaSortColumn? sortBy = null, bool sortDescending = false, CancellationToken ct = default)
     {
+        if (idleForSeconds is { } idle && (idle <= 0 || idle > MaxIdleForSeconds))
+            return Results.BadRequest(new { error = $"idleForSeconds must be between 1 and {MaxIdleForSeconds}." });
+
         var filter = new SagaListFilter
         {
             Status = status,
+            Statuses = idleForSeconds is null ? null : IdleStatuses,
+            UpdatedBefore = idleForSeconds is { } seconds ? timeProvider.GetUtcNow() - TimeSpan.FromSeconds(seconds) : null,
             SagaType = sagaType,
             Kind = kind,
             Search = search,

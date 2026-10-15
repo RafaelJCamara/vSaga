@@ -80,6 +80,56 @@ public sealed class SagaEndpointsTests : IAsyncLifetime, IAsyncDisposable
         _factory.Services.GetRequiredService<IServiceTopologyStore>().RecordAsync(serviceName, messageType, queueName, DateTimeOffset.UtcNow);
 
     [Fact]
+    public async Task ListSagas_IdleFor_KeepsOnlyTheLiveSagasNotUpdatedForThatLong_OldestFirstWhenAsked()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var idleRunning = await SeedSagaAsync("OrderSaga", "AwaitingPayment", SagaStatus.Running, updatedAtUtc: now - TimeSpan.FromHours(3));
+        var idleCompensating = await SeedSagaAsync("OrderSaga", "AwaitingPayment", SagaStatus.Compensating, updatedAtUtc: now - TimeSpan.FromHours(2));
+        await SeedSagaAsync("OrderSaga", "AwaitingPayment", SagaStatus.Running, updatedAtUtc: now - TimeSpan.FromMinutes(5));
+        await SeedSagaAsync("OrderSaga", "Failed", SagaStatus.Failed, updatedAtUtc: now - TimeSpan.FromDays(2));
+        await SeedSagaAsync("OrderSaga", "Completed", SagaStatus.Completed, updatedAtUtc: now - TimeSpan.FromDays(2));
+
+        var oldestFirst = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>("/api/sagas?idleForSeconds=3600&sortBy=UpdatedAt", JsonOptions);
+        var newestFirst = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>("/api/sagas?idleForSeconds=3600", JsonOptions);
+        var compensatingOnly = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>("/api/sagas?idleForSeconds=3600&status=Compensating", JsonOptions);
+        var failedAndIdle = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>("/api/sagas?idleForSeconds=3600&status=Failed", JsonOptions);
+        var everythingRecent = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>("/api/sagas?idleForSeconds=60", JsonOptions);
+
+        Assert.NotNull(oldestFirst);
+        Assert.Equal([idleRunning.CorrelationId, idleCompensating.CorrelationId], oldestFirst.Items.Select(s => s.CorrelationId));
+        Assert.Equal(2, oldestFirst.TotalCount);
+        Assert.Equal([idleCompensating.CorrelationId, idleRunning.CorrelationId], newestFirst!.Items.Select(s => s.CorrelationId));
+        Assert.Equal([idleCompensating.CorrelationId], compensatingOnly!.Items.Select(s => s.CorrelationId));
+        Assert.Empty(failedAndIdle!.Items);
+        Assert.Equal(0, failedAndIdle.TotalCount);
+        Assert.Equal(3, everythingRecent!.TotalCount);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("315360001")]
+    public async Task ListSagas_IdleFor_OutOfRange_Is400(string seconds)
+    {
+        using var response = await _client.GetAsync($"/api/sagas?idleForSeconds={seconds}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("idleForSeconds", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListSagas_WithoutIdleFor_IsUnchanged()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await SeedSagaAsync("OrderSaga", "Completed", SagaStatus.Completed, updatedAtUtc: now - TimeSpan.FromDays(2));
+        await SeedSagaAsync("OrderSaga", "AwaitingPayment", SagaStatus.Running);
+
+        var result = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>("/api/sagas", JsonOptions);
+
+        Assert.Equal(2, result!.TotalCount);
+    }
+
+    [Fact]
     public async Task ListSagas_WithNoData_ReturnsEmptyPage()
     {
         var result = await _client.GetFromJsonAsync<PagedResult<SagaSummary>>("/api/sagas", JsonOptions);
