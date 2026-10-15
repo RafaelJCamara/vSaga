@@ -24,8 +24,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
   [`dotnet/samples/Persistence/`](../dotnet/samples/Persistence/). The dashboard's users are not in any of
   them: they live in their own SQLite file (see [the identity store](dashboard.md#the-identity-store)).
 - [`observability.md`](observability.md) — the persisted event log and its state snapshots,
-  OpenTelemetry traces/metrics, the one-line OTLP exporter wiring, and the dashboard's own log events
-  (the audit log category and its event ids).
+  OpenTelemetry traces/metrics, the opt-in stuck-saga sweep (gauge, log, notifier), the one-line OTLP exporter wiring,
+  and the dashboard's own log events (the audit log category and its event ids).
 - [`dashboard-guide.md`](dashboard-guide.md) — the user guide to the dashboard's web interface: opening it,
   signing in (the seeded administrator, the setup code, lockout, forced password change, session timeouts), guide
   mode, the saga list and the detail page (map, timeline, saga data, retrying a saga and what each outcome means),

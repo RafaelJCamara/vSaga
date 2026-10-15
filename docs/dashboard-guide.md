@@ -324,22 +324,29 @@ are listed in the order **Status** sorts by, which is the lifecycle order from *
 
 ### Filtering, searching, sorting and paging
 
-- **Filters.** Three drop-downs (**All statuses**, **All kinds**, **All saga types**) and a search box ("Search
+- **Filters.** Four drop-downs (**All statuses**, **All kinds**, **All saga types**, **Any activity**) and a search box ("Search
   by type or correlation id…"). The search is a case-insensitive substring match on the saga type and on the
   correlation id, so a part of an id works, and it runs as you type. **Refresh** reads the list again.
+- **Idle for.** **Any activity** becomes **Idle for over 15 minutes**, **1 hour**, **6 hours** or **24 hours**: only the
+  `Running` and `Compensating` sagas not updated for that long, the ones that may be stuck (the engine can [flag them
+  itself](observability.md#stuck-sagas)). It combines with the other filters (a status filter on top keeps at most that
+  one status), and the count in the page header then says "N idle" instead of "N total". It does not say why a saga
+  is idle: a saga waiting for a human approval and one whose timeout was lost look the same here. Sort by **Updated** to put the
+  oldest first.
 - **Sorting.** Select the **Status** or **Updated** heading to sort by it (an arrow shows the direction) and
   select it again to reverse. The first selection sorts ascending: **Status** starts with **Running**, and
   **Updated** starts with the oldest, the opposite of the default. The server sorts the whole result, not just
   this page. Without a choice the list is newest update first.
 - **Paging.** **Rows per page** (25, 50, 75 or 100), **Previous**, **Next**, "Page X of Y" and **Go to page**
   (type a number and press Enter).
-- **The address holds the view.** Status, kind, saga type, search, sort, page and rows per page are in the page's
+- **The address holds the view.** Status, kind, saga type, idle for, search, sort, page and rows per page are in the page's
   address, so a bookmarked or shared link opens the same view. A value the page does not know is ignored.
 
 ### Live updates and banners
 
 New and changed sagas arrive without a refresh. A row that changes updates in place; a new saga that matches
-your filters is added to page 1 where the sort puts it.
+your filters is added to page 1 where the sort puts it. Under **Idle for**, a row that changes has moved on, so it
+ leaves the list and the count, and a saga that has just been updated is never added.
 
 | Banner | What it means |
 | --- | --- |

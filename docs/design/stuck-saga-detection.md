@@ -1,9 +1,6 @@
 # Design: stuck-saga detection
 
-**Status: slices 1 to 3 of §8 are built** (slice 3: `ISagaStuckNotifier` and its no-op default, called from the sweep; slice 1: the `Statuses` and `UpdatedBefore` filter members, in all five
-readers, with three conformance cases; slice 2: the options, the classifier, and the sweep with its gauge and log, off
-by default); slices 4 to 6 are not. Where the build differs from the text below, §11 says so. Scope, definition and delivery were decided with the
-maintainer on 2026-10-15 (§1); the rest is a proposal for review. This closes the "stuck-saga alerting" item that
+**Status: built, slices 1 to 6 of §8** (2026-10-15): the filter members and their conformance cases, the options, classifier and sweep (off by default), the notifier, the dashboard API and SPA idle filter, and the docs. **One thing of §10 is not done: the live run on a real stack** (a timeout step that throws, then the log line, gauge and notifier after the threshold, and the retry clearing it). Where the build differs from the text below, §11 says so. Scope, definition and delivery were decided with the maintainer on 2026-10-15 (§1). This closes the "stuck-saga alerting" item that
 [`production-readiness.md`](production-readiness.md) §1 named as a real gap and kept out of scope.
 
 ---
@@ -133,7 +130,7 @@ replica is a distributed-lock problem this design does not take on.
 The dashboard API does not host saga definitions and so cannot classify. It gets the cause-free half:
 
 - the saga list gains an **idle for** filter (`Running` or `Compensating`, not updated for N), served by the
-  same two new filter members the sweep uses (§6), and a count beside the list's status tabs;
+  same two new filter members the sweep uses (§6), and a count: the page header says "N idle" under the filter, where it says "N total" without it (the list has no status tabs, and one more request for a count that ignores the filters would need a threshold of its own);
 - scoped callers see only the saga types their access names, through `ScopedSagaLister` as every list does.
 
 The cause stays in the log, the gauge and the notifier. Writing a `SagaStuck` entry to the event log would
@@ -248,3 +245,14 @@ Recorded in the commit that built slice 2, so the text above is not silently wro
   (§7 said "marked stale after three"), logging an error each time. A sweep that then succeeds restores it.
 - **`SagaStuckMetrics.Publish` takes a reading per saga type and cause, zeros included**, so an alert rule sees a
   recovery as a value and not as a series that stopped.
+- **The dashboard's filter is `idleForSeconds`** on `GET /api/sagas` (1 to 315,360,000, else `400`; combined with
+  `status` it keeps at most that status), and the toolbar offers 15 minutes, 1, 6 and 24 hours. The count is the
+  list's own total under the filter, not a separate request. A live update under the filter removes the row it
+  shows has moved and its share of the total, and never adds a freshly updated saga. Choosing the filter does
+  not change the sort; **Updated** sorted ascending puts the oldest first.
+- **Documentation** is in `observability.md` ("Stuck sagas", and the metrics table), `configuration.md`
+  (`SagaStuckOptions`), `dashboard-guide.md`, `dashboard.md`, `saga-dsl.md` (`ShortestTimeout`), `concepts.md`
+  (a lost timeout) and `persistence.md` (the filter members).
+- **Redis cost**: with a saga type in the filter the sweep's query is an intersection per status bucket (§6). It
+  has not been measured; the cheaper shape (a bounded range of the type's index, then a status check of those rows
+  only) is the first thing to build if a large `Running` bucket makes the sweep slow.

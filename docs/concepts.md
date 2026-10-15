@@ -182,6 +182,8 @@ claims due timeout rows every 5 seconds, at most 50 per poll per process, and ne
 configurable (unlike the outbox poller's, in [`SagaOutboxOptions`](configuration.md#sagaoutboxoptions)).
 A timeout therefore fires up to about 5 seconds after it falls due, and later under a backlog, so a
 `WithTimeout` delay is a lower bound, not a precise deadline. Each process claims only rows for the saga
+
+**A timeout that is lost leaves the saga `Running`.** The claim above marks the row fired before the timeout step runs, so a step that throws, or a process that dies mid-step, leaves the saga in the same state with no timeout left, and nothing else moves it. The opt-in [stuck-saga sweep](observability.md#stuck-sagas) finds such sagas (and those idle in a state with no timeout at all) and reports them; it does not re-arm anything.
 types it has registered (see [`persistence.md`](persistence.md#ef-core--postgres)). Under
 `SagaTestHarness`, `AdvanceTimeByAsync` fires due timeouts directly instead.
 

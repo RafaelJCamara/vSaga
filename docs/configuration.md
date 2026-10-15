@@ -121,6 +121,45 @@ post-commit cannot fail the step, which has already committed. It is caught, log
 poller republishes it once `DispatchGracePeriod` has passed — a single, at-most-once attempt, since the
 claim marks the row `Dispatched` before it sends.
 
+## `SagaStuckOptions`
+
+The stuck-saga sweep is **off by default**: an upgrade adds no polling query and no log line on its own.
+`ConfigureStuckDetection` turns it on, so calling it is the opt-in, and a bound configuration can still switch it
+off with `Enabled = false`:
+
+```csharp
+using VSaga.Core.Runtime; // SagaStuckOptions
+
+services.AddVSagaEngine(o => o
+    .ConfigureStuckDetection(opt =>
+    {
+        opt.IdleThreshold = TimeSpan.FromHours(2);
+        opt.IdleThresholdBySagaType["InvoiceArchivalSaga"] = TimeSpan.FromDays(7);
+        opt.ExcludedSagaTypes.Add("QuarterlyReviewSaga");
+    })
+    .AddSaga<OrderSaga, OrderSagaState>());
+```
+
+It reads, for the saga types this process hosts, the `Running` and `Compensating` instances that have not been
+updated for longer than their threshold, and reports them (see [Stuck sagas](observability.md#stuck-sagas)). A value
+the sweep cannot work with (a zero or negative interval or threshold, more than ten years, a limit under one) throws
+`ArgumentOutOfRangeException` from `ConfigureStuckDetection`.
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `Enabled` | `false` (`true` inside `ConfigureStuckDetection`) | Whether the sweep runs. |
+| `SweepInterval` | `1 minute` | Time between sweeps. The first runs when the host starts. |
+| `IdleThreshold` | `1 hour` | Idle time that counts as stuck where no timeout applies: a `Running` saga whose state declares none, and every `Compensating` saga. Deliberately long: a human approval is not stuck. |
+| `IdleThresholdBySagaType` | empty | Overrides of `IdleThreshold`, by saga type name (ordinal). |
+| `TimeoutGrace` | `2 minutes` | Added to a state's timeout before a saga idle in it counts as stuck: the timeout dispatcher's 5-second poll, the timeout step's retries and a clock difference between replicas fit inside it. |
+| `ExcludedSagaTypes` | empty | Saga types the sweep never reads, for a saga that waits for days by design (ordinal). |
+| `MaxReportedPerSweep` | `200` | The most instances of one saga type logged individually in one sweep; the rest are counted in one further line. The gauge counts every one the sweep read, and the notifier is offered every one. |
+| `MaxScannedPerType` | `10000` | The most instances of one saga type read in one sweep, oldest first. Past it the gauge is a lower bound and a warning says so. |
+
+A saga is judged by its state's own timeout when it has one, plus `TimeoutGrace`, however short or long that is:
+a 24-hour timeout is never flagged after one hour. `IdleThreshold` applies only where no timeout does. The
+notifier is not an option: register your own `ISagaStuckNotifier` (see [Stuck sagas](observability.md#stuck-sagas)).
+
 ## Transport options
 
 Every broker-backed or HTTP `IMessageTransport` adapter has its own options class, registered by its

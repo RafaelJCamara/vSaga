@@ -77,7 +77,7 @@ reason to care about.
 
 **Explicitly out of scope**, named so they are not mistaken for oversights: Kafka/Azure Service
 Bus/SQS adapters, a SQL Server provider, saga-definition versioning, event-log retention, stuck-saga
-alerting, dashboard writes beyond the existing retry, and a serializer abstraction. All real gaps;
+alerting (since built: [`stuck-saga-detection.md`](stuck-saga-detection.md)), dashboard writes beyond the existing retry, and a serializer abstraction. All real gaps;
 none of them these five.
 
 ---

@@ -157,8 +157,9 @@ Meter name `VSaga.Saga` (`VSagaDiagnostics.Meter`):
 | `vsaga.saga.step.retries` | `Counter<long>` | Incremented per step-level retry attempt. |
 | `vsaga.saga.step.duration` | `Histogram<double>` (ms) | Duration of one step's execution. |
 | `vsaga.saga.duration` | `Histogram<double>` (ms) | Total saga duration as `now - state.CreatedAtUtc`, recorded on every path that reaches a terminal status — step success, step failure, timeout outcome, and redelivery-exhausted dead-lettering alike. |
+| `vsaga.saga.stuck` | `ObservableGauge<long>` | Sagas idle past their threshold at the last [stuck-saga sweep](#stuck-sagas), by saga type and cause. Only when the sweep is enabled. |
 
-Every instrument carries exactly one tag, `saga.type`. `completed` and `failed` count only their own
+Every instrument carries the tag `saga.type`; `vsaga.saga.stuck` also carries `saga.stuck_cause`. `completed` and `failed` count only their own
 status: a saga finalized as `TimedOut`, `Compensated` or `Cancelled` increments neither, though
 `vsaga.saga.duration` still records it.
 
@@ -184,8 +185,78 @@ right now" was considered and rejected: it's process-local and non-idempotent, s
 redelivery, or a second replica desynchronizes it permanently with no way to self-correct. The correct
 instrument is an `ObservableGauge` backed by `COUNT(*) WHERE Status = Running` against the store, which
 needs scoped-store access from a meter callback that `VSaga.Observability` doesn't have yet — a named
-follow-up, not built here. Wiring the wrong instrument (and shipping a permanently-wrong dashboard
+follow-up, not built here (the [stuck-saga gauge](#stuck-sagas) is the one store-backed gauge that exists: it reads the store from a sweep and caches the reading for the callback). Wiring the wrong instrument (and shipping a permanently-wrong dashboard
 number) was judged worse than shipping none.
+
+## Stuck sagas
+
+Timeouts rescue a saga whose reply never arrives. They do not rescue one whose timeout itself was lost: a due
+timeout is claimed (marked fired, with a version-checked persist) *before* the timeout step runs, so a step that
+throws, or a process that dies mid-step, leaves the saga `Running` in the same state with no timeout left. The same
+holds for a state that declares no timeout, a deferred publish that failed after its commit, a `Compensating` saga
+whose process died, and a saga type that no running process hosts. Nothing flags any of these on its own.
+
+The stuck-saga sweep does. It is opt-in ([`SagaStuckOptions`](configuration.md#sagastuckoptions)) and detects only:
+it never changes a saga, and recovery stays with the operator, through the dashboard's retry or the saga's own
+timeout once it is back.
+
+**What counts as stuck.** A saga that is `Running` or `Compensating` and has been idle (no persist) for strictly
+longer than its threshold. Every persist moves `UpdatedAtUtc`, a firing timeout's claim included, so a `Running`
+saga idle past its state's timeout plus the grace had that timeout lost, whatever the reason.
+
+| Cause | The saga | Stuck when idle longer than |
+| --- | --- | --- |
+| `TimeoutOverdue` | `Running`, in a state that declares a timeout | that timeout plus `TimeoutGrace` |
+| `IdleWithoutTimeout` | `Running`, in a state that declares none | the idle threshold |
+| `CompensationIdle` | `Compensating` | the idle threshold |
+
+A saga in a terminal status (`Completed`, `Failed`, `Compensated`, `TimedOut`, `Cancelled`) is never stuck. Not
+covered: a saga that is busy but never finishes, and a stuck [outbox](configuration.md#sagaoutboxoptions) row, which
+is a different table with its own age.
+
+**What a process reports.** Only the saga types it hosts, as the timeout dispatcher claims only its own: it can
+classify those and no others. A process that hosts no saga types does nothing, and neither does the dashboard
+process, which does not register saga definitions (its [idle filter](dashboard-guide.md#filtering-searching-sorting-and-paging)
+shows the same sagas without the cause).
+
+- **The `vsaga.saga.stuck` gauge** (`ObservableGauge<long>`, unit `{saga}`), tagged `saga.type` and `saga.stuck_cause`
+  (`TimeoutOverdue`, `IdleWithoutTimeout`, `CompensationIdle`): how many sagas were stuck at the last sweep. Every
+  saga type and cause is reported, zeros included, so an alert rule sees a recovery as a value. A reading of the store
+  the sweep took, cached for the meter callback (which cannot await a scoped store), so a restart loses only the
+  previous reading, unlike an `UpDownCounter`, which a restart or a second replica would desynchronise for good.
+  **Aggregate across replicas with `max`, not `sum`:** each replica of a service reports the same population.
+  After three failed sweeps in a row the reading is withdrawn, so a dead sweep does not look like a quiet store.
+- **A log line.** A `Warning` the first time a saga is seen stuck (type, correlation id, status, state, idle time,
+  threshold, cause, last update), and an `Information` when it leaves the set. At most `MaxReportedPerSweep` per saga
+  type are listed in one sweep, with the rest counted in one further line. A restart forgets what was reported, so a
+  saga still stuck is reported again.
+- **`ISagaStuckNotifier`** (`VSaga.Abstractions.Notifications`), for a webhook, a page or a chat message. vSaga
+  ships a no-op; register your own to replace it:
+
+  ```csharp
+  public sealed class PagerNotifier : ISagaStuckNotifier
+  {
+      public Task SagaStuckAsync(StuckSaga saga, CancellationToken cancellationToken = default) { /* page someone */ }
+      public Task SagaRecoveredAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default) { /* resolve it */ }
+  }
+
+  services.AddSingleton<ISagaStuckNotifier, PagerNotifier>(); // after AddVSagaEngine
+  ```
+
+  `StuckSaga` carries the type, correlation id, state, status, cause, how long it has been idle, the threshold it
+  crossed, its last update and its `Version`. **Delivery is at-least-once:** a saga counts as announced only after the
+  call returns, so a call that threw is offered again at the next sweep (the first throw is logged and ends that
+  sweep's notifying), and `SagaRecoveredAsync` is only called for a saga whose announcement got through. Every newly
+  stuck saga is offered, not only the ones the log lists, so a notifier should batch. Each replica notifies for the
+  same saga, so a receiver de-duplicates on `(SagaType, CorrelationId, Version)`.
+
+**Cost.** One paged query per hosted saga type per sweep, oldest first, over instances idle past the type's floor (the
+smaller of its idle threshold and its shortest timeout plus the grace). EF Core and MongoDB serve it from their
+existing indexes. On Redis, with a saga type in the filter, it is a server-side intersection of each status bucket
+with the type's index, which costs the smaller of the two sets and not only the idle rows; measure it on a large
+`Running` bucket before sweeping often. A definition that does not report `ShortestTimeout` gets the idle threshold as its
+floor and misses a timeout-overdue saga idle for longer than its timeout but shorter than that threshold; both DSL
+base classes report it.
 
 ## Wiring it up: `AddVSagaOpenTelemetry`
 
