@@ -28,6 +28,7 @@ public sealed class SagaStuckSweepTests : IAsyncLifetime
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
     private readonly CapturingLogger _log = new();
     private readonly ToggleableReader _reader = new();
+    private readonly RecordingNotifier _notifier = new();
     private ServiceProvider? _provider;
 
     private ServiceProvider Provider => _provider ?? throw new InvalidOperationException("Build the host first.");
@@ -48,6 +49,7 @@ public sealed class SagaStuckSweepTests : IAsyncLifetime
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<ILogger<SagaStuckSweepHostedService>>(_log);
         services.AddSingleton<TimeProvider>(_clock);
+        services.AddSingleton<ISagaStuckNotifier>(_notifier);
         services.AddVSagaInMemoryPersistence();
         services.AddVSagaInMemoryTransport();
         services.AddSingleton<ISagaSummaryReader>(sp => _reader.Wrapping(sp.GetRequiredService<InMemorySagaStore>()));
@@ -248,6 +250,118 @@ public sealed class SagaStuckSweepTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TheNotifier_IsToldOncePerStuckSaga_WithTheFullRecord_AndOnceWhenItRecovers()
+    {
+        var sweep = Build();
+        var saga = await InsertAsync(AwaitingPayment, SagaStatus.Running, TimeSpan.FromMinutes(8));
+        var type = Provider.GetRequiredService<TestOrderSaga>().SagaType;
+
+        await sweep.RunSweepAsync(CancellationToken.None);
+        await sweep.RunSweepAsync(CancellationToken.None);
+
+        var stuck = Assert.Single(_notifier.Stuck);
+        Assert.Equal(type, stuck.SagaType);
+        Assert.Equal(saga, stuck.CorrelationId);
+        Assert.Equal(AwaitingPayment, stuck.CurrentState);
+        Assert.Equal(SagaStatus.Running, stuck.Status);
+        Assert.Equal(StuckCause.TimeoutOverdue, stuck.Cause);
+        Assert.Equal(TimeSpan.FromMinutes(7), stuck.Threshold);
+        Assert.Equal(TimeSpan.FromMinutes(8), stuck.IdleFor);
+        Assert.Equal(_clock.GetUtcNow() - TimeSpan.FromMinutes(8), stuck.UpdatedAtUtc);
+        Assert.Empty(_notifier.Recovered);
+
+        await TouchAsync(saga);
+        await sweep.RunSweepAsync(CancellationToken.None);
+        await sweep.RunSweepAsync(CancellationToken.None);
+
+        Assert.Equal([(type, saga)], _notifier.Recovered);
+        Assert.Single(_notifier.Stuck);
+    }
+
+    [Fact]
+    public async Task TheNotifier_IsToldAboutEverySaga_NotOnlyTheOnesTheLogListsIndividually()
+    {
+        var sweep = Build(o => o.MaxReportedPerSweep = 2);
+        for (var i = 0; i < 5; i++)
+            await InsertAsync(AwaitingInventory, SagaStatus.Running, TimeSpan.FromHours(2));
+
+        await sweep.RunSweepAsync(CancellationToken.None);
+
+        Assert.Equal(5, _notifier.Stuck.Count);
+        Assert.Equal(5, _notifier.Stuck.Select(s => s.CorrelationId).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task ANotifierThatThrows_DoesNotStopTheSweep_AndIsOfferedTheSagaAgainUntilItGetsThrough()
+    {
+        var sweep = Build();
+        await InsertAsync(AwaitingInventory, SagaStatus.Running, TimeSpan.FromHours(2));
+        _notifier.Failing = true;
+
+        await sweep.RunSweepAsync(CancellationToken.None);
+        await sweep.RunSweepAsync(CancellationToken.None);
+
+        // The sweep itself did its work: the gauge counts the saga and the log reported it once.
+        Assert.Equal(1, ReadGauge()[(nameof(TestOrderSaga), nameof(StuckCause.IdleWithoutTimeout))]);
+        Assert.Single(_log.Messages(LogLevel.Warning));
+        Assert.Equal(2, _log.Messages(LogLevel.Error).Count(m => m.StartsWith("The stuck-saga notifier failed", StringComparison.Ordinal)));
+        Assert.Empty(_notifier.Stuck);
+        Assert.Equal(2, _notifier.Attempts);
+
+        _notifier.Failing = false;
+        await sweep.RunSweepAsync(CancellationToken.None);
+        await sweep.RunSweepAsync(CancellationToken.None);
+
+        Assert.Single(_notifier.Stuck);
+        Assert.Equal(3, _notifier.Attempts);
+    }
+
+    [Fact]
+    public async Task ASagaThatRecoversBeforeItWasAnnounced_IsNeverAnnouncedAndNeverReportedRecovered()
+    {
+        var sweep = Build();
+        var saga = await InsertAsync(AwaitingInventory, SagaStatus.Running, TimeSpan.FromHours(2));
+        _notifier.Failing = true;
+        await sweep.RunSweepAsync(CancellationToken.None);
+
+        await TouchAsync(saga);
+        _notifier.Failing = false;
+        await sweep.RunSweepAsync(CancellationToken.None);
+
+        Assert.Empty(_notifier.Stuck);
+        Assert.Empty(_notifier.Recovered);
+    }
+
+    [Fact]
+    public async Task ARecoveryTheNotifierMissed_IsOfferedAgainAtTheNextSweep()
+    {
+        var sweep = Build();
+        var saga = await InsertAsync(AwaitingInventory, SagaStatus.Running, TimeSpan.FromHours(2));
+        await sweep.RunSweepAsync(CancellationToken.None);
+        await TouchAsync(saga);
+
+        _notifier.Failing = true;
+        await sweep.RunSweepAsync(CancellationToken.None);
+        Assert.Empty(_notifier.Recovered);
+
+        _notifier.Failing = false;
+        await sweep.RunSweepAsync(CancellationToken.None);
+        await sweep.RunSweepAsync(CancellationToken.None);
+
+        Assert.Single(_notifier.Recovered);
+    }
+
+    [Fact]
+    public void WithoutAHostNotifier_TheEngineUsesTheNoOpOne()
+    {
+        var services = new ServiceCollection();
+        services.AddVSagaEngine(_ => { });
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Same(NullSagaStuckNotifier.Instance, provider.GetRequiredService<ISagaStuckNotifier>());
+    }
+
+    [Fact]
     public async Task DisposingTheHost_WithdrawsItsReading()
     {
         var sweep = Build();
@@ -365,6 +479,41 @@ public sealed class SagaStuckSweepTests : IAsyncLifetime
         { o => o.MaxReportedPerSweep = 0, nameof(SagaStuckOptions.MaxReportedPerSweep) },
         { o => o.MaxScannedPerType = 0, nameof(SagaStuckOptions.MaxScannedPerType) },
     };
+
+    private sealed class RecordingNotifier : ISagaStuckNotifier
+    {
+        private readonly List<StuckSaga> _stuck = [];
+        private readonly List<(string SagaType, Guid CorrelationId)> _recovered = [];
+        private int _attempts;
+
+        public bool Failing { get; set; }
+
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public IReadOnlyList<StuckSaga> Stuck => _stuck;
+
+        public IReadOnlyList<(string SagaType, Guid CorrelationId)> Recovered => _recovered;
+
+        public Task SagaStuckAsync(StuckSaga saga, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _attempts);
+            if (Failing)
+                throw new InvalidOperationException("The webhook is down.");
+
+            _stuck.Add(saga);
+            return Task.CompletedTask;
+        }
+
+        public Task SagaRecoveredAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _attempts);
+            if (Failing)
+                throw new InvalidOperationException("The webhook is down.");
+
+            _recovered.Add((sagaType, correlationId));
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class CapturingLogger : ILogger<SagaStuckSweepHostedService>
     {

@@ -25,19 +25,25 @@ internal sealed class SagaStuckSweepHostedService : BackgroundService
     private readonly List<ISagaRuntime> _runtimes;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SagaStuckOptions _options;
+    private readonly ISagaStuckNotifier _notifier;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SagaStuckSweepHostedService> _logger;
     private readonly HashSet<(string SagaType, Guid CorrelationId)> _reported = [];
+
+    /// <summary>The sagas the notifier has been told are stuck and not yet told have recovered: only a delivered call changes it, so a failed one is offered again.</summary>
+    private readonly HashSet<(string SagaType, Guid CorrelationId)> _announced = [];
     private int _consecutiveFailures;
 
     public SagaStuckSweepHostedService(
         IEnumerable<ISagaRuntime> runtimes,
         IServiceScopeFactory scopeFactory,
         SagaStuckOptions options,
+        ISagaStuckNotifier notifier,
         TimeProvider timeProvider,
         ILogger<SagaStuckSweepHostedService> logger)
     {
         _options = options;
+        _notifier = notifier;
         _scopeFactory = scopeFactory;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -97,7 +103,9 @@ internal sealed class SagaStuckSweepHostedService : BackgroundService
             scans.Add((runtime, await ScanAsync(reader, runtime, now, cancellationToken)));
 
         SagaStuckMetrics.Publish(this, scans.ToDictionary(s => s.Runtime.SagaType, s => Count(s.Scan.Stuck), StringComparer.Ordinal));
-        Report(scans.SelectMany(s => s.Scan.Stuck).ToList(), scans.Where(s => s.Scan.Truncated).Select(s => s.Runtime.SagaType));
+        var current = scans.SelectMany(s => s.Scan.Stuck).ToDictionary(s => (s.SagaType, s.CorrelationId));
+        Report(current, scans.Where(s => s.Scan.Truncated).Select(s => s.Runtime.SagaType));
+        await NotifyAsync(current, cancellationToken);
     }
 
     /// <summary>
@@ -146,12 +154,11 @@ internal sealed class SagaStuckSweepHostedService : BackgroundService
     /// line for each that left, each capped per saga type with the overflow counted in one further line, so a store
     /// that goes quiet all at once logs a bounded amount. A restart forgets the set and so reports what is still stuck again.
     /// </summary>
-    private void Report(List<StuckSaga> stuck, IEnumerable<string> truncatedTypes)
+    private void Report(Dictionary<(string SagaType, Guid CorrelationId), StuckSaga> current, IEnumerable<string> truncatedTypes)
     {
         foreach (var sagaType in truncatedTypes)
             _logger.LogWarning("The stuck-saga sweep read {Limit} {SagaType} instances and stopped: more are idle than it will read, so vsaga.saga.stuck is a lower bound", _options.MaxScannedPerType, sagaType);
 
-        var current = stuck.ToDictionary(s => (s.SagaType, s.CorrelationId));
         foreach (var group in current.Values.Where(s => !_reported.Contains((s.SagaType, s.CorrelationId))).GroupBy(s => s.SagaType, StringComparer.Ordinal))
             LogNewlyStuck(group.Key, [.. group]);
 
@@ -182,6 +189,34 @@ internal sealed class SagaStuckSweepHostedService : BackgroundService
 
         if (recovered.Count > _options.MaxReportedPerSweep)
             _logger.LogInformation("{Count} more {SagaType} instances are no longer stuck, not listed", recovered.Count - _options.MaxReportedPerSweep, sagaType);
+    }
+
+    /// <summary>
+    /// Tells the notifier about each saga newly stuck and each announced saga that has recovered, with every one
+    /// offered, not capped (the cap in <see cref="SagaStuckOptions.MaxReportedPerSweep"/> protects the log, and the
+    /// notifier is the host's own code). The first call to throw is logged and ends this sweep's notifying, since a
+    /// notifier that is down fails all of them; nothing it missed is marked, so the next sweep offers it again.
+    /// </summary>
+    private async Task NotifyAsync(Dictionary<(string SagaType, Guid CorrelationId), StuckSaga> current, CancellationToken cancellationToken)
+    {
+        try
+        {
+            foreach (var saga in current.Values.Where(s => !_announced.Contains((s.SagaType, s.CorrelationId))).ToList())
+            {
+                await _notifier.SagaStuckAsync(saga, cancellationToken);
+                _announced.Add((saga.SagaType, saga.CorrelationId));
+            }
+
+            foreach (var key in _announced.Where(key => !current.ContainsKey(key)).ToList())
+            {
+                await _notifier.SagaRecoveredAsync(key.SagaType, key.CorrelationId, cancellationToken);
+                _announced.Remove(key);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "The stuck-saga notifier failed; the sagas it has not been told about are offered again at the next sweep");
+        }
     }
 
     private sealed record TypeScan(IReadOnlyCollection<StuckSaga> Stuck, bool Truncated);

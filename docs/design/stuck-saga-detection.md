@@ -1,8 +1,8 @@
 # Design: stuck-saga detection
 
-**Status: slices 1 and 2 of §8 are built** (slice 1: the `Statuses` and `UpdatedBefore` filter members, in all five
+**Status: slices 1 to 3 of §8 are built** (slice 3: `ISagaStuckNotifier` and its no-op default, called from the sweep; slice 1: the `Statuses` and `UpdatedBefore` filter members, in all five
 readers, with three conformance cases; slice 2: the options, the classifier, and the sweep with its gauge and log, off
-by default); slices 3 to 6 are not. Where the build differs from the text below, §11 says so. Scope, definition and delivery were decided with the
+by default); slices 4 to 6 are not. Where the build differs from the text below, §11 says so. Scope, definition and delivery were decided with the
 maintainer on 2026-10-15 (§1); the rest is a proposal for review. This closes the "stuck-saga alerting" item that
 [`production-readiness.md`](production-readiness.md) §1 named as a real gap and kept out of scope.
 
@@ -124,7 +124,7 @@ public sealed record StuckSaga(string SagaType, Guid CorrelationId, string Curre
 
 The default is a no-op, as `ISagaChangeNotifier`'s is (`NullSagaChangeNotifier`). A webhook, a pager or a
 chat message is the host's implementation; vSaga ships none. A notifier that throws is caught and logged, and
-never fails the sweep. With several replicas, each notifies for the same saga, so a receiver de-duplicates on
+never fails the sweep. **Delivery is at-least-once**: the sweep marks a saga announced only after the call returns, so a call that threw is offered again at the next sweep, and the first throw ends that sweep's notifying (a notifier that is down fails every call). Every newly stuck saga is offered, not only the `MaxReportedPerSweep` the log lists individually, since the notifier is the host's code and a cap there would lose sagas for good. `SagaRecoveredAsync` is only for a saga whose announcement got through. With several replicas, each notifies for the same saga, so a receiver de-duplicates on
 `(SagaType, CorrelationId, Version)`, which is why `Version` is on the record. Electing a single reporting
 replica is a distributed-lock problem this design does not take on.
 

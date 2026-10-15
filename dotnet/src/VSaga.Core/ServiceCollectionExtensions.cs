@@ -22,6 +22,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<SagaOutboxOptions>();
         services.TryAddSingleton<SagaStuckOptions>();
         services.TryAddSingleton<ISagaChangeNotifier>(NullSagaChangeNotifier.Instance);
+        services.TryAddSingleton<ISagaStuckNotifier>(NullSagaStuckNotifier.Instance);
         services.AddSingleton<ISagaRetryDispatcher, SagaRetryDispatcher>();
         services.AddHostedService<SagaEngineHostedService>();
         services.AddHostedService<SagaTimeoutDispatcherHostedService>();
