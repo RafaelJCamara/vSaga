@@ -441,7 +441,7 @@ describe('the guide tours', () => {
     const copy = (id: string) => GUIDE_TOURS.list.find((s) => s.id === id)?.body ?? '';
 
     it('names the controls and the columns the list page has', () => {
-      expect(copy('list-filters')).toContain('status, kind or saga type');
+      expect(copy('list-filters')).toContain('status, kind, saga type or how long a saga has been idle');
       expect(copy('list-filters')).toContain('correlation id');
       expect(copy('list-table')).toMatch(
         /correlation id.*type.*kind.*current state.*status.*last update/,
