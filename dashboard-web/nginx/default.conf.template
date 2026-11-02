@@ -85,6 +85,8 @@ server {
     # index.html revalidates; content-hashed bundles cache for a year, and a missing one is a 404
     # rather than index.html, so a stale tab's chunk request fails as a script, not as HTML.
     location = /index.html { expires -1; }
+    # Unhashed, like index.html, so it revalidates: it holds the key the theme choice is stored under.
+    location = /theme-init.js { expires -1; }
     location ~ "^/[^/]+-[A-Z0-9]{8}\.(?:js|css)$" { expires 1y; try_files $uri =404; }
     location ^~ /media/ { expires 1y; try_files $uri =404; }
     location / { try_files $uri /index.html; }

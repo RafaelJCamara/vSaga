@@ -25,9 +25,9 @@ export const THEME_STORAGE = new InjectionToken<Storage | null>('THEME_STORAGE',
 /**
  * The user's theme: System (follow the OS, `prefers-color-scheme`), Light or Dark. The stylesheet does the
  * rest: a light or dark choice is `data-theme` on `<html>`, System is no attribute (see `src/styles.scss`).
- * The choice is applied when the shell is created, which is after the first paint (the Content Security Policy
- * forbids the inline script that could do it sooner), so a stored choice that differs from the OS may show the
- * OS theme for a moment on a cold load.
+ * `public/theme-init.js` applies a stored choice before the first paint (a file, because the Content Security
+ * Policy forbids an inline script), so a choice that differs from the OS does not flash; this service applies it
+ * again when the shell is created and on every change. That script repeats `THEME_STORAGE_KEY`; a spec pins the two.
  */
 @Injectable({ providedIn: 'root' })
 export class ThemeService {

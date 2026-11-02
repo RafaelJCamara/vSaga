@@ -77,8 +77,7 @@ Times are shown in your browser's local time, and the page is in English.
 **Light and dark.** The dashboard follows your operating system's light or dark setting. To choose for this browser
 instead, open the menu with your name and pick a **Theme**: **Light** or **Dark** applies at once, and **System** goes
 back to following the operating system. The choice is kept in this browser only (it does not follow your account to
-another one), and on a cold load the page may show the operating system's theme for a moment before your choice is
-applied. Where the browser blocks site storage, the choice lasts until you reload.
+another one). Where the browser blocks site storage, the choice lasts until you reload.
 
 ## Signing in
 

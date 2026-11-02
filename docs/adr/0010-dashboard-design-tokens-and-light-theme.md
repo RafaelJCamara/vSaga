@@ -49,7 +49,8 @@ All of it is CSS, templates and one small service in `dashboard-web/`. No API, r
    whether the scale is wrong.
 2. **Light theme with a choice.** The palette is a set of custom properties. The default follows
    `prefers-color-scheme`; the user menu offers **System / Light / Dark**, stored in `localStorage` under one key and
-   applied as `data-theme="light|dark"` on `<html>` (absent means System). The overriding rules are
+   applied as `data-theme="light|dark"` on `<html>` (absent means System), by a small script file in `<head>` before
+   first paint and again by the service when the app starts. The overriding rules are
    `:root[data-theme='light']` and `:root[data-theme='dark']`, and `color-scheme` follows the theme so native widgets
    match. Every text pair in both themes is measured at 4.5:1 or better (`DESIGN.md` lists the numbers). Tinted
    backgrounds (banners, chips) are `color-mix()` of the status colour, so they follow the theme without a second
@@ -79,7 +80,8 @@ All of it is CSS, templates and one small service in `dashboard-web/`. No API, r
 - **A toggle in the top bar.** The bar already carries Guide, Replay tour, User guide and the user menu and wraps on
   a phone. The user menu has room and is where account-level preferences live.
 - **An inline script in `index.html` to set the theme before first paint.** Avoids a flash for a user whose stored
-  choice differs from the OS. Impossible: the CSP forbids inline script. See the limitation below.
+  choice differs from the OS. Impossible: the CSP forbids inline script. A same-origin file does the same job and
+  `script-src 'self'` allows it, so that is what is used (`public/theme-init.js`, loaded from `<head>`).
 - **Server-side or per-account theme storage.** Would follow a user across browsers but needs an API and a schema
   change for a cosmetic setting. Rejected.
 - **A utility framework (Tailwind) or a component library for the tokens.** Forbidden without a concrete benefit; the
@@ -99,9 +101,10 @@ All of it is CSS, templates and one small service in `dashboard-web/`. No API, r
   and survives colour-blindness; text below 12 px is gone.
 - **Harder.** Every colour pair now exists twice and is measured twice; `DESIGN.md` and the guide have more to keep
   true. The guide mentions of colours and the user menu change (`docs/dashboard-guide.md`, the user-menu tour copy).
-- **A stated limitation: a flash on load.** Because the CSP forbids an inline script, the stored theme is applied
-  when the Angular bundle starts, not before the first paint. A user whose stored choice differs from their OS may see
-  the OS theme for a moment on a cold load. Choosing "System" has no flash.
+- **No flash on load, at the price of one render-blocking request.** `theme-init.js` is a few lines that read the
+  stored choice and set `data-theme` before the first paint. It blocks rendering for one small same-origin request
+  (served revalidating, like `index.html`), and the key it reads is duplicated from `ThemeService`, which a spec
+  pins. A browser that blocks storage gets System.
 - **A stated limitation: the choice is per browser.** It lives in `localStorage`, so it does not follow the account
   to another browser, and it is unavailable (falling back to System) in a browser that blocks storage.
 - **Not covered here.** The saga map's SVG colours that are not tokens are moved to tokens as part of the theme work
