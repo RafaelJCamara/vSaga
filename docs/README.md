@@ -122,7 +122,7 @@ new here; the rest of this index is organized by topic, roughly in the order you
     stores, with its own migrations package and an atomic `READPAST` claim, extending ADR 0004's claim to a
     second database.
   - [`adr/0010-dashboard-design-tokens-and-light-theme.md`](adr/0010-dashboard-design-tokens-and-light-theme.md)
-    — **Proposed** 2026-11-02: spacing, shape and type tokens, a light theme (OS setting plus a user-menu
+    — **Accepted** and **implemented** 2026-11-02: spacing, shape and type tokens, a light theme (OS setting plus a user-menu
     choice), status dots told apart by shape, a colour per saga kind, and real ARIA tabs on the saga page.
 
 ## History

@@ -1,11 +1,17 @@
 # ADR 0010: The dashboard gets spacing, shape and type tokens, a light theme, and tells its states apart by shape as well as colour
 
-**Status:** **Proposed**
+**Status:** **Accepted** — 2026-11-02, by the maintainer. **Implemented** — 2026-11-02.
 **Date:** 2026-11-02
 **Relates to:** [`0006-dashboard-authentication-and-identity-store.md`](0006-dashboard-authentication-and-identity-store.md)
 (the user menu that now also holds the theme choice); [`../frontend.md`](../frontend.md) (the workflow this follows);
 [`../../dashboard-web/DESIGN.md`](../../dashboard-web/DESIGN.md) (the design system this amends: its seven open
 questions are answered here).
+**Implemented by:** the ADR and `DESIGN.md`, `8e8bb79`; the tokens, the light theme and the status and kind marks,
+`117018d`; the ARIA tabs and the timeline's "handled", `624ac3a`; the guide and the list tour (version 2), `03cde19`;
+the theme applied before first paint, `3d00ae7`; the spacing and radius tokens wherever a literal equals a scale
+step, `b847dc1`; and the record of both in `DESIGN.md`, `241b0a6`. Two things the ADR names are not built, on purpose:
+a density switch (deferred) and icons (none). About fifty spacing literals between scale steps remain, a design
+decision the maintainer has not taken.
 **Design:** none beyond this record; the decided values are written into `DESIGN.md`.
 
 ---
