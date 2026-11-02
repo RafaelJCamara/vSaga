@@ -4,14 +4,14 @@
 }
 
 .sub-title {
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-2);
   font-size: var(--text-md);
 }
 
 .check {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .teams {
@@ -20,7 +20,7 @@
 }
 
 .preview {
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--space-5);
 }
 
 .wrap {
@@ -29,13 +29,13 @@
 
 .reset {
   max-width: 24rem;
-  margin-top: 1rem;
+  margin-top: var(--space-4);
 }
 
 /* The delete sits apart from the other actions, under a rule. */
 .danger {
   flex-wrap: wrap;
-  margin-top: 1.25rem;
-  padding-top: 1rem;
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }

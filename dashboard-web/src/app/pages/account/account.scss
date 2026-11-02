@@ -4,14 +4,14 @@
 }
 
 .section-title {
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--space-3);
   font-size: var(--text-lg);
 }
 
 .identity {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 0.25rem 1.5rem;
+  gap: var(--space-1) var(--space-6);
   margin: 0;
 }
 

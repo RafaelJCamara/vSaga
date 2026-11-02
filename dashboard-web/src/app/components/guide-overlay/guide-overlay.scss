@@ -21,7 +21,7 @@
   position: fixed;
   z-index: 1001;
   display: none;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   outline: 2px solid var(--accent);
   box-shadow: 0 0 0 200vmax rgba(5, 8, 14, 0.72);
   pointer-events: none;
@@ -35,7 +35,7 @@
   z-index: 1002;
   visibility: hidden;
   width: min(22rem, calc(100vw - 24px));
-  padding: 1rem;
+  padding: var(--space-4);
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-elevated);
@@ -71,12 +71,12 @@
 }
 
 .guide-body {
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--space-3);
   font-size: var(--text-md);
 }
 
 .guide-progress {
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--space-3);
   font-size: var(--text-sm);
 }
 

@@ -6,7 +6,7 @@
   z-index: 30;
   padding: 0.4rem 0.8rem;
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-elevated);
   color: var(--text);
   font-size: var(--text-md);
@@ -33,8 +33,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  row-gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
+  row-gap: var(--space-2);
+  padding: var(--space-3) var(--space-6);
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
 }
@@ -68,13 +68,13 @@
 .topnav {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  margin-left: 1.5rem;
+  gap: var(--space-1);
+  margin-left: var(--space-6);
 }
 
 .topnav a {
   padding: 0.3rem 0.7rem;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: var(--text-md);
   font-weight: 600;
@@ -98,13 +98,13 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.5rem 0.75rem;
+  gap: var(--space-2) var(--space-3);
   margin-left: auto;
 }
 
 .content {
   flex: 1;
-  padding: 1.5rem;
+  padding: var(--space-6);
   max-width: 1200px;
   width: 100%;
   margin: 0 auto;

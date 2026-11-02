@@ -1,5 +1,5 @@
 .tl-hint {
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--space-3);
   font-size: var(--text-sm);
 }
 
@@ -20,7 +20,7 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 0.6rem 0.9rem;
 }
 
@@ -55,7 +55,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: var(--space-2);
   font-size: var(--text-md);
 }
 
@@ -92,7 +92,7 @@ button.tl-title:hover {
   position: relative;
   display: grid;
   grid-template-columns: 2.5rem 1fr auto;
-  gap: 0.25rem 0.75rem;
+  gap: var(--space-1) var(--space-3);
   align-items: baseline;
   width: 100%;
   padding: 0.3rem 0.4rem;

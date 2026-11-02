@@ -1,7 +1,7 @@
 .saga-map {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 /* On a phone the map keeps a readable size and scrolls inside this box, not the page: scaled to the screen its
@@ -17,7 +17,7 @@
   height: auto;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .edge {
@@ -107,9 +107,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.3rem 0.9rem;
-  padding: 0.5rem 0.9rem;
+  padding: var(--space-2) 0.9rem;
   border: 1px solid var(--accent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--accent-soft);
   font-size: var(--text-md);
 }
@@ -127,8 +127,8 @@
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 6px;
-  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-md);
+  padding: var(--space-1) 0.6rem;
   font-size: var(--text-sm);
 }
 
@@ -169,14 +169,14 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .controls button {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 0.3rem 0.55rem;
   font-size: var(--text-sm);
   line-height: 1;
@@ -195,7 +195,7 @@
 
 .speeds {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-1);
 }
 
 .speeds button.active {
