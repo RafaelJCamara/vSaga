@@ -68,8 +68,8 @@ describe('SagaTimeline', () => {
 
     const heads = Array.from(el.querySelectorAll('.tl-head')).map(headText);
     expect(heads).toEqual([
-      'Step 1 Started by OrderSubmitted · succeeded',
-      'Step 2 PaymentCaptured · succeeded',
+      'Step 1 Started by OrderSubmitted · handled',
+      'Step 2 PaymentCaptured · handled',
     ]);
   });
 
@@ -126,7 +126,7 @@ describe('SagaTimeline', () => {
       fixture.detectChanges();
 
       const heads = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('.tl-head')).map(headText);
-      expect(heads).toEqual(['Step 1 Started by InvoiceIssued · succeeded', 'Step 2 Timeout in AwaitingArchival · succeeded Failed here']);
+      expect(heads).toEqual(['Step 1 Started by InvoiceIssued · handled', 'Step 2 Timeout in AwaitingArchival · handled Failed here']);
     });
   });
 

@@ -66,6 +66,9 @@ export const RETRY_MESSAGE_LINGER_MS = 6000;
 
 type Tab = 'map' | 'timeline';
 
+/** The tabs in the order they are shown, which is the order the arrow keys move through. */
+const TABS: readonly Tab[] = ['map', 'timeline'];
+
 /** The tabs a URL may name; the map is the default and is written as no `tab` at all. */
 const URL_TABS: readonly Tab[] = ['timeline'];
 
@@ -878,6 +881,32 @@ export class SagaDetail implements OnInit, OnDestroy {
       queryParamsHandling: 'merge',
       replaceUrl,
     });
+  }
+
+  /** Left and Right (wrapping), Home and End move to a tab and select it, with the focus: the keys of a tab list,
+   *  where only the selected tab is in the Tab order. */
+  onTabKeydown(event: KeyboardEvent): void {
+    const at = TABS.indexOf(this.tab());
+    let next: number;
+    switch (event.key) {
+      case 'ArrowRight':
+        next = (at + 1) % TABS.length;
+        break;
+      case 'ArrowLeft':
+        next = (at - 1 + TABS.length) % TABS.length;
+        break;
+      case 'Home':
+        next = 0;
+        break;
+      case 'End':
+        next = TABS.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    this.setTab(TABS[next]);
+    (event.currentTarget as HTMLElement).querySelector<HTMLElement>(`#detail-tab-${TABS[next]}`)?.focus();
   }
 
   setTab(tab: Tab): void {

@@ -36,7 +36,7 @@ const FAILURE_ENTRY_TYPES: ReadonlySet<SagaEntryType> = new Set<SagaEntryType>([
 ]);
 
 const OUTCOME_LABELS: Record<Exclude<SagaTransition['outcome'], 'in-flight' | 'requested'>, string> = {
-  succeeded: 'succeeded',
+  succeeded: 'handled',
   failed: 'failed',
   unhandled: 'not handled',
   exhausted: 'dead-lettered',

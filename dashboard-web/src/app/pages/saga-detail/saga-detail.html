@@ -192,69 +192,90 @@
     (viewChange)="setDataView($event)"
   />
 
-  <div class="subtabs">
-    <button type="button" data-tour="detail-tab-map" [class.active]="tab() === 'map'" [attr.aria-pressed]="tab() === 'map'" (click)="setTab('map')">Map</button>
-    <button type="button" data-tour="detail-tab-timeline" [class.active]="tab() === 'timeline'" [attr.aria-pressed]="tab() === 'timeline'" (click)="setTab('timeline')">Timeline</button>
+  <div class="subtabs" role="tablist" aria-label="Saga view" (keydown)="onTabKeydown($event)">
+    <button
+      type="button"
+      role="tab"
+      id="detail-tab-map"
+      aria-controls="detail-panel"
+      data-tour="detail-tab-map"
+      [attr.aria-selected]="tab() === 'map'"
+      [attr.tabindex]="tab() === 'map' ? 0 : -1"
+      (click)="setTab('map')"
+    >Map</button>
+    <button
+      type="button"
+      role="tab"
+      id="detail-tab-timeline"
+      aria-controls="detail-panel"
+      data-tour="detail-tab-timeline"
+      [attr.aria-selected]="tab() === 'timeline'"
+      [attr.tabindex]="tab() === 'timeline' ? 0 : -1"
+      (click)="setTab('timeline')"
+    >Timeline</button>
   </div>
 
-  <!-- A failed fetch with nothing to show is an error in place of the tab; over content loaded
-       earlier it is a warning, and the stale content stays readable below it. -->
-  @if (tab() === 'map') {
-    @if (mapError()) {
-      @if (map()) {
-        <div class="banner banner--warning load-error" role="status">
-          Could not refresh the map; it shows the saga as last loaded.
-          <button type="button" class="btn" (click)="loadMap()">Try again</button>
-        </div>
-      } @else {
-        <div class="banner banner--error load-error" role="alert">
-          Could not load the map.
-          <button type="button" class="btn" (click)="loadMap()">Try again</button>
-        </div>
+  <div role="tabpanel" id="detail-panel" [attr.aria-labelledby]="'detail-tab-' + tab()">
+
+    <!-- A failed fetch with nothing to show is an error in place of the tab; over content loaded
+         earlier it is a warning, and the stale content stays readable below it. -->
+    @if (tab() === 'map') {
+      @if (mapError()) {
+        @if (map()) {
+          <div class="banner banner--warning load-error" role="status">
+            Could not refresh the map; it shows the saga as last loaded.
+            <button type="button" class="btn" (click)="loadMap()">Try again</button>
+          </div>
+        } @else {
+          <div class="banner banner--error load-error" role="alert">
+            Could not load the map.
+            <button type="button" class="btn" (click)="loadMap()">Try again</button>
+          </div>
+        }
       }
-    }
-    @if (map(); as m) {
-      <app-saga-map
-        [map]="m"
-        [canViewData]="canViewData()"
-        [focusSequence]="mapFocus()"
-        (focusCleared)="clearFocus()"
-        (timelineRequested)="showInTimeline($event)"
-      />
-    } @else if (!mapError()) {
-      <div class="empty">Loading map…</div>
-    }
-  } @else {
-    @if (timelineError()) {
-      @if (timelineLoaded()) {
-        <div class="banner banner--warning load-error" role="status">
-          Could not refresh the timeline; it shows the entries as last loaded.
-          <button type="button" class="btn" (click)="retryTimeline()">Try again</button>
-        </div>
-      } @else {
-        <div class="banner banner--error load-error" role="alert">
-          Could not load the timeline.
-          <button type="button" class="btn" (click)="retryTimeline()">Try again</button>
-        </div>
+      @if (map(); as m) {
+        <app-saga-map
+          [map]="m"
+          [canViewData]="canViewData()"
+          [focusSequence]="mapFocus()"
+          (focusCleared)="clearFocus()"
+          (timelineRequested)="showInTimeline($event)"
+        />
+      } @else if (!mapError()) {
+        <div class="empty">Loading map…</div>
       }
-    }
-    @if (!timelineLoaded()) {
-      @if (!timelineError()) {
-        <div class="empty">Loading timeline…</div>
-      }
-    } @else if (history().rowCount === 0) {
-      <div class="empty">No events recorded yet.</div>
     } @else {
-      <app-saga-timeline
-        [history]="history()"
-        [live]="live()"
-        [focusedSequence]="focusedSequence()"
-        [failureSequence]="failureSequence()"
-        [replaySequence]="replaySequence()"
-        [canViewData]="canViewData()"
-        [(openKeys)]="openKeys"
-        (entrySelected)="showOnMap($event)"
-      />
+      @if (timelineError()) {
+        @if (timelineLoaded()) {
+          <div class="banner banner--warning load-error" role="status">
+            Could not refresh the timeline; it shows the entries as last loaded.
+            <button type="button" class="btn" (click)="retryTimeline()">Try again</button>
+          </div>
+        } @else {
+          <div class="banner banner--error load-error" role="alert">
+            Could not load the timeline.
+            <button type="button" class="btn" (click)="retryTimeline()">Try again</button>
+          </div>
+        }
+      }
+      @if (!timelineLoaded()) {
+        @if (!timelineError()) {
+          <div class="empty">Loading timeline…</div>
+        }
+      } @else if (history().rowCount === 0) {
+        <div class="empty">No events recorded yet.</div>
+      } @else {
+        <app-saga-timeline
+          [history]="history()"
+          [live]="live()"
+          [focusedSequence]="focusedSequence()"
+          [failureSequence]="failureSequence()"
+          [replaySequence]="replaySequence()"
+          [canViewData]="canViewData()"
+          [(openKeys)]="openKeys"
+          (entrySelected)="showOnMap($event)"
+        />
+      }
     }
-  }
+  </div>
 }

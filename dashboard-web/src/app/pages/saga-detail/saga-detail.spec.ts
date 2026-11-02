@@ -348,19 +348,55 @@ describe('SagaDetail', () => {
     expect(fixture.componentInstance.loading()).toBe(false);
   });
 
-  // The two views are plain buttons, so the highlighted one is a CSS class a screen reader never sees: each
-  // says whether it is the one showing, the way the data overview's At start / At end / Compare buttons do.
-  it('tells assistive technology which of Map and Timeline is showing', () => {
+  // The two views are a tab list: the selected one is `aria-selected` (a CSS class is invisible to a screen
+  // reader) and the only one in the Tab order, and the panel is named by it.
+  it('exposes Map and Timeline as tabs, the showing one selected, with a panel named by it', () => {
     const fixture = setup(makeDetail({ status: 'Completed' }));
     const el: HTMLElement = fixture.nativeElement;
-    const pressed = () => Array.from(el.querySelectorAll('.subtabs button'), (b) => b.getAttribute('aria-pressed'));
+    const tabs = () => Array.from(el.querySelectorAll<HTMLButtonElement>('[role="tablist"] [role="tab"]'));
+    const selected = () => tabs().map((b) => b.getAttribute('aria-selected'));
 
-    expect(pressed()).toEqual(['true', 'false']);
+    expect(el.querySelector('[role="tablist"]')?.getAttribute('aria-label')).toBe('Saga view');
+    expect(selected()).toEqual(['true', 'false']);
+    expect(tabs().map((b) => b.tabIndex)).toEqual([0, -1]);
+    expect(el.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby')).toBe('detail-tab-map');
 
-    el.querySelectorAll<HTMLButtonElement>('.subtabs button')[1].click();
+    tabs()[1].click();
     fixture.detectChanges();
 
-    expect(pressed()).toEqual(['false', 'true']);
+    expect(selected()).toEqual(['false', 'true']);
+    expect(tabs().map((b) => b.tabIndex)).toEqual([-1, 0]);
+    expect(el.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby')).toBe('detail-tab-timeline');
+  });
+
+  it('moves between the tabs with the arrow keys, Home and End, selecting and focusing the one it lands on', () => {
+    const fixture = setup(makeDetail({ status: 'Completed' }));
+    const el: HTMLElement = fixture.nativeElement;
+    document.body.appendChild(el);
+    const tabs = () => Array.from(el.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    const press = (key: string): KeyboardEvent => {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      tabs()[0].dispatchEvent(event);
+      fixture.detectChanges();
+      return event;
+    };
+
+    expect(press('ArrowRight').defaultPrevented).toBe(true);
+    expect(fixture.componentInstance.tab()).toBe('timeline');
+    expect(document.activeElement).toBe(tabs()[1]);
+
+    press('ArrowRight'); // wraps to the first
+    expect(fixture.componentInstance.tab()).toBe('map');
+    press('ArrowLeft'); // and back round to the last
+    expect(fixture.componentInstance.tab()).toBe('timeline');
+    press('Home');
+    expect(fixture.componentInstance.tab()).toBe('map');
+    press('End');
+    expect(fixture.componentInstance.tab()).toBe('timeline');
+
+    expect(press('a').defaultPrevented).toBe(false);
+    expect(fixture.componentInstance.tab()).toBe('timeline');
+    el.remove();
   });
 
   // The page's panel, tabs, empty state and banners are the shared classes of src/styles.scss, which
