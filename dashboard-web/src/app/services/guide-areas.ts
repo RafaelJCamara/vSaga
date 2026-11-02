@@ -25,7 +25,7 @@ export const USER_GUIDE_URL =
 export const GUIDE_AREAS: readonly GuideArea<GuideAnchor>[] = [
   {
     id: 'list',
-    version: 1,
+    version: 2,
     trigger: { on: 'route', match: /^\/sagas\/?$/ },
     readyAnchor: 'list-table',
     requires: 'sagas.view',

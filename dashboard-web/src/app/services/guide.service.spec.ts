@@ -188,7 +188,7 @@ describe('GuideService', () => {
 
     it('restores what was stored', async () => {
       storage = createGuideStorage(
-        stored({ enabled: true, seen: { list: 1 }, hintDismissed: true }),
+        stored({ enabled: true, seen: { list: 2 }, hintDismissed: true }),
       );
       const { guide } = await create('/sagas');
 
@@ -200,7 +200,7 @@ describe('GuideService', () => {
 
     it('does not start an area that was seen, on a reload with Guide on', async () => {
       storage = createGuideStorage(
-        stored({ enabled: true, seen: { list: 1 }, hintDismissed: true }),
+        stored({ enabled: true, seen: { list: 2 }, hintDismissed: true }),
       );
       const { guide } = await create('/sagas');
 
@@ -220,9 +220,9 @@ describe('GuideService', () => {
       ['not JSON at all', 'enabled'],
       [
         'an unknown version',
-        JSON.stringify({ v: 2, enabled: true, seen: { list: 1 }, hintDismissed: true }),
+        JSON.stringify({ v: 2, enabled: true, seen: { list: 2 }, hintDismissed: true }),
       ],
-      ['no version', JSON.stringify({ enabled: true, seen: { list: 1 }, hintDismissed: true })],
+      ['no version', JSON.stringify({ enabled: true, seen: { list: 2 }, hintDismissed: true })],
       ['a version that is a string', JSON.stringify({ v: '1', enabled: true })],
       ['null', 'null'],
       ['a number', '7'],
@@ -241,7 +241,7 @@ describe('GuideService', () => {
         v: 1,
         enabled: 'yes',
         hintDismissed: 'yes',
-        seen: { list: 1, nowhere: 1, admin: 0, map: -2, timeline: 1.5, data: '1', retry: null },
+        seen: { list: 2, nowhere: 1, admin: 0, map: -2, timeline: 1.5, data: '1', retry: null },
       });
       const { guide } = await create('/account');
 
@@ -255,7 +255,7 @@ describe('GuideService', () => {
       expect(storedGuide(storage as Storage)).toEqual({
         v: 1,
         enabled: false,
-        seen: { list: 1 },
+        seen: { list: 2 },
         hintDismissed: true,
       });
     });
@@ -315,7 +315,7 @@ describe('GuideService', () => {
       expect(storedGuide(storage as Storage)).toEqual({
         v: 1,
         enabled: true,
-        seen: { list: 1 },
+        seen: { list: 2 },
         hintDismissed: true,
       });
       expect(GUIDE_STORAGE_KEY).toBe('vsaga.guide');
@@ -378,7 +378,7 @@ describe('GuideService', () => {
     });
 
     it('counts everything as unseen again, and answers the hint', async () => {
-      storage = createGuideStorage(stored({ seen: { list: 1, admin: 1 } }));
+      storage = createGuideStorage(stored({ seen: { list: 2, admin: 1 } }));
       const { guide } = await create('/sagas');
       expect(guide.showHint()).toBe(true);
 
@@ -511,7 +511,7 @@ describe('GuideService', () => {
     });
 
     it('does not ask for an area that was seen', async () => {
-      const { guide, router } = await createOn('/account', { seen: { list: 1 } });
+      const { guide, router } = await createOn('/account', { seen: { list: 2 } });
 
       await router.navigateByUrl('/sagas');
 
@@ -521,8 +521,8 @@ describe('GuideService', () => {
     it('asks again when the area version was bumped, once', async () => {
       const list = GUIDE_AREAS.find((a) => a.id === 'list') as { version: number };
       try {
-        const { guide, router } = await createOn('/account', { seen: { list: 1 } });
-        list.version = 2;
+        const { guide, router } = await createOn('/account', { seen: { list: 2 } });
+        list.version = 3;
 
         await router.navigateByUrl('/sagas');
         expect(guide.request()?.area.id).toBe('list');
@@ -530,13 +530,13 @@ describe('GuideService', () => {
 
         guide.started('list');
         guide.ended('list', true);
-        expect(storedGuide(storage as Storage)).toMatchObject({ seen: { list: 2 } });
+        expect(storedGuide(storage as Storage)).toMatchObject({ seen: { list: 3 } });
 
         await router.navigateByUrl('/account');
         await router.navigateByUrl('/sagas');
         expect(guide.request()).toBeNull();
       } finally {
-        list.version = 1;
+        list.version = 2;
       }
     });
 
@@ -554,7 +554,7 @@ describe('GuideService', () => {
     });
 
     it('does not restart a running tour on a query-only change, and keeps a queued area', async () => {
-      const { guide, router } = await createOn('/sagas', { seen: { list: 1 } });
+      const { guide, router } = await createOn('/sagas', { seen: { list: 2 } });
       guide.replay();
       guide.started('list');
       guide.areaShown('timeline');
@@ -652,7 +652,7 @@ describe('GuideService', () => {
       guide.started('list');
       guide.ended('list', true);
       expect(guide.isSeen('list')).toBe(true);
-      expect(storedGuide(storage as Storage)).toMatchObject({ seen: { list: 1 } });
+      expect(storedGuide(storage as Storage)).toMatchObject({ seen: { list: 2 } });
     });
 
     it('ignores the end of an area that is not the one running', async () => {
@@ -699,7 +699,7 @@ describe('GuideService', () => {
 
     it('repeats the current area, although it was seen, with a new request each time', async () => {
       storage = createGuideStorage(
-        stored({ enabled: true, hintDismissed: true, seen: { list: 1 } }),
+        stored({ enabled: true, hintDismissed: true, seen: { list: 2 } }),
       );
       const { guide } = await create('/sagas');
       expect(guide.request()).toBeNull();
@@ -779,7 +779,7 @@ describe('GuideService', () => {
 
     it('does not show while Guide is on, whatever the stored state says about the hint', async () => {
       storage = createGuideStorage(
-        stored({ enabled: true, hintDismissed: false, seen: { list: 1 } }),
+        stored({ enabled: true, hintDismissed: false, seen: { list: 2 } }),
       );
       const { guide } = await create('/sagas');
 

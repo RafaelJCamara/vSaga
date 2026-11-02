@@ -70,9 +70,15 @@ dashboard page never uses it. See [API key](dashboard.md#api-key).
 | **Guide** | A switch: [guide mode](#guide-mode) explains the saga list, a saga's page and the administration pages the first time you open each. |
 | **Replay tour** | Appears while Guide is on and there is a tour to repeat. |
 | **User guide** | Opens this document in a new tab. The link goes to the copy on GitHub's `main` branch (`USER_GUIDE_URL` in `guide-areas.ts`), so it needs internet access and can be newer than the build you run; the file in your checkout is the one that matches it. |
-| Your name, with a small arrow | A menu: **Account** and **Sign out**. |
+| Your name, with a small arrow | A menu: **Account**, the **Theme** (**System**, **Light** or **Dark**) and **Sign out**. |
 
 Times are shown in your browser's local time, and the page is in English.
+
+**Light and dark.** The dashboard follows your operating system's light or dark setting. To choose for this browser
+instead, open the menu with your name and pick a **Theme**: **Light** or **Dark** applies at once, and **System** goes
+back to following the operating system. The choice is kept in this browser only (it does not follow your account to
+another one), and on a cold load the page may show the operating system's theme for a moment before your choice is
+applied. Where the browser blocks site storage, the choice lasts until you reload.
 
 ## Signing in
 
@@ -197,7 +203,8 @@ every session.
 Everything is reachable with the keyboard, in the order it appears on screen. The first Tab stop of every page is
 **Skip to main content**, which shows itself when it has the focus and moves the focus past the top bar to the page.
 The focus ring is a blue outline on whatever has it. A scrolling area (the saga table, the map, a JSON view) takes a Tab
-stop of its own so that the arrow keys can scroll it.
+stop of its own so that the arrow keys can scroll it. The **Map** and **Timeline** tabs of a saga's page are one Tab
+stop: the left and right arrow keys (and Home and End) move between them and show the one you land on.
 
 ## Guide mode
 
@@ -300,28 +307,31 @@ instance that your account may see, across all saga types, newest update first. 
 | --- | --- |
 | **Correlation Id** | The first eight characters of the saga's correlation id, then `…`. It is a link, and the only part of a row that keyboard users tab to. |
 | **Saga Type** | The saga's type name. |
-| **Kind** | **Orchestrated** or **Choreographed**: see below. |
+| **Kind** | **Orchestrated** (a blue pill) or **Choreographed** (a teal pill): see below. |
 | **Current State** | The state the saga is in. |
-| **Status** | One of the seven [statuses](#statuses-and-kinds). |
+| **Status** | One of the seven [statuses](#statuses-and-kinds): a small shape and the status word. |
 | **Updated** | When the saga last changed, in your local time (`Nov 2, 2026, 08:40`). |
 
 On a screen up to 860 px wide (a phone, or a tablet held upright) the table becomes a list of two-line rows, each with its type and status first, then the
 state and the time, then the id and the kind. The **Status** and **Updated** headings stay at the top as the two sort
 controls.
 
-Click anywhere in a row, or press Enter on its correlation id, to open the saga's page.
+Click anywhere in a row, or press Enter on its correlation id, to open the saga's page. The id is coloured like a link,
+and on a wide screen a small arrow ends the row, to show it opens.
 
 ### Statuses and kinds
 
-| Status | In plain words |
-| --- | --- |
-| **Running** | In progress. It can still change. |
-| **Completed** | Finished its work. |
-| **Failed** | Ended in failure: a step threw and its retries ran out, a message could not be processed after its redeliveries (it was dead-lettered), or a step ended the saga as failed, as a declined payment does. |
-| **Compensating** | Undoing earlier work. |
-| **Compensated** | Finished undoing; it ended without completing. |
-| **TimedOut** | Waited too long in a state and ended as timed out. |
-| **Cancelled** | Ended on purpose. |
+Every status is a coloured shape and its word, so none depends on colour alone.
+
+| Status | Shape | In plain words |
+| --- | --- | --- |
+| **Running** | Filled circle, blue | In progress. It can still change. |
+| **Completed** | Filled circle, green | Finished its work. |
+| **Failed** | Filled diamond, red | Ended in failure: a step threw and its retries ran out, a message could not be processed after its redeliveries (it was dead-lettered), or a step ended the saga as failed, as a declined payment does. |
+| **Compensating** | Half-filled circle, amber | Undoing earlier work. |
+| **Compensated** | Filled circle, violet | Finished undoing; it ended without completing. |
+| **TimedOut** | Ring, orange | Waited too long in a state and ended as timed out. |
+| **Cancelled** | Ring with a slash, grey | Ended on purpose. |
 
 The engine itself writes only **Running** and **Failed**. Every other status is the one the saga's own definition
 finalizes with, so what **Compensating**, **Compensated**, **TimedOut** and **Cancelled** mean for a saga type is
@@ -330,8 +340,8 @@ are listed in the order **Status** sorts by, which is the lifecycle order from *
 
 | Kind | Meaning (also the badge's hover text) |
 | --- | --- |
-| **Orchestrated** | vSaga's engine drives this saga's steps directly. |
-| **Choreographed** | vSaga observes this saga's progress through events; it does not drive it. |
+| **Orchestrated** (blue pill) | vSaga's engine drives this saga's steps directly. |
+| **Choreographed** (teal pill) | vSaga observes this saga's progress through events; it does not drive it. |
 
 ### Filtering, searching, sorting and paging
 
@@ -482,7 +492,7 @@ a marker and a **Data** button:
 
 | Outcome | Meaning |
 | --- | --- |
-| · succeeded | The step finished and the saga moved on (possibly to the same state). |
+| · handled | The saga handled the step's message and moved on (possibly to the same state). A step that handled a failure message, such as `PaymentFailed`, also reads **handled**: the saga did what it should with it. |
 | · failed | An action in the step threw. |
 | · not handled | The saga received a message its current state does not handle. |
 | · dead-lettered, · never handled | The message could not be processed after its redeliveries; **never handled** when the saga never got to handle it. |

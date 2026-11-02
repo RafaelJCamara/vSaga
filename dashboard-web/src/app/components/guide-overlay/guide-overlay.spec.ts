@@ -225,7 +225,7 @@ describe('GuideOverlay', () => {
     });
 
     it('stays idle with Guide on when the area was seen', async () => {
-      await setup('/sagas', { v: 1, enabled: true, seen: { list: 1 }, hintDismissed: true });
+      await setup('/sagas', { v: 1, enabled: true, seen: { list: 2 }, hintDismissed: true });
       listPage();
       flush();
 
@@ -708,7 +708,7 @@ describe('GuideOverlay', () => {
       expect(shield()).toBeNull();
       expect(guide.running()).toBeNull();
       expect(guide.isSeen('list')).toBe(true);
-      expect(storedGuide(storage)).toMatchObject({ seen: { list: 1 } });
+      expect(storedGuide(storage)).toMatchObject({ seen: { list: 2 } });
     });
 
     it('Escape ends the tour and remembers it', async () => {
@@ -883,7 +883,7 @@ describe('GuideOverlay', () => {
         await end();
 
         expect(guide.isSeen('list')).toBe(remembered);
-        expect(storedGuide(storage)).toMatchObject({ seen: remembered ? { list: 1 } : {} });
+        expect(storedGuide(storage)).toMatchObject({ seen: remembered ? { list: 2 } : {} });
       });
 
       it('takes the key listener, the timers and the frame away', async () => {

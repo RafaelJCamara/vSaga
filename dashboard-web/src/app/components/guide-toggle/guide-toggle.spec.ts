@@ -47,7 +47,7 @@ describe('GuideToggle', () => {
     };
   }
 
-  const on = { v: 1, enabled: true, seen: { list: 1 }, hintDismissed: true };
+  const on = { v: 1, enabled: true, seen: { list: 2 }, hintDismissed: true };
 
   it('is the anchor of the top bar step', async () => {
     const { root } = await create();

@@ -68,7 +68,7 @@ export const GUIDE_TOURS: Record<GuideAreaId, readonly GuideStep<GuideAnchor>[]>
     {
       id: 'list-table',
       title: 'One row per saga instance',
-      body: "Each row shows a saga's correlation id (shortened), type, kind, current state, status and last update. Rows update live; a banner appears if live updates disconnect.",
+      body: "Each row shows a saga's correlation id (shortened), type, kind (a blue or a teal pill), current state, status (a shape and a word) and last update. Rows update live; a banner appears if live updates disconnect.",
       anchor: 'list-table',
     },
     {
