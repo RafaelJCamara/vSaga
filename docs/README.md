@@ -44,6 +44,10 @@ new here; the rest of this index is organized by topic, roughly in the order you
 - [`testing.md`](testing.md) — `SagaTestHarness`, for unit-testing saga definitions against the real
   engine with no broker/database.
 - [`chaos.md`](chaos.md) — `VSaga.Chaos`'s fault-injection middleware (delay/drop/duplicate).
+- [`frontend.md`](frontend.md) — how we change and verify the dashboard UI: what we do not do (no rewrite, no new
+  component library without approval, no fake screens), the recommended tools and how to install them, the audit,
+  design, implement and verify workflow, and what a report must say. The design system it works from is
+  [`dashboard-web/DESIGN.md`](../dashboard-web/DESIGN.md).
 
 ## Transports
 

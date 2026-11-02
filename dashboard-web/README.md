@@ -250,6 +250,13 @@ long form. Its parts:
   does updates [`docs/dashboard-guide.md`](../docs/dashboard-guide.md) and the tour steps in the same change, and
   bumps the area's `version` when the copy changes (see [`CONTRIBUTING.md`](../CONTRIBUTING.md#test)).
 
+## Design and UI changes
+
+[`DESIGN.md`](DESIGN.md) is the design system: tokens, components, interaction and responsive rules, and what is
+still undecided. [`docs/frontend.md`](../docs/frontend.md) is how a UI change is made and verified: audit first,
+design rules in `DESIGN.md` before the code, the recommended tools, and the browser checks at phone, tablet and
+desktop widths in the compose stack.
+
 ## Forms: the `ngNoForm` pattern
 
 The sign-in, account and administration forms are template-driven (`FormsModule`, `ngModel` bound to signals)

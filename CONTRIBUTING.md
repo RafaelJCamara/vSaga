@@ -115,6 +115,17 @@ written for it fail and nothing else does, then restore. This repo's commit hist
 (`docs/history/`) is full of concrete examples of this discipline and the bugs it caught that a
 "does a test exist" check alone would have missed.
 
+## Working with AI agents, ADRs and UI changes
+
+[`AGENTS.md`](AGENTS.md) holds the rules for AI coding agents, and they are good rules for people too. The
+one to know before you start: **a new feature begins with an architecture decision record** in
+[`docs/adr/`](docs/adr/), added to the list in [`docs/README.md`](docs/README.md) in the same change. A UI change
+follows [`docs/frontend.md`](docs/frontend.md) and the design system in
+[`dashboard-web/DESIGN.md`](dashboard-web/DESIGN.md). The recommended frontend tooling is installed at the
+repository level by running `skills.ps1` from the repository root; the MCP servers need a local, git-ignored
+`.mcp.json` copied from `.mcp.json.example`, with your Context7 key in an environment variable (steps in
+[`docs/frontend.md`](docs/frontend.md#local-mcp-configuration-mcpjson)).
+
 ## Commit conventions
 
 One logical change per commit. A subject line in imperative present tense, specific about what

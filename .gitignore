@@ -32,3 +32,9 @@ Thumbs.db
 ## Secrets
 *.env
 appsettings.*.local.json
+
+## Local MCP config: holds per-machine settings, and its Context7 header reads CONTEXT7_API_KEY from the environment
+.mcp.json
+
+## Claude Code scratch worktrees
+.claude/worktrees/
