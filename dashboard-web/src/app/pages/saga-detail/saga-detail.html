@@ -38,15 +38,33 @@
     </div>
 
     <dl class="summary-grid">
-      <dt>Current state</dt>
-      <dd>{{ d.summary.currentState }}</dd>
-      <dt>Version</dt>
-      <dd>{{ d.summary.version }}</dd>
-      <dt>Created ({{ createdZone() }})</dt>
-      <dd><app-local-time [value]="d.summary.createdAtUtc" format="datetime" /></dd>
-      <dt>Updated ({{ updatedZone() }})</dt>
-      <dd><app-local-time [value]="d.summary.updatedAtUtc" format="datetime" /></dd>
+      <div>
+        <dt>Current state</dt>
+        <dd>{{ d.summary.currentState }}</dd>
+      </div>
+      <div>
+        <dt>Version</dt>
+        <dd>{{ d.summary.version }}</dd>
+      </div>
+      <div>
+        <dt>Created ({{ createdZone() }})</dt>
+        <dd><app-local-time [value]="d.summary.createdAtUtc" format="datetime" /></dd>
+      </div>
+      <div>
+        <dt>Updated ({{ updatedZone() }})</dt>
+        <dd><app-local-time [value]="d.summary.updatedAtUtc" format="datetime" /></dd>
+      </div>
     </dl>
+
+    <!-- Where a Failed or TimedOut saga stopped, from the retry plan, so the reason is not only on the other tab. -->
+    @if (failureSummary(); as failure) {
+      <p class="failure-line">
+        <span>{{ failure.text }}</span>
+        @if (failure.sequence !== null) {
+          <button type="button" class="btn btn--quiet" (click)="showInTimeline(failure.sequence)">Show in timeline</button>
+        }
+      </p>
+    }
 
     @if (related().length > 0) {
       <div class="related">

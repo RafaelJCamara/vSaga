@@ -4,8 +4,16 @@
   gap: 0.75rem;
 }
 
+/* On a phone the map keeps a readable size and scrolls inside this box, not the page: scaled to the screen its
+   labels are about six pixels tall. Focusable so a keyboard can scroll it. */
+.canvas-scroll {
+  overflow-x: auto;
+}
+
 .canvas {
+  display: block;
   width: 100%;
+  min-width: 36rem;
   height: auto;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -156,8 +164,10 @@
   border-top-color: var(--status-failed);
 }
 
+/* Wraps on a narrow screen: the scrubber takes a row of its own and the speeds drop under the buttons. */
 .controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
 }
@@ -178,7 +188,8 @@
 }
 
 .scrubber {
-  flex: 1;
+  flex: 1 1 8rem;
+  min-width: 0;
   accent-color: var(--accent);
 }
 

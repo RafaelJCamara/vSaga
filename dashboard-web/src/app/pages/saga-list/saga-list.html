@@ -36,18 +36,19 @@
     <input
       class="input"
       type="search"
+      aria-label="Search by saga type or correlation id"
       placeholder="Search by type or correlation id…"
       [(ngModel)]="search"
       (ngModelChange)="onSearchInput()"
     />
 
-    <button type="button" (click)="refresh()">Refresh</button>
+    <button type="button" class="btn" (click)="refresh()">Refresh</button>
   </div>
 
   @if (connectionState() === 'reconnecting') {
     <div class="banner banner--warning">Reconnecting to live updates…</div>
   } @else if (hasEverConnected() && connectionState() === 'disconnected') {
-    <div class="banner banner--warning">Live updates disconnected. <button type="button" (click)="refresh()">Refresh</button></div>
+    <div class="banner banner--warning">Live updates disconnected. <button type="button" class="btn" (click)="refresh()">Refresh</button></div>
   }
 
   @if (error(); as message) {
@@ -57,7 +58,7 @@
   @if (newSagasAvailable() > 0) {
     <div class="banner banner--info">
       {{ newSagasAvailable() }} new saga{{ newSagasAvailable() === 1 ? '' : 's' }} since this page loaded —
-      <button type="button" (click)="refresh()">Refresh</button>
+      <button type="button" class="btn" (click)="refresh()">Refresh</button>
     </div>
   }
 
@@ -69,17 +70,17 @@
     <div class="empty">No sagas match these filters yet.</div>
   } @else if (sagas().length > 0) {
     <div class="table-scroll" role="region" aria-label="Sagas table" tabindex="0">
-      <table class="data-table" data-tour="list-table">
+      <table class="data-table saga-table" data-tour="list-table">
         <thead>
           <tr>
-            <th>Correlation Id</th>
-            <th>Saga Type</th>
-            <th>Kind</th>
-            <th>Current State</th>
+            <th class="cell-id">Correlation Id</th>
+            <th class="cell-type">Saga Type</th>
+            <th class="cell-kind">Kind</th>
+            <th class="cell-state">Current State</th>
             <!-- The heading is a button, so the keyboard reaches it; the click handler stays on the cell, which
                  the button's click (Enter and Space included) bubbles to, so the whole heading sorts. -->
             <th
-              class="sortable"
+              class="sortable cell-status"
               data-tour="list-sort"
               [attr.aria-sort]="ariaSort('Status')"
               (click)="toggleSort('Status', $event)"
@@ -91,7 +92,7 @@
                 }
               </button>
             </th>
-            <th class="sortable" [attr.aria-sort]="ariaSort('UpdatedAt')" (click)="toggleSort('UpdatedAt', $event)">
+            <th class="sortable cell-updated" [attr.aria-sort]="ariaSort('UpdatedAt')" (click)="toggleSort('UpdatedAt', $event)">
               <button #updatedSort type="button" class="sort-button">
                 Updated
                 @if (sortColumn() === 'UpdatedAt') {
@@ -106,16 +107,16 @@
             <!-- A row opens its saga on a click anywhere in it; for the keyboard and for assistive technology the
                  correlation id is a link (one tab stop per row, opened with Enter). -->
             <tr class="saga-row" data-tour="list-row" (click)="openFromRow($event, saga)">
-              <td class="mono">
+              <td class="mono cell-id">
                 <a class="row-link" [routerLink]="['/sagas', saga.sagaType, saga.correlationId]"
                   >{{ saga.correlationId | slice: 0 : 8 }}…</a
                 >
               </td>
-              <td>{{ saga.sagaType }}</td>
-              <td><app-kind-badge [kind]="saga.kind" /></td>
-              <td>{{ saga.currentState }}</td>
-              <td><app-status-badge [status]="saga.status" /></td>
-              <td class="muted">{{ saga.updatedAtUtc | date: 'M/d/yy, HH:mm' }}</td>
+              <td class="cell-type">{{ saga.sagaType }}</td>
+              <td class="cell-kind"><app-kind-badge [kind]="saga.kind" /></td>
+              <td class="cell-state">{{ saga.currentState }}</td>
+              <td class="cell-status"><app-status-badge [status]="saga.status" /></td>
+              <td class="muted cell-updated">{{ saga.updatedAtUtc | date: 'MMM d, y, HH:mm' }}</td>
             </tr>
           }
         </tbody>
@@ -129,9 +130,9 @@
           <option *ngFor="let size of pageSizes" [ngValue]="size">{{ size }}</option>
         </select>
       </label>
-      <button type="button" (click)="prevPage()" [disabled]="page() <= 1">Previous</button>
+      <button type="button" class="btn" (click)="prevPage()" [disabled]="page() <= 1">Previous</button>
       <span class="muted">Page {{ page() }} of {{ totalPages() }}</span>
-      <button type="button" (click)="nextPage()" [disabled]="!hasNextPage()">Next</button>
+      <button type="button" class="btn" (click)="nextPage()" [disabled]="!hasNextPage()">Next</button>
       <label class="page-jump">
         Go to page
         <input

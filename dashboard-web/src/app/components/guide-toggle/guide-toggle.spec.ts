@@ -44,7 +44,6 @@ describe('GuideToggle', () => {
       root,
       switchButton: () => root.querySelector('button.guide-switch') as HTMLButtonElement,
       buttons: () => Array.from(root.querySelectorAll('button'), (b) => b.textContent?.trim()),
-      hint: () => root.querySelector('.guide-hint') as HTMLElement | null,
     };
   }
 
@@ -171,106 +170,6 @@ describe('GuideToggle', () => {
       guide.setEnabled(true);
       fixture.detectChanges();
       expect(root.querySelectorAll('a')).toHaveLength(1);
-    });
-  });
-
-  describe('the hint', () => {
-    it('is in a status region that is in the page before it has anything to say', async () => {
-      const { root, hint } = await create('/account');
-
-      expect(root.querySelector('[role="status"]')).not.toBeNull();
-      expect(hint()).toBeNull();
-    });
-
-    it('offers a walkthrough on a page that has a tour, with two ways to answer', async () => {
-      const { root, hint, buttons } = await create('/sagas');
-
-      expect(hint()?.textContent).toContain(
-        'New here? Turn on Guide for a walkthrough of each page.',
-      );
-      expect(root.querySelector('[role="status"]')?.contains(hint())).toBe(true);
-      expect(buttons()).toEqual(expect.arrayContaining(['Start the tour', 'No thanks']));
-    });
-
-    it('does not move the focus or cover the page: it is not modal', async () => {
-      const { hint } = await create('/sagas');
-
-      expect(document.activeElement).toBe(document.body);
-      expect(hint()?.getAttribute('role')).toBeNull();
-      expect(hint()?.getAttribute('aria-modal')).toBeNull();
-    });
-
-    it('starts the tour from "Start the tour" and does not show again', async () => {
-      const { fixture, guide, root, hint } = await create('/sagas');
-
-      (
-        Array.from(root.querySelectorAll('button')).find(
-          (b) => b.textContent?.trim() === 'Start the tour',
-        ) as HTMLElement
-      ).click();
-      fixture.detectChanges();
-
-      expect(guide.enabled()).toBe(true);
-      expect(guide.request()?.area.id).toBe('list');
-      expect(hint()).toBeNull();
-      expect(storedGuide(storage)).toMatchObject({ enabled: true, hintDismissed: true });
-    });
-
-    it('keeps the keyboard focus on the Guide switch when the button that was pressed goes with the hint', async () => {
-      for (const [label, enabled] of [
-        ['No thanks', false],
-        ['Start the tour', true],
-      ] as const) {
-        TestBed.resetTestingModule();
-        const { fixture, guide, root, switchButton } = await create('/sagas');
-        const answer = Array.from(root.querySelectorAll('button')).find(
-          (b) => b.textContent?.trim() === label,
-        ) as HTMLButtonElement;
-        answer.focus();
-        expect(document.activeElement).toBe(answer); // the focus starts somewhere else than the switch
-
-        answer.click();
-        fixture.detectChanges();
-
-        expect(answer.isConnected).toBe(false);
-        expect(guide.enabled()).toBe(enabled);
-        expect(document.activeElement, label).toBe(switchButton());
-      }
-    });
-
-    it('goes away for good on "No thanks" and leaves Guide off', async () => {
-      const { fixture, guide, root, hint } = await create('/sagas');
-
-      (
-        Array.from(root.querySelectorAll('button')).find(
-          (b) => b.textContent?.trim() === 'No thanks',
-        ) as HTMLElement
-      ).click();
-      fixture.detectChanges();
-
-      expect(guide.enabled()).toBe(false);
-      expect(hint()).toBeNull();
-      expect(storedGuide(storage)).toMatchObject({ enabled: false, hintDismissed: true });
-    });
-
-    it('does not show once it was answered, or on a page with no tour, or while Guide is on', async () => {
-      expect(
-        (await create('/sagas', { v: 1, enabled: false, seen: {}, hintDismissed: true })).hint(),
-      ).toBeNull();
-      TestBed.resetTestingModule();
-      expect((await create('/account')).hint()).toBeNull();
-      TestBed.resetTestingModule();
-      expect((await create('/sagas', on)).hint()).toBeNull();
-    });
-
-    it('appears when the user reaches a page that has a tour', async () => {
-      const { fixture, hint } = await create('/account');
-      expect(hint()).toBeNull();
-
-      await TestBed.inject(Router).navigateByUrl('/sagas');
-      fixture.detectChanges();
-
-      expect(hint()).not.toBeNull();
     });
   });
 });

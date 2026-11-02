@@ -234,7 +234,9 @@ long form. Its parts:
   permission it `requires` and the `docsAnchor`, a heading of the user guide that the tour's **User guide** link
   opens. `USER_GUIDE_URL` is the one constant for the guide's address.
 - **`GuideToggle`** ([`components/guide-toggle/`](src/app/components/guide-toggle)) is the **Guide** switch, **Replay
-  tour**, the **User guide** link and the hint, in the top bar for a signed-in user.
+  tour** and the **User guide** link, in the top bar for a signed-in user. `GuideHint`
+  ([`components/guide-hint/`](src/app/components/guide-hint)) is the one-time offer of guide mode, a bar in the
+  page flow under the top bar (it used to hang from the switch and covered the page).
 - **`GuideOverlay`** ([`components/guide-overlay/`](src/app/components/guide-overlay)) draws the tour on screen
   (modal while it runs: the rest of the page is `inert`, Escape ends it). It is a lazy chunk, loaded with
   `@defer (when guide.enabled())` as the last child of the app template, so the eager bundle carries only the
@@ -332,7 +334,8 @@ src/app/
   components/saga-timeline/ The timeline as numbered steps, with Recorded at times and the failed-step marker
   components/saga-data-inspector/  One state: changes against an earlier one, full state, message, copy
   components/saga-data-overview/   The Saga data bar: At start, At end (or Current), Compare
-  components/guide-toggle/  The Guide switch, Replay tour, the User guide link and the one-time hint
+  components/guide-toggle/  The Guide switch, Replay tour and the User guide link
+  components/guide-hint/    The one-time offer of guide mode, a bar under the top bar
   components/guide-overlay/ The tour on screen (a lazy chunk), its geometry, the tour copy and GUIDE_ANCHORS
   components/local-time/    A <time> in the browser's local zone, UTC on hover
   components/kind-badge/    The Orchestrated/Choreographed pill

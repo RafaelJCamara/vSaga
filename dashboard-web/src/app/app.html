@@ -1,4 +1,5 @@
 <div class="shell">
+  <a class="skip-link" href="#main" (click)="skipToContent($event)">Skip to main content</a>
   <header class="topbar">
     <a class="brand" routerLink="/sagas">
       <span class="brand-mark">v<span class="brand-mark-accent">Saga</span></span>
@@ -21,7 +22,10 @@
       }
     </div>
   </header>
-  <main class="content">
+  @if (auth.isAuthenticated()) {
+    <app-guide-hint />
+  }
+  <main id="main" class="content" tabindex="-1">
     <router-outlet />
   </main>
 </div>

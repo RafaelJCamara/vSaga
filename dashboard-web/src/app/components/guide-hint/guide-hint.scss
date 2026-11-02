@@ -1,0 +1,25 @@
+/* A row of its own under the top bar: it pushes the page down by its own height and covers nothing. The text and
+   the two buttons share a line while they fit and wrap on a narrow screen. */
+.guide-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  font-size: 0.85rem;
+}
+
+.guide-hint p {
+  margin: 0;
+}
+
+.guide-hint-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.guide-hint .btn {
+  white-space: nowrap;
+}

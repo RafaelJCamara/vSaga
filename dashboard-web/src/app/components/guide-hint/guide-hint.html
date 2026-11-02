@@ -1,0 +1,11 @@
+<div role="status" class="guide-hint-region">
+  @if (guide.showHint()) {
+    <div class="guide-hint">
+      <p>New here? Turn on Guide for a walkthrough of each page.</p>
+      <div class="guide-hint-actions">
+        <button type="button" class="btn" (click)="answer(true)">Start the tour</button>
+        <button type="button" class="btn btn--quiet" (click)="answer(false)">No thanks</button>
+      </div>
+    </div>
+  }
+</div>

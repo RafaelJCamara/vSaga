@@ -192,6 +192,13 @@ closes its live connection, ends this browser's session and goes to **Sign in**.
 copy of the cookie held somewhere else; changing the password, or an administrator disabling the account, ends
 every session.
 
+## Using the keyboard
+
+Everything is reachable with the keyboard, in the order it appears on screen. The first Tab stop of every page is
+**Skip to main content**, which shows itself when it has the focus and moves the focus past the top bar to the page.
+The focus ring is a blue outline on whatever has it. A scrolling area (the saga table, the map, a JSON view) takes a Tab
+stop of its own so that the arrow keys can scroll it.
+
 ## Guide mode
 
 Guide mode is a walkthrough built into the page. While it is on, the saga list, a saga's page (its summary, map,
@@ -201,10 +208,10 @@ switch it on, and it never starts a tour by itself while it is off.
 
 ### Turning Guide on and off
 
-The **Guide** button in the top bar is a switch. The first time you open a page that has a tour, a small hint
-hangs under it: "New here? Turn on Guide for a walkthrough of each page." with **Start the tour** and **No
-thanks**. The hint does not take the keyboard focus and does not hide anything. Answering it either way, or
-switching Guide on, ends it for good.
+The **Guide** button in the top bar is a switch. The first time you open a page that has a tour, a bar appears
+under the top bar: "New here? Turn on Guide for a walkthrough of each page." with **Start the tour** and **No
+thanks**. The bar has a row of its own, so it covers nothing; it does not take the keyboard focus. Answering it
+either way, or switching Guide on, ends it for good.
 
 Switching Guide on treats everything as unseen again, then starts the tour of the page you are on. Switching it
 off drops whatever is running or waiting, and does not mark the tour that was running as seen.
@@ -296,7 +303,11 @@ instance that your account may see, across all saga types, newest update first. 
 | **Kind** | **Orchestrated** or **Choreographed**: see below. |
 | **Current State** | The state the saga is in. |
 | **Status** | One of the seven [statuses](#statuses-and-kinds). |
-| **Updated** | When the saga last changed, in your local time. |
+| **Updated** | When the saga last changed, in your local time (`Nov 2, 2026, 08:40`). |
+
+On a screen up to 860 px wide (a phone, or a tablet held upright) the table becomes a list of two-line rows, each with its type and status first, then the
+state and the time, then the id and the kind. The **Status** and **Updated** headings stay at the top as the two sort
+controls.
 
 Click anywhere in a row, or press Enter on its correlation id, to open the saga's page.
 
@@ -396,6 +407,9 @@ The card at the top shows:
 - **Current state**, **Version** (the saga's save counter: the engine raises it each time it stores the saga's
   state, and a retry uses it to notice a saga that moved) and **Created** and **Updated**, each with your
   time zone in the label (`Created (UTC+02:00)`); hover a time for UTC.
+- For a **Failed** or **TimedOut** saga, a line saying where it stopped (`Failed in step 2 (PaymentFailed, from
+  Gathering).`, the step the timeline marks **Failed here**), with **Show in timeline** to open that entry. It appears
+  once the retry plan has loaded, and only for people who can see the saga.
 - **Also tracking this correlation id**: other saga types that track the same business transaction, each a link
   with its kind, status and state. A correlation id alone does not identify a saga, because two saga types may
   track the same one.

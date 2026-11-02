@@ -3,6 +3,10 @@
 }
 
 :root {
+  /* The page is dark, so the browser's own widgets are too: scrollbars, the open list of a select, a date picker,
+     autofill. Without it a scroll box on this page has a white scrollbar. */
+  color-scheme: dark;
+
   --bg: #0b0e14;
   --bg-elevated: #12161f;
   --bg-hover: #1a2030;
@@ -11,6 +15,8 @@
   --text-muted: #8891a7;
   --accent: #5b8cff;
   --accent-soft: rgba(91, 140, 255, 0.14);
+  /* The fill of the one primary button, with white text: #5b8cff is 3.2:1 against white, this is 5.1:1 (WCAG AA asks 4.5:1). */
+  --accent-solid: #3566e0;
 
   --status-running: #5b8cff;
   --status-completed: #35c98c;
@@ -124,6 +130,20 @@ code, .mono {
 .btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* The primary action of a page or form: at most one in view. Filled, so it reads as the thing to press; the
+   hover darkens for the same reason `--danger` does (a lighter blue under white text loses contrast). */
+.btn--primary {
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
+  color: #fff;
+}
+
+.btn--primary:hover:not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--accent-solid);
+  color: #fff;
+  filter: brightness(0.9);
 }
 
 /* The destructive one, in the retry row's red: a delete or a reset that asks to be confirmed. The hover

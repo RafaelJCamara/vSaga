@@ -2085,6 +2085,37 @@ describe('SagaDetail', () => {
       expect(navigateSpy).not.toHaveBeenCalled();
     });
 
+    it('says in the summary where a timed-out saga stopped, and opens that entry in the timeline', () => {
+      retryPlanResponse = of(timeoutPlan());
+      const fixture = setup(timedOut(), timedOutInvoice(), invoiceMap());
+      const line = fixture.nativeElement.querySelector('.failure-line') as HTMLElement;
+
+      expect(text(line)).toContain('Timed out in step 2 (InvoiceIssued, from Requested).');
+
+      (line.querySelector('button') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.tab()).toBe('timeline');
+      expect(fixture.componentInstance.focusedSequence()).toBe(66);
+    });
+
+    it('words a failure as "Failed" and says nothing for a saga that did not stop', () => {
+      retryPlanResponse = of(timeoutPlan({ failureKind: 'Failed' as SagaRetryPlan['failureKind'] }));
+      const failed = setup(makeDetail({ status: 'Failed' }), timedOutInvoice());
+      expect(text(failed.nativeElement.querySelector('.failure-line'))).toContain('Failed in step 2');
+
+      TestBed.resetTestingModule();
+      retryPlanResponse = of(timeoutPlan());
+      const running = setup(makeDetail({ status: 'Running' }));
+      expect(running.nativeElement.querySelector('.failure-line')).toBeNull();
+    });
+
+    it('says nothing until the retry plan has arrived', () => {
+      const fixture = setup(timedOut(), timedOutInvoice());
+
+      expect(fixture.nativeElement.querySelector('.failure-line')).toBeNull();
+    });
+
     it('opens the map on the entry the URL names', () => {
       retryPlanResponse = of(timeoutPlan());
       const fixture = setup(

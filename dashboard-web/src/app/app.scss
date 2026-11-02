@@ -1,3 +1,28 @@
+/* The first thing a keyboard reaches: off-screen until it has the focus, then a button-sized link over the bar. */
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 30;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  transform: translateY(-300%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+/* `main` is only ever focused by script, by the skip link: it needs no ring of its own. */
+.content:focus {
+  outline: none;
+}
+
 .shell {
   min-height: 100dvh;
   display: flex;

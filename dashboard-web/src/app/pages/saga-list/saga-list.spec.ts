@@ -400,6 +400,42 @@ describe('SagaList', () => {
     ]);
   });
 
+  // A placeholder is not a name: it goes when the field is filled, and a screen reader may not read it.
+  it('names the search box for assistive technology', () => {
+    const fixture = setup({ items: [makeSummary()], page: 1, pageSize: 25, totalCount: 1 });
+
+    expect(fixture.nativeElement.querySelector('.toolbar > input[type="search"]').getAttribute('aria-label')).toBe(
+      'Search by saga type or correlation id',
+    );
+  });
+
+  // The page's buttons are the shared `.btn`, none of them a filled accent: Refresh and the pager are not the
+  // page's primary action, and the old white-on-accent fill was 3.2:1.
+  it('uses the shared button class for Refresh and the pager', () => {
+    const fixture = setup({ items: [makeSummary()], page: 1, pageSize: 25, totalCount: 75 });
+    const buttons = Array.from<HTMLButtonElement>(
+      fixture.nativeElement.querySelectorAll('.toolbar button, .pagination button'),
+    );
+
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(['Refresh', 'Previous', 'Next']);
+    expect(buttons.every((b) => b.classList.contains('btn'))).toBe(true);
+  });
+
+  // The phone layout places each cell by its class, so a cell without one would fall out of the row.
+  it('classes every cell of a row, for the narrow layout', () => {
+    const fixture = setup({ items: [makeSummary()], page: 1, pageSize: 25, totalCount: 1 });
+    const cells = Array.from<HTMLElement>(fixture.nativeElement.querySelectorAll('tr.saga-row > td'));
+
+    expect(cells.map((c) => Array.from(c.classList).find((n) => n.startsWith('cell-')))).toEqual([
+      'cell-id',
+      'cell-type',
+      'cell-kind',
+      'cell-state',
+      'cell-status',
+      'cell-updated',
+    ]);
+  });
+
   // The page's toolbar, controls, table and banners are the shared classes of src/styles.scss, which
   // the unit tests do not load, so the class names are all there is to check. The base `.banner`
   // carries the box: a modifier on its own would show a banner with no padding.

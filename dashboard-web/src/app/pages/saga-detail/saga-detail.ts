@@ -215,6 +215,26 @@ export class SagaDetail implements OnInit, OnDestroy {
   readonly failureSequence = computed(() => this.retryPlan()?.failureSequenceNumber ?? null);
   readonly replaySequence = computed(() => this.retryPlan()?.step?.sequenceNumber ?? null);
 
+  /**
+   * Where a Failed or TimedOut saga stopped, in a line under the summary: the step the timeline marks "Failed
+   * here", named by its ordinal and message. Null for any other status, and until the retry plan arrives (the
+   * plan is also what the map's failure focus waits for). `sequence` is the entry "Show in timeline" opens.
+   */
+  readonly failureSummary = computed(() => {
+    const status = this.detail()?.summary.status;
+    const plan = this.retryPlan();
+    if ((status !== 'Failed' && status !== 'TimedOut') || !plan) return null;
+
+    const sequence = plan.failureSequenceNumber;
+    const step = plan.step;
+    if (sequence === null && !step) return null;
+
+    const ordinal = stepContaining(this.history(), sequence ?? step!.sequenceNumber)?.ordinal;
+    const which = ordinal === undefined ? 'a step' : `step ${ordinal}`;
+    const what = step ? ` (${step.messageType}, from ${step.fromState})` : '';
+    return { text: `${status === 'TimedOut' ? 'Timed out' : 'Failed'} in ${which}${what}.`, sequence };
+  });
+
   /** Why the plan refuses a retry; null when it allows one or has not arrived. */
   readonly retryRefusal = computed(() => {
     const plan = this.retryPlan();

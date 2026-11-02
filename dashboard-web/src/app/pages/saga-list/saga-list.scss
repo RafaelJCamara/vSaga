@@ -13,25 +13,13 @@ input[type='search'] {
   min-width: 220px;
 }
 
-/* The page's action buttons (Refresh, the pager). Scoped to where they sit, not to every button: a rule on
-   `button` here would also win over the global `.btn` and make the sort headings, which are buttons too,
-   look like accent buttons. */
-.toolbar button,
-.banner button,
-.pagination button {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
+/* The page's buttons are the global `.btn`, at the size of the form controls beside them. None is the primary
+   action of the page, so none is filled. */
+.toolbar .btn,
+.banner .btn,
+.pagination .btn {
   padding: 0.4rem 0.9rem;
   font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.toolbar button:hover,
-.banner button:hover,
-.pagination button:hover {
-  filter: brightness(1.1);
 }
 
 /* The "new sagas" notice is a text-and-button row; the colours come from the global .banner--info. */
@@ -41,7 +29,7 @@ input[type='search'] {
   gap: 0.5rem;
 }
 
-.banner--info button {
+.banner--info .btn {
   padding: 0.2rem 0.6rem;
   font-size: 0.8rem;
 }
@@ -67,6 +55,8 @@ input[type='search'] {
   text-transform: inherit;
   text-align: inherit;
   cursor: pointer;
+  /* A 24px-high target (WCAG 2.2): the text alone is 17px. */
+  min-height: 1.5rem;
 }
 
 .sort-indicator {
@@ -85,6 +75,8 @@ input[type='search'] {
 
 /* The correlation id is the row's link: it reads as the id, and shows it is a link on hover and focus. */
 .row-link {
+  display: inline-block;
+  padding: 0.25rem 0;
   color: inherit;
 }
 
@@ -128,9 +120,98 @@ input[type='search'] {
   padding: 0.3rem 0.5rem;
 }
 
-.pagination button:disabled {
-  background: var(--bg-elevated);
-  color: var(--text-muted);
-  cursor: not-allowed;
-  filter: none;
+/* The updated time stays on one line; below the breakpoint the stacked layout takes over before it can crowd. */
+.data-table .cell-updated {
+  white-space: nowrap;
+}
+
+/* Below 860px (a phone, and a tablet held upright, where the six columns no longer fit) the table becomes a list of two-line rows: the type and the status first (the status is what the
+   reader scans for), then the state and when it changed, then the id and the kind. The header row keeps only the
+   two sort controls; the other headings stay in the accessibility tree, clipped. */
+@media (max-width: 860px) {
+  .saga-table,
+  .saga-table thead,
+  .saga-table tbody {
+    display: block;
+  }
+
+  .saga-table thead tr {
+    display: flex;
+    gap: 1rem;
+    padding: 0.25rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .saga-table th {
+    padding: 0.25rem 0;
+    border: 0;
+  }
+
+  .saga-table th:not(.sortable) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .saga-table .saga-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'type status'
+      'state updated'
+      'id kind';
+    gap: 0.1rem 0.75rem;
+    padding: 0.6rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .saga-table .saga-row:last-child {
+    border-bottom: 0;
+  }
+
+  .saga-table .saga-row td {
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .cell-type {
+    grid-area: type;
+    font-weight: 600;
+  }
+
+  .cell-status {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .cell-state {
+    grid-area: state;
+  }
+
+  .cell-updated {
+    grid-area: updated;
+    justify-self: end;
+  }
+
+  .cell-id {
+    grid-area: id;
+  }
+
+  .cell-kind {
+    grid-area: kind;
+    justify-self: end;
+  }
+
+  /* The sort headings share the row with nothing else, so they keep their own place instead of a grid area. */
+  .saga-table thead .cell-status,
+  .saga-table thead .cell-updated {
+    justify-self: auto;
+  }
 }

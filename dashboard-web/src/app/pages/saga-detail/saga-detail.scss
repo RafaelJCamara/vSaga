@@ -7,6 +7,7 @@
 
 .summary-top {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
@@ -28,15 +29,20 @@
   align-items: center;
 }
 
+/* Each term and its value in a group of their own, so on a narrow screen the groups wrap under one another
+   (a timestamp does not break at a space) instead of widening the page. */
 .summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, max-content);
-  gap: 0.25rem 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
   margin: 1rem 0 0;
 }
 
+.summary-grid > div {
+  min-width: 0;
+}
+
 .summary-grid dt {
-  grid-row: 1;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -44,9 +50,20 @@
 }
 
 .summary-grid dd {
-  grid-row: 2;
-  margin: 0;
+  margin: 0.25rem 0 0;
   font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+/* Where a failed saga stopped. The text says it, so the colour is only a second cue. */
+.failure-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+  color: var(--status-failed);
 }
 
 .related {

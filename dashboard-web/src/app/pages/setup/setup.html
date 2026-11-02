@@ -167,7 +167,7 @@
 
       <div class="actions">
         <!-- aria-disabled, not disabled: the button keeps the focus it holds while the request runs (submit() refuses meanwhile). -->
-        <button type="submit" class="btn" [attr.aria-disabled]="busy() ? 'true' : null">
+        <button type="submit" class="btn btn--primary" [attr.aria-disabled]="busy() ? 'true' : null">
           {{ busy() ? 'Creating…' : 'Create administrator' }}
         </button>
       </div>

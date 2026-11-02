@@ -1,5 +1,4 @@
 <button
-  #guideSwitch
   type="button"
   class="btn guide-switch"
   [attr.aria-pressed]="guide.enabled()"
@@ -13,14 +12,3 @@
 <a class="btn btn--quiet" [href]="userGuideUrl" target="_blank" rel="noopener noreferrer"
   >User guide</a
 >
-<div role="status" class="guide-hint-region">
-  @if (guide.showHint()) {
-    <div class="guide-hint">
-      <p>New here? Turn on Guide for a walkthrough of each page.</p>
-      <div class="guide-hint-actions">
-        <button type="button" class="btn" (click)="answerHint(true)">Start the tour</button>
-        <button type="button" class="btn btn--quiet" (click)="answerHint(false)">No thanks</button>
-      </div>
-    </div>
-  }
-</div>

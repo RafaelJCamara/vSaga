@@ -51,6 +51,30 @@ describe('App', () => {
     expect(app).toBeTruthy();
   });
 
+  describe('skip link', () => {
+    it('is the first focusable thing in the page and names the main region it moves to', () => {
+      const root = create().nativeElement as HTMLElement;
+      const link = root.querySelector('a') as HTMLAnchorElement;
+
+      expect(link.classList.contains('skip-link')).toBe(true);
+      expect(link.textContent?.trim()).toBe('Skip to main content');
+      expect(root.querySelector('main#main')?.getAttribute('tabindex')).toBe('-1');
+    });
+
+    it('moves the focus to main without a navigation', () => {
+      const fixture = create();
+      document.body.appendChild(fixture.nativeElement);
+      const link = (fixture.nativeElement as HTMLElement).querySelector('a.skip-link') as HTMLAnchorElement;
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+
+      link.dispatchEvent(click);
+
+      expect(click.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(document.getElementById('main'));
+      fixture.nativeElement.remove();
+    });
+  });
+
   it('should render the brand', async () => {
     const fixture = create();
     await fixture.whenStable();
