@@ -33,7 +33,7 @@ jobs:
       # dotnet/tests/VSaga.Persistence.Conformance. A package that drops out of the pack would leave the ones that
       # depend on it pointing at a version that was never published, which nuget.org cannot undo, so a count that
       # differs stops the release. Change it in the same commit that adds or removes a library.
-      EXPECTED_PACKAGES: 19
+      EXPECTED_PACKAGES: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:

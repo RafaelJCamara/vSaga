@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- This project holds nothing but dotnet-ef generated migration code, which routinely trips the
+       repo-wide analyzer rules (method length, array-literal-as-argument, etc.) in ways that aren't
+       worth hand-editing generated files to avoid. Disabling analyzers here (not repo-wide) keeps
+       every hand-written project fully covered. -->
+  <PropertyGroup>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- Package-specific description for nuget.org search results, overriding Directory.Build.props's
+       shared fallback (MSBuild evaluates that file first, so this later value wins). -->
+  <PropertyGroup>
+    <Description>SQL Server provider wiring for VSaga.Persistence.EFCore -- the migrations for running vSaga sagas against SQL Server and Azure SQL, plus the Microsoft.EntityFrameworkCore.SqlServer dependency that supplies UseSqlServer.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VSaga.Persistence.EFCore\VSaga.Persistence.EFCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+  </ItemGroup>
+
+</Project>

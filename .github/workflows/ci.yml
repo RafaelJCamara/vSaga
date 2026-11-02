@@ -13,7 +13,7 @@ jobs:
     env:
       # Ryuk (Testcontainers' cleanup sidecar) pulls its own image from Docker Hub before every
       # container it starts, and a transient registry hiccup there fails every Testcontainers-backed
-      # test in the run at once (Postgres, Redis, MongoDB, Brighter, MassTransit, RabbitMQ, Wolverine tests all together) even
+      # test in the run at once (Postgres, SQL Server, Redis, MongoDB, Brighter, MassTransit, RabbitMQ, Wolverine tests all together) even
       # though nothing about them is actually broken. Ryuk's job is reaping containers left behind by
       # a crashed run; on a GitHub-hosted runner the whole VM is destroyed after the job anyway, so
       # it's redundant here and disabling it removes this whole flake class.
@@ -135,7 +135,7 @@ jobs:
           }
 
           failed=0
-          for stack in base:5080 wolverine:5180 masstransit:5280 brighter:5380 http:5480 mongo:5580 redis:5680; do
+          for stack in base:5080 wolverine:5180 masstransit:5280 brighter:5380 http:5480 mongo:5580 redis:5680 sqlserver:5780; do
             check_dashboard_ports "${stack%%:*}" "${stack##*:}" || failed=1
           done
           exit "$failed"
@@ -245,7 +245,7 @@ jobs:
 
           rendered=$(docker compose config --format json)
           check_identity_volume base "$rendered"
-          for overlay in wolverine masstransit brighter http mongo redis; do
+          for overlay in wolverine masstransit brighter http mongo redis sqlserver; do
             check_identity_volume "$overlay" "$(docker compose -f docker-compose.yml -f "docker-compose.$overlay.yml" config --format json)"
           done
 

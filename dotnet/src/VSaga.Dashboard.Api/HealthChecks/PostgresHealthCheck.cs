@@ -9,7 +9,7 @@ namespace VSaga.Dashboard.Api.HealthChecks;
 /// constructor dependency: VSaga.Dashboard.Api.Tests' DashboardApiFactory removes it from DI entirely
 /// (it swaps in the in-memory persistence provider), and health check instances are otherwise
 /// constructed via the root provider, so a hard constructor dependency here would fail to resolve in
-/// that composition.
+/// that composition. Serves every EF Core provider (Postgres, SQL Server), hence the generic wording of its failures.
 /// </summary>
 public sealed class PostgresHealthCheck(IServiceScopeFactory scopeFactory) : IHealthCheck
 {
@@ -24,11 +24,11 @@ public sealed class PostgresHealthCheck(IServiceScopeFactory scopeFactory) : IHe
         {
             return await db.Database.CanConnectAsync(cancellationToken)
                 ? HealthCheckResult.Healthy()
-                : HealthCheckResult.Unhealthy("Could not connect to Postgres.");
+                : HealthCheckResult.Unhealthy("Could not connect to the relational database.");
         }
         catch (Exception ex)
         {
-            return HealthCheckResult.Unhealthy("Could not connect to Postgres.", ex);
+            return HealthCheckResult.Unhealthy("Could not connect to the relational database.", ex);
         }
     }
 }

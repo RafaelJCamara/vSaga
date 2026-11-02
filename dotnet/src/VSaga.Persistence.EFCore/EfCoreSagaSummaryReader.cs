@@ -27,7 +27,11 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
         {
             // One parameter for the whole set (= ANY(@p) on Npgsql, IN (...) on SQLite): never a query per type.
             var wanted = sagaTypes.Distinct(StringComparer.Ordinal).ToArray();
-            query = query.Where(x => wanted.Contains(x.SagaType));
+            // The set is matched exactly (SagaListFilter.SagaTypes). SQL Server's default collation is
+            // case-insensitive, so there the column is compared under a binary one, as the claim does (ADR 0009).
+            query = EfCoreProviderNames.IsSqlServer(db.Database.ProviderName)
+                ? query.Where(x => wanted.Contains(EF.Functions.Collate(x.SagaType, EfCoreProviderNames.SqlServerBinaryCollation)))
+                : query.Where(x => wanted.Contains(x.SagaType));
         }
 
         // Strictly greater-than — see SagaListFilter.UpdatedSince. Folded into the same composable

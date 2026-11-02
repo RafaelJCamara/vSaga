@@ -1,6 +1,6 @@
 # Persistence samples
 
-One small sample per persistence provider. All four run the **same saga** with the **same scenarios**
+One small sample per persistence provider. All five run the **same saga** with the **same scenarios**
 and print the **same report**. The only thing that changes between them is the provider each one
 registers, so comparing two `Program.cs` files shows exactly what switching providers costs.
 
@@ -8,6 +8,7 @@ registers, so comparing two `Program.cs` files shows exactly what switching prov
 | --- | --- | --- | --- |
 | `VSaga.Persistence.InMemory` | [`VSaga.Samples.Persistence.InMemory`](VSaga.Samples.Persistence.InMemory/) | nothing | — |
 | `VSaga.Persistence.EFCore` + `VSaga.Persistence.EFCore.Postgres` | [`VSaga.Samples.Persistence.EFCore.Postgres`](VSaga.Samples.Persistence.EFCore.Postgres/) | Docker (Postgres 16) | `5434` |
+| `VSaga.Persistence.EFCore` + `VSaga.Persistence.EFCore.SqlServer` | [`VSaga.Samples.Persistence.EFCore.SqlServer`](VSaga.Samples.Persistence.EFCore.SqlServer/) | Docker (SQL Server 2022, about 2 GB RAM) | `1436` |
 | `VSaga.Persistence.MongoDB` | [`VSaga.Samples.Persistence.MongoDB`](VSaga.Samples.Persistence.MongoDB/) | Docker (MongoDB 8, single-member replica set) | `27019` |
 | `VSaga.Persistence.Redis` | [`VSaga.Samples.Persistence.Redis`](VSaga.Samples.Persistence.Redis/) | Docker (Redis 7.4, Tier A) | `6380` |
 
@@ -35,7 +36,7 @@ docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis/doc
 dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis
 ```
 
-Replace `Redis` with `EFCore.Postgres` or `MongoDB` in both lines for the other two. Each sample's own
+Replace `Redis` with `EFCore.Postgres`, `EFCore.SqlServer` or `MongoDB` in both lines for the others. Each sample's own
 README covers what is specific to its provider and how to inspect the data it wrote.
 
 ## What every sample does
@@ -80,6 +81,6 @@ of a durable store.
   samples wait for it to report Healthy, and print the description it gives. EF Core has no
   bootstrapper; its sample applies migrations before the host starts instead.
 
-The provider-specific trade-offs (durability tiers, the replica-set requirement, the Postgres-only
+The provider-specific trade-offs (durability tiers, the replica-set requirement, which EF Core databases get an
 atomic claim, and so on) are in [`docs/persistence.md`](../../../docs/persistence.md). The samples
 point at the relevant sections rather than repeat them.

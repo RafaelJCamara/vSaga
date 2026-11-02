@@ -28,6 +28,7 @@
     </PackageVersion>
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions" Version="10.0.11" />
@@ -49,6 +50,11 @@
          CentralPackageTransitivePinningEnabled these entries lift the transitives to patched versions. -->
     <PackageVersion Include="SharpCompress" Version="0.50.4" />
     <PackageVersion Include="Snappier" Version="1.3.1" />
+    <!-- Transitive pin, not a direct reference: Microsoft.EntityFrameworkCore.SqlServer 10.0 declares
+         System.Security.Cryptography.Pkcs 9.0.11 (through Microsoft.Data.SqlClient), under NuGet advisories
+         GHSA-846f-f764-76mx and GHSA-2fmv-rv2c-59x7 that TreatWarningsAsErrors turns into a restore failure,
+         the same class as the two pins above. -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
     <!-- Bounded the same way as the other two bus SDKs in this file: a consumer's own restore should
@@ -66,6 +72,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageVersion>
     <PackageVersion Include="Testcontainers.MongoDb" Version="4.14.0" />
+    <PackageVersion Include="Testcontainers.MsSql" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.14.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.14.0" />

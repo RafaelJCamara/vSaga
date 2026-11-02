@@ -32,7 +32,7 @@ public interface IProviderFixture
     /// <see cref="ISagaOutboxStore.ClaimPendingAsync"/> are safe for several dispatcher instances
     /// racing on the same rows: no row is ever returned by two claims. False for a provider that is
     /// correct for a single dispatcher only (EF Core's load-then-update fallback on any database but
-    /// Postgres — ADR 0004).
+    /// Postgres and SQL Server — ADR 0004, ADR 0009).
     /// </summary>
     bool SupportsConcurrentClaim { get; }
 

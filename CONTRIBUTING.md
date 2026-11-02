@@ -9,8 +9,8 @@
   (`dashboard-web/package.json`'s `engines` field, which follows Angular 22's own range; CI's
   `setup-node` installs the latest 22). The compose stack builds the SPA inside its
   `dashboard-web` image, so running the demo needs only Docker.
-- **Docker**: seven `dotnet/tests/*` suites use Testcontainers (RabbitMQ, MassTransit, Wolverine,
-  Brighter, Postgres, Redis, MongoDB — see the Test section below). Without Docker, those suites fail
+- **Docker**: eight `dotnet/tests/*` suites use Testcontainers (RabbitMQ, MassTransit, Wolverine,
+  Brighter, Postgres, SQL Server, Redis, MongoDB — see the Test section below). Without Docker, those suites fail
   outright rather than skip.
 
 Every command below uses `&&` to chain steps — that's a parse error in Windows PowerShell 5.1
@@ -40,8 +40,8 @@ cd dashboard-web && npm ci && npx ng build && cd ..
 dotnet test dotnet/VSaga.slnx
 ```
 
-800+ tests across every `dotnet/tests/*` project. Seven suites are Testcontainers-backed (RabbitMQ,
-MassTransit, Wolverine, Brighter, Postgres, Redis, MongoDB — the last needs a replica set, which its
+800+ tests across every `dotnet/tests/*` project. Eight suites are Testcontainers-backed (RabbitMQ,
+MassTransit, Wolverine, Brighter, Postgres, SQL Server, Redis, MongoDB — the last needs a replica set, which its
 fixture starts) and need Docker; everything else runs without it. If
 Docker isn't available, say so rather than skipping silently — this repo's own history treats "these
 suites were only compiled, never run" as an explicit, carried-forward caveat, not a pass.
@@ -57,9 +57,10 @@ transport adapter, a change to correlation/causation, anything outbox- or timeou
 docker compose up -d --build
 # and, for fault-injection-relevant changes:
 docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build
-# and, for anything touching the Redis or MongoDB persistence provider, its own overlay (docs/persistence.md):
+# and, for anything touching the SQL Server, Redis or MongoDB persistence provider, its own overlay (docs/persistence.md):
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
 docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
+docker compose -p vsaga-sqlserver -f docker-compose.yml -f docker-compose.sqlserver.yml up -d --build
 # and, for anything touching the Wolverine, MassTransit, Brighter or HTTP transport adapter, its own
 # overlay (docs/transports/index.md; plain `docker compose up` runs the RabbitMQ adapter):
 docker compose -p vsaga-wolverine -f docker-compose.yml -f docker-compose.wolverine.yml up -d --build
@@ -69,7 +70,7 @@ docker compose -p vsaga-http -f docker-compose.yml -f docker-compose.http.yml up
 ```
 
 Each of these also serves that stack's dashboard UI: http://localhost:4200 for the base and chaos
-stacks, and the API port minus 880 for each overlay (Redis 4800, MongoDB 4700, Wolverine 4300,
+stacks, and the API port minus 880 for each overlay (SQL Server 4900, Redis 4800, MongoDB 4700, Wolverine 4300,
 MassTransit 4400, Brighter 4500, HTTP 4600). Every page needs a signed-in user: each stack seeds
 `admin` / `dev-local-only-change-me` into its own identity volume on its first start (see
 [`docs/dashboard.md`](docs/dashboard.md#the-first-administrator)). Verify a UI change there, in the container,
@@ -99,6 +100,8 @@ project. It registers two contexts, the saga store's and the dashboard identity 
 ```bash
 # The saga store (Postgres)
 dotnet ef migrations add <Name> --context VSagaDbContext --project dotnet/src/VSaga.Persistence.EFCore.Postgres --startup-project dotnet/src/VSaga.Dashboard.Api
+# The saga store (SQL Server): the startup project registers one provider, picked by Persistence__Provider
+Persistence__Provider=SqlServer dotnet ef migrations add <Name> --context VSagaDbContext --project dotnet/src/VSaga.Persistence.EFCore.SqlServer --startup-project dotnet/src/VSaga.Dashboard.Api
 # The dashboard identity store (SQLite)
 dotnet ef migrations add <Name> --context DashboardIdentityDbContext --project dotnet/src/VSaga.Dashboard.Identity.Sqlite --startup-project dotnet/src/VSaga.Dashboard.Api --output-dir Migrations
 ```
@@ -164,7 +167,7 @@ pass:
   dependencies too. No job is
   path-filtered, so a newly published advisory can fail a PR that never touched `dashboard-web/`.
 - `Compose build & smoke`: `docker compose config` on the base file and the chaos overlay, then on
-  the base file with each of the six transport and persistence overlays, asserting the dashboard ports
+  the base file with each of the seven transport and persistence overlays, asserting the dashboard ports
   (base 5080/4200; each overlay replaces both port lists, UI port = API port minus 880, all on
   `127.0.0.1`); then `docker compose build`, `nginx -t` on the rendered dashboard-web configuration,
   and `docker compose up --wait`. Through the UI's origin (port 4200, with the demo API key) it checks

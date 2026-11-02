@@ -18,7 +18,7 @@ using Microsoft.Extensions.DependencyInjection;
 var builder = WebApplication.CreateBuilder(args);
 
 // Persistence:Provider, the same convention as Transport:Provider below and the same switch
-// Dashboard.Api's Program.cs has — Postgres (EF Core) by default, Redis or MongoDb when that provider's
+// Dashboard.Api's Program.cs has — Postgres (EF Core) by default, SqlServer (EF Core), Redis or MongoDb when that provider's
 // compose overlay says so. Both hosts must agree: the dashboard reads the store this process writes.
 var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "Postgres";
 switch (persistenceProvider)
@@ -27,6 +27,12 @@ switch (persistenceProvider)
         var connectionString = builder.Configuration.GetConnectionString("VSaga")
             ?? "Host=localhost;Port=5432;Database=vsaga;Username=postgres;Password=postgres";
         builder.Services.AddVSagaEfCore(db => db.UseNpgsql(connectionString));
+        break;
+    case "SqlServer":
+        // The dashboard's host owns the migrations (docker-compose gates this service on its health), so
+        // no MigrationsAssembly here, exactly as the Postgres case above.
+        builder.Services.AddVSagaEfCore(db => db.UseSqlServer(builder.Configuration.GetConnectionString("VSaga")
+            ?? throw new InvalidOperationException("ConnectionStrings:VSaga is not set; Persistence:Provider=SqlServer needs a SQL Server connection string.")));
         break;
     case "Redis":
         builder.Services.AddVSagaRedis(o => builder.Configuration.GetSection("Redis").Bind(o));

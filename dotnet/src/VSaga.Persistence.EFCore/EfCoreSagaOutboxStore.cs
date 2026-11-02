@@ -67,20 +67,27 @@ public sealed class EfCoreSagaOutboxStore(VSagaDbContext db) : ISagaOutboxStore
 
     /// <remarks>
     /// On Postgres, claims via an atomic <c>UPDATE ... RETURNING</c> guarded by
-    /// <c>FOR UPDATE SKIP LOCKED</c>, safe for multiple concurrent
-    /// VSaga.Dashboard.Api/worker instances racing on the same stale rows -- same shape as
-    /// <see cref="EfCoreSagaTimeoutStore.ClaimDueAsync"/>. Any other provider (e.g. SQLite in tests)
-    /// falls back to a plain load-then-update, which is only correct for a single dispatcher instance.
+    /// <c>FOR UPDATE SKIP LOCKED</c>; on SQL Server via an <c>UPDATE ... OUTPUT</c> over a <c>READPAST</c>
+    /// read (ADR 0009). Both are safe for multiple concurrent VSaga.Dashboard.Api/worker instances racing on
+    /// the same stale rows -- same shape as <see cref="EfCoreSagaTimeoutStore.ClaimDueAsync"/>. Any other
+    /// provider (e.g. SQLite in tests) falls back to a plain load-then-update, which is only correct for a
+    /// single dispatcher instance.
     /// </remarks>
-    public Task<IReadOnlyList<SagaOutboxMessage>> ClaimPendingAsync(DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken = default) =>
-        string.Equals(db.Database.ProviderName, EfCoreProviderNames.Npgsql, StringComparison.Ordinal)
-            ? ClaimPendingViaSkipLockedAsync(olderThan, batchSize, cancellationToken)
+    public Task<IReadOnlyList<SagaOutboxMessage>> ClaimPendingAsync(DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken = default)
+    {
+        var provider = db.Database.ProviderName;
+        if (EfCoreProviderNames.IsNpgsql(provider))
+            return ClaimPendingViaSkipLockedAsync(olderThan, batchSize, cancellationToken);
+
+        return EfCoreProviderNames.IsSqlServer(provider)
+            ? ClaimPendingViaReadPastAsync(olderThan, batchSize, cancellationToken)
             : ClaimPendingViaLoadAndUpdateAsync(olderThan, batchSize, cancellationToken);
+    }
 
     /// <summary>
     /// Not safe for multiple concurrent dispatcher instances -- two dispatchers can both load the same
-    /// stale row before either marks it Dispatched. Only reached for non-Postgres providers, where a
-    /// portable atomic claim isn't available.
+    /// stale row before either marks it Dispatched. Only reached for providers with no atomic claim of
+    /// their own (neither Postgres nor SQL Server), where a portable one isn't available.
     /// </summary>
     private async Task<IReadOnlyList<SagaOutboxMessage>> ClaimPendingViaLoadAndUpdateAsync(DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken)
     {
@@ -123,6 +130,36 @@ public sealed class EfCoreSagaOutboxStore(VSagaDbContext db) : ISagaOutboxStore
                 FOR UPDATE SKIP LOCKED
             )
             RETURNING "Id", "CorrelationId", "SagaType", "MessageId", "MessageTypeName", "Body", "Destination", "HeadersJson", "Status", "CreatedAtUtc"
+            """)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return claimed
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(ToOutboxMessage)
+            .ToList();
+    }
+
+    /// <summary>
+    /// SQL Server's counterpart of <see cref="ClaimPendingViaSkipLockedAsync"/>: the stale rows are read through a
+    /// CTE with <c>UPDLOCK, READPAST</c>, so a second dispatcher skips what the first has locked, and the same
+    /// statement marks them Dispatched and returns them with <c>OUTPUT</c>. <c>OUTPUT</c> does not guarantee row
+    /// order, so the created-at ordering is reapplied in memory.
+    /// </summary>
+    private async Task<IReadOnlyList<SagaOutboxMessage>> ClaimPendingViaReadPastAsync(DateTimeOffset olderThan, int batchSize, CancellationToken cancellationToken)
+    {
+        var olderThanUtc = olderThan.UtcDateTime;
+        var pending = (int)SagaOutboxStatus.Pending;
+        var dispatched = (int)SagaOutboxStatus.Dispatched;
+
+        var claimed = await db.SagaOutboxMessages.FromSqlInterpolated($"""
+            WITH stale AS (
+                SELECT TOP ({batchSize}) * FROM [SagaOutboxMessages] WITH (ROWLOCK, UPDLOCK, READPAST)
+                WHERE [Status] = {pending} AND [CreatedAtUtc] <= {olderThanUtc}
+                ORDER BY [CreatedAtUtc], [Id]
+            )
+            UPDATE stale SET [Status] = {dispatched}
+            OUTPUT inserted.[Id], inserted.[CorrelationId], inserted.[SagaType], inserted.[MessageId], inserted.[MessageTypeName], inserted.[Body], inserted.[Destination], inserted.[HeadersJson], inserted.[Status], inserted.[CreatedAtUtc]
             """)
             .AsNoTracking()
             .ToListAsync(cancellationToken);

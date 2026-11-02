@@ -1,6 +1,8 @@
 # Persistence
 
-vSaga ships four persistence providers. EF Core/Postgres is the reference. MongoDB is its
+vSaga ships five persistence providers. EF Core/Postgres is the reference, and EF Core/SQL Server runs the
+same stores for teams standardised on SQL Server or Azure SQL — see [EF Core / SQL Server](#ef-core--sql-server).
+MongoDB is its
 production-tier peer for teams already standardised on it: majority-acknowledged writes and a
 multi-document transaction per persist, at the cost of a hard replica-set prerequisite — see
 [MongoDB](#mongodb). Redis is durable but RAM-bound and single-node: at its default configuration a
@@ -8,13 +10,13 @@ hard kill loses up to one second of acknowledged writes, which for vSaga means a
 can be reprocessed rather than deduped. Redis reaches production tier only under the Tier B
 configuration in [Redis → Durability policy](#durability-policy). In-memory remains dev/test only.
 
-All four implement the same set of store contracts (`VSaga.Abstractions.Persistence`):
+All five implement the same set of store contracts (`VSaga.Abstractions.Persistence`):
 `ISagaSnapshotStore<TState>`, `ISagaSummaryReader`, `ISagaEventLogStore`, `ISagaTimeoutStore`,
-`ISagaOutboxStore`, `ISagaAdminStore`, and `IServiceTopologyStore`. The hosts pick one of the three
+`ISagaOutboxStore`, `ISagaAdminStore`, and `IServiceTopologyStore`. The hosts pick one of the four
 durable providers with the [`Persistence:Provider`](configuration.md#persistenceprovider--picking-the-store)
-switch (`Postgres`, `Redis` or `MongoDb`); in-memory is not one of its values.
+switch (`Postgres`, `SqlServer`, `Redis` or `MongoDb`); in-memory is not one of its values.
 
-All four are held to the same written contracts by the cross-provider `VSaga.Persistence.Conformance`
+All five are held to the same written contracts by the cross-provider `VSaga.Persistence.Conformance`
 suite, which a third-party provider can run against itself; its
 [README](../dotnet/tests/VSaga.Persistence.Conformance/README.md) covers the `IProviderFixture` to
 implement and the xUnit v2 requirement. Every `ISagaSummaryReader` must honour every filter member of
@@ -111,9 +113,10 @@ property, so on Postgres the column truncates to microsecond resolution while th
 `DataJson` keeps full 100-nanosecond ticks. Compare the two at storage resolution, never for exact
 equality.
 
-**Concurrency-safe claiming — Postgres only.** `EfCoreSagaTimeoutStore.ClaimDueAsync` and
+**Concurrency-safe claiming — Postgres and SQL Server.** `EfCoreSagaTimeoutStore.ClaimDueAsync` and
 `EfCoreSagaOutboxStore.ClaimPendingAsync` (two separate implementations, one per store) each use an
-atomic `UPDATE ... WHERE ... FOR UPDATE SKIP LOCKED ... RETURNING`, so multiple
+atomic `UPDATE ... WHERE ... FOR UPDATE SKIP LOCKED ... RETURNING` on Postgres (SQL Server's counterpart is
+described under [EF Core / SQL Server](#ef-core--sql-server)), so multiple
 `SagaTimeoutDispatcherHostedService`/`SagaOutboxDispatcherHostedService` instances (or replicas) can
 poll concurrently without double-claiming a row.
 
@@ -123,14 +126,16 @@ the saga types sharing a database never fires — and so loses — the other ser
 `ClaimPendingAsync` deliberately has no such filter; the outbox dispatcher republishes raw bytes and can
 act on every row.
 
-> **This applies to Postgres and nothing else.** The choice is an exact string comparison against
-> `"Npgsql.EntityFrameworkCore.PostgreSQL"` (`EfCoreProviderNames.Npgsql`, tested by
-> `EfCoreSagaTimeoutStore.ClaimDueAsync` and `EfCoreSagaOutboxStore.ClaimPendingAsync`). **Every** other EF Core provider — including `UseSqlServer`,
-> suggested above — silently takes a plain load-then-update fallback that is correct for exactly one
+> **This applies to Postgres and SQL Server and nothing else.** The choice is an exact string comparison
+> against `"Npgsql.EntityFrameworkCore.PostgreSQL"` or `"Microsoft.EntityFrameworkCore.SqlServer"`
+> (`EfCoreProviderNames`, tested by `EfCoreSagaTimeoutStore.ClaimDueAsync` and
+> `EfCoreSagaOutboxStore.ClaimPendingAsync`). **Every** other EF Core provider — SQLite, or one you bring
+> yourself — silently takes a plain load-then-update fallback that is correct for exactly one
 > dispatcher instance. Two replicas on any other EF Core provider will fire the same timeout twice and
 > publish the same outbox row twice, with no error anywhere. See
-> [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md). (The Redis and
-> MongoDB providers claim atomically and are not affected.)
+> [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md), which predates SQL
+> Server's claim ([`adr/0009-sql-server-persistence-provider.md`](adr/0009-sql-server-persistence-provider.md)).
+> (The Redis and MongoDB providers claim atomically and are not affected.)
 
 **Claiming marks the row terminal, so redelivery is at-most-once.** A claim marks a timeout `Fired` and
 an outbox row `Dispatched` as part of the claim itself. If the dispatcher then fails to act on it, the
@@ -160,6 +165,71 @@ redeploy. Two consequences worth knowing:
 The dashboard's `vsaga-dashboard-identity` volume is a second, separate one. It holds the dashboard's users and
 session keys, not saga data, so wiping only the Postgres volume leaves every user in place, and `docker compose
 down -v` removes both (the demo administrator is then seeded again on the next start).
+
+## EF Core / SQL Server
+
+The same `VSaga.Persistence.EFCore` stores on SQL Server 2016 or later, Azure SQL Database and Azure SQL Managed
+Instance, through `VSaga.Persistence.EFCore.SqlServer`. It holds the migrations and the
+`Microsoft.EntityFrameworkCore.SqlServer` dependency and nothing else, for the same reason the Postgres package
+does. Everything under [EF Core / Postgres](#ef-core--postgres) that is not Postgres-specific applies unchanged:
+the five tables, the UTC `DateTime` convention, optimistic concurrency on `Version`, claiming that marks the row
+terminal. [ADR 0009](adr/0009-sql-server-persistence-provider.md) records the decision.
+
+```csharp
+services.AddVSagaEfCore(db => db.UseSqlServer(connectionString,
+    sql => sql.MigrationsAssembly("VSaga.Persistence.EFCore.SqlServer")));
+
+// at startup:
+await db.Database.MigrateAsync();
+```
+
+`MigrationsAssembly` is required for the reason given above, and `MigrateAsync()` creates the database if it does
+not exist. In the shipped hosts set `Persistence:Provider` to `SqlServer` and `ConnectionStrings:VSaga` to an
+ADO.NET string (`Server=host,1433;Database=vsaga;User Id=...;Password=...;`); `Dashboard.Api` applies the
+migrations at startup. The migrations are a single `InitialCreate`, generated with `dotnet ef` against the same
+model (see [`CONTRIBUTING.md`](../CONTRIBUTING.md#test)), not a replay of Postgres's history.
+
+**Concurrency-safe claiming.** Timeouts and outbox rows are claimed by one statement,
+`WITH x AS (SELECT TOP (n) ... WITH (ROWLOCK, UPDLOCK, READPAST) ... ORDER BY ...) UPDATE x SET ... OUTPUT inserted.*`.
+`READPAST` makes a second dispatcher skip rows the first has locked, so replicas take disjoint batches instead of
+waiting or double-claiming. The saga-type filter of `ClaimDueAsync` is a JSON array parameter read with
+`OPENJSON`. The cross-provider concurrent-claim suite runs against it.
+
+**Things to know before production.**
+
+- **Collation.** Ordinary comparisons follow the database collation, and the SQL Server default is
+  case-insensitive and ignores trailing spaces. So two saga types or business keys that differ only by case
+  are one key to the database, and a lookup by `SagaType` or `BusinessKey` is not case-sensitive. The two
+  places where the contracts demand an exact match are exact here regardless: a set of saga types in a list
+  filter (`SagaListFilter.SagaTypes`) and the saga types a timeout claim is scoped to are compared under
+  `Latin1_General_100_BIN2`, the claim with a length check for the trailing space as well. CLR type names do not
+  differ only by case in practice. Do not switch an existing database to a case-sensitive collation without
+  testing: every key comparison changes with it.
+- **One key can exceed the clustered-index limit.** The primary key of `SagaConsumerRegistrations` is
+  `(ServiceName nvarchar(200), MessageType nvarchar(400))`, a declared maximum of 1,200 bytes against SQL Server's
+  900-byte limit for a clustered key. The table is created with a warning, and only a row whose actual service
+  name plus message type exceeds 450 characters is rejected. Fully-qualified type names stay well under that.
+- **Timestamps keep 100 ns** (`datetime2`), finer than Postgres's microsecond; `DataJson` keeps full precision on
+  both.
+- **The `__EFMigrationsHistory` table and `vsaga` database** are created by `MigrateAsync`. The login that runs it
+  needs `CREATE DATABASE` the first time (or create the database yourself and grant `db_owner`-level DDL); after
+  that, the application needs only read and write on the five tables.
+- **Backups, HA and failover** are SQL Server's: an Always On availability group or Azure SQL's built-in HA gives
+  the durability this provider inherits. vSaga adds no durability tier of its own.
+
+### The compose overlay
+
+`docker-compose.sqlserver.yml` switches both hosts to SQL Server for a live run, like the Redis and MongoDB
+overlays:
+
+```bash
+docker compose -p vsaga-sqlserver -f docker-compose.yml -f docker-compose.sqlserver.yml up -d --build
+```
+
+The dashboard is at http://localhost:4900 (the API on 5780, SQL Server on host port 1435). The `sqlserver`
+container needs about 2 GB of memory, accepts the SQL Server EULA through `ACCEPT_EULA`, and uses a development
+`sa` password you should change for anything else. A runnable single-process sample is in
+[`dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.SqlServer`](../dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.SqlServer/).
 
 ## Redis
 
@@ -733,7 +803,8 @@ services.AddVSagaInMemoryPersistence();
 ## Choosing a provider
 
 Use EF Core/Postgres for anything that needs to survive a restart, run more than one replica, or be
-queried by the dashboard against real historical data. Use MongoDB for the same, when a team is already
+queried by the dashboard against real historical data. Use EF Core/SQL Server for the same when a team is already
+standardised on SQL Server or Azure SQL: it has the same stores and the same atomic claim. Use MongoDB for the same, when a team is already
 standardised on it and runs a [replica set](#the-replica-set-is-a-hard-prerequisite) — it is the one
 other provider with majority-acknowledged, transactional persists. Use Redis when a team will not run Postgres and
 accepts [Tier A's loss window](#durability-policy) — development, CI, single-node and edge deployments

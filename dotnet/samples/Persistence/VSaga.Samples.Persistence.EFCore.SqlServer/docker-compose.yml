@@ -1,0 +1,29 @@
+# SQL Server for the VSaga.Samples.Persistence.EFCore.SqlServer sample — nothing else. The sample runs on
+# the host with the in-memory transport, so no broker is needed.
+#
+#   docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.SqlServer/docker-compose.yml up -d --wait
+#
+# Host port 1436, not 1433 (a local SQL Server) or 1435 (the repo root's SQL Server overlay), so this runs
+# alongside both. The image needs about 2 GB of memory and ACCEPT_EULA=Y. The database itself is created by
+# the sample's MigrateAsync. The volume keeps the sagas across `down`/`up`; `down -v` starts clean.
+name: vsaga-sample-sqlserver
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Vsaga_dev_only_1"
+    ports:
+      - "1436:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b -o /dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  sqlserver-data:

@@ -43,8 +43,8 @@ builder.Services.AddDashboardEdge(edge);
 // transport republish (see SagaEndpoints), not an in-process orchestrator call.
 //
 // Persistence:Provider, the same convention as Transport:Provider below — Postgres (EF Core) by default,
-// matching every prior compose run, Redis or MongoDb when that provider's compose overlay says so. A
-// greenfield choice, not a migration: flipping it on a running system points every store at an empty
+// matching every prior compose run, SqlServer (EF Core as well), Redis or MongoDb when that provider's
+// compose overlay says so. A greenfield choice, not a migration: flipping it on a running system points every store at an empty
 // key space or database. The health check registered further down follows the same switch, under the
 // provider-neutral name "persistence".
 var persistenceProvider = builder.Configuration["Persistence:Provider"] ?? "Postgres";
@@ -59,6 +59,15 @@ switch (persistenceProvider)
         // Postgres project's assembly instead of the DbContext's own.
         builder.Services.AddVSagaEfCore(db => db.UseNpgsql(connectionString,
             npgsql => npgsql.MigrationsAssembly("VSaga.Persistence.EFCore.Postgres")));
+        break;
+    case "SqlServer":
+        // The same EF Core stores on SQL Server (or Azure SQL), with its own migrations project for the same
+        // reason as Postgres's. ConnectionStrings:VSaga is an ADO.NET string here too, so the one key serves
+        // both relational providers. No default: a SQL Server string carries a login, so none lives in the source.
+        var sqlServerConnectionString = builder.Configuration.GetConnectionString("VSaga")
+            ?? throw new InvalidOperationException("ConnectionStrings:VSaga is not set; Persistence:Provider=SqlServer needs a SQL Server connection string (appsettings.json still holds the Postgres one).");
+        builder.Services.AddVSagaEfCore(db => db.UseSqlServer(sqlServerConnectionString,
+            sql => sql.MigrationsAssembly("VSaga.Persistence.EFCore.SqlServer")));
         break;
     case "Redis":
         // Redis binds its own options section; its connection string is StackExchange.Redis's own format

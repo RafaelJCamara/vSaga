@@ -5,6 +5,10 @@
 **Relates to:** [`0003-persistence-contract-clauses.md`](0003-persistence-contract-clauses.md) —
 clause 10's saga-type filter touches the same claim path.
 
+> **Extended 2026-11-02 by [ADR 0009](0009-sql-server-persistence-provider.md):** SQL Server now has an atomic
+> claim of its own, so "Postgres-only" below reads "Postgres and SQL Server". The rest of this record, the
+> fallback every *other* EF Core provider takes, stands as written.
+
 > **Retroactive.** This records reasoning that until now existed **only in code comments**. It changes
 > nothing. It exists because the one reference doc that describes this behaviour
 > (`docs/persistence.md:62-66`) describes it *wrongly*, in a way that can cost a production user

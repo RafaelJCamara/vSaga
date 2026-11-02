@@ -5,7 +5,7 @@ MassTransit/Wolverine dependency required — though adapters for both exist if 
 standardized on one).
 
 The engine gives you a fluent saga DSL for both orchestrated and choreographed sagas, a persisted
-event log, EF Core (Postgres), MongoDB, Redis and in-memory persistence, six interchangeable `IMessageTransport`
+event log, EF Core (Postgres or SQL Server), MongoDB, Redis and in-memory persistence, six interchangeable `IMessageTransport`
 adapters, a transport-agnostic `.CallHttp` step for calling plain REST APIs, an in-memory testing
 harness, OpenTelemetry instrumentation, and a chaos-engineering fault-injection package. A
 saga-type-agnostic ops dashboard (ASP.NET Core API + Angular SPA) adds sign-in with access scoped by role
@@ -16,7 +16,7 @@ each one, and a retry that re-runs the step a failed saga failed in.
 
 ```bash
 dotnet add package VSaga.Core
-dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + .EFCore.Postgres, VSaga.Persistence.MongoDB, or VSaga.Persistence.Redis
+dotnet add package VSaga.Persistence.InMemory   # or VSaga.Persistence.EFCore + .EFCore.Postgres or .EFCore.SqlServer, VSaga.Persistence.MongoDB, or VSaga.Persistence.Redis
 dotnet add package VSaga.Transport.InMemory     # or VSaga.Transport.RabbitMQ / .Wolverine / .MassTransit / .Brighter / .Http
 ```
 
@@ -91,12 +91,13 @@ curl -H "X-Api-Key: dev-local-only-change-me" http://localhost:5080/api/sagas
 > In Windows PowerShell (not PowerShell 7+), `curl` is aliased to `Invoke-WebRequest`, which rejects
 > `-H`. Call `curl.exe` explicitly (Windows 10+ ships a real curl) or use PowerShell 7+/Git Bash instead.
 
-To run the same stack on MongoDB or Redis persistence instead of Postgres, layer that provider's overlay.
-Each overlay serves its own dashboard UI, at http://localhost:4700 and http://localhost:4800
-respectively, in front of its own dashboard API (`localhost:5580` and `localhost:5680`); see
+To run the same stack on SQL Server, MongoDB or Redis persistence instead of Postgres, layer that provider's overlay.
+Each overlay serves its own dashboard UI, at http://localhost:4900 (SQL Server), http://localhost:4700 (MongoDB)
+and http://localhost:4800 (Redis), in front of its own dashboard API (`localhost:5780`, `localhost:5580` and `localhost:5680`); see
 [`docs/persistence.md`](docs/persistence.md) for what each provider requires or trades away:
 
 ```bash
+docker compose -p vsaga-sqlserver -f docker-compose.yml -f docker-compose.sqlserver.yml up -d --build
 docker compose -p vsaga-mongo -f docker-compose.yml -f docker-compose.mongo.yml up -d --build
 docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml up -d --build
 ```
@@ -172,6 +173,7 @@ only thing that differs between them:
 | --- | --- | --- |
 | In-memory | [`VSaga.Samples.Persistence.InMemory`](dotnet/samples/Persistence/VSaga.Samples.Persistence.InMemory/) | none |
 | EF Core / Postgres | [`VSaga.Samples.Persistence.EFCore.Postgres`](dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.Postgres/) | Postgres 16 on `localhost:5434` |
+| EF Core / SQL Server | [`VSaga.Samples.Persistence.EFCore.SqlServer`](dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.SqlServer/) | SQL Server 2022 on `localhost:1436` |
 | MongoDB | [`VSaga.Samples.Persistence.MongoDB`](dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB/) | MongoDB 8 replica set on `localhost:27019` |
 | Redis | [`VSaga.Samples.Persistence.Redis`](dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis/) | Redis 7.4 on `localhost:6380` |
 
@@ -194,7 +196,7 @@ dashboard-web/            Angular 22 SPA for the dashboard (built with npm and t
 docs/                     Reference documentation, design records, and project history — see below
 docker-compose*.yml       The reference stack (RabbitMQ transport, Postgres persistence) plus one
                            overlay each for the Wolverine, MassTransit, Brighter and HTTP adapters,
-                           one for chaos, and one each for MongoDB and Redis persistence
+                           one for chaos, and one each for SQL Server, MongoDB and Redis persistence
 ```
 
 ## Documentation

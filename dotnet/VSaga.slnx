@@ -6,6 +6,7 @@
   <Folder Name="/samples/persistence/">
     <Project Path="samples/Persistence/VSaga.Samples.Persistence.Common/VSaga.Samples.Persistence.Common.csproj" />
     <Project Path="samples/Persistence/VSaga.Samples.Persistence.EFCore.Postgres/VSaga.Samples.Persistence.EFCore.Postgres.csproj" />
+    <Project Path="samples/Persistence/VSaga.Samples.Persistence.EFCore.SqlServer/VSaga.Samples.Persistence.EFCore.SqlServer.csproj" />
     <Project Path="samples/Persistence/VSaga.Samples.Persistence.InMemory/VSaga.Samples.Persistence.InMemory.csproj" />
     <Project Path="samples/Persistence/VSaga.Samples.Persistence.MongoDB/VSaga.Samples.Persistence.MongoDB.csproj" />
     <Project Path="samples/Persistence/VSaga.Samples.Persistence.Redis/VSaga.Samples.Persistence.Redis.csproj" />
@@ -21,6 +22,7 @@
     <Project Path="src/VSaga.Observability/VSaga.Observability.csproj" />
     <Project Path="src/VSaga.Persistence.EFCore/VSaga.Persistence.EFCore.csproj" />
     <Project Path="src/VSaga.Persistence.EFCore.Postgres/VSaga.Persistence.EFCore.Postgres.csproj" />
+    <Project Path="src/VSaga.Persistence.EFCore.SqlServer/VSaga.Persistence.EFCore.SqlServer.csproj" />
     <Project Path="src/VSaga.Persistence.InMemory/VSaga.Persistence.InMemory.csproj" />
     <Project Path="src/VSaga.Persistence.MongoDB/VSaga.Persistence.MongoDB.csproj" />
     <Project Path="src/VSaga.Persistence.Redis/VSaga.Persistence.Redis.csproj" />

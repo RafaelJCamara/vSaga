@@ -1,0 +1,69 @@
+# SQL Server persistence overlay: layer this on top of docker-compose.yml to run the OrderProcessing sample
+# and the dashboard against VSaga.Persistence.EFCore.SqlServer (docs/persistence.md, "EF Core / SQL Server")
+# instead of EF Core/Postgres, for that provider's own live-verification pass.
+#
+#   docker compose -p vsaga-sqlserver -f docker-compose.yml -f docker-compose.sqlserver.yml up -d --build
+# Dashboard: http://localhost:4900
+#
+# Both hosts switch to Persistence__Provider=SqlServer and share ConnectionStrings__VSaga. The database
+# itself is created by dashboard-api's MigrateAsync (EF Core creates a missing database before it applies
+# migrations), and order-processing waits for dashboard-api to be healthy, as in every stack, so it never
+# starts against a schema that is not there yet. `docker compose ps` showing dashboard-api healthy means the
+# "persistence" check connected to SQL Server.
+#
+# The sa password is a development value, like the seeded dashboard administrator's: change it, and keep the
+# image's complexity rules (SQL Server refuses a weak one and the container exits). ACCEPT_EULA=Y is required
+# by the image. It needs about 2 GB of memory (mssql refuses to start below that).
+#
+# postgres stays up even though nothing on this track connects to it: both hosts' depends_on in the base
+# file name it, and this overlay leaves those entries alone rather than resetting them. Its port is
+# remapped like every other service's so this track runs alongside the plain stack.
+#
+# Ports use the "!override" merge tag rather than plain sequences, same reason as every other overlay:
+# Compose's default list-merge would otherwise leave this track also trying to bind the base file's
+# original host ports. This overlay's block: sqlserver 1435, postgres 5449, rabbitmq 6372/16372,
+# dashboard-api 5780, plus dashboard-web 4900 (the API port minus 880, as in every stack).
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Vsaga_dev_only_1"
+    ports:
+      - "1435:1433"
+    volumes:
+      - vsaga-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b -o /dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  postgres:
+    ports: !override ["5449:5432"]
+  rabbitmq:
+    ports: !override ["6372:5672", "16372:15672"]
+
+  dashboard-api:
+    ports: !override ["127.0.0.1:5780:8080"]
+    environment:
+      Persistence__Provider: "SqlServer"
+      ConnectionStrings__VSaga: "Server=sqlserver,1433;Database=vsaga;User Id=sa;Password=Vsaga_dev_only_1;TrustServerCertificate=True"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+
+  dashboard-web:
+    ports: !override ["127.0.0.1:4900:8080"]
+
+  order-processing:
+    environment:
+      Persistence__Provider: "SqlServer"
+      ConnectionStrings__VSaga: "Server=sqlserver,1433;Database=vsaga;User Id=sa;Password=Vsaga_dev_only_1;TrustServerCertificate=True"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+
+volumes:
+  vsaga-sqlserver-data:

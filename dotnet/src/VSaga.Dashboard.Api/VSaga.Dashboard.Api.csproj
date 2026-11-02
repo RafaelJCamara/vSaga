@@ -33,6 +33,9 @@
          VSaga.Persistence.EFCore project) so the Npgsql-specific EF Core migrations assembly is
          present in this app's output for MigrationsAssembly(...)/MigrateAsync() to find at runtime. -->
     <ProjectReference Include="..\VSaga.Persistence.EFCore.Postgres\VSaga.Persistence.EFCore.Postgres.csproj" />
+    <!-- Same reason as the Postgres project: the SQL Server migrations must be in this app's output for
+         MigrationsAssembly(...)/MigrateAsync() to find them when Persistence:Provider=SqlServer. -->
+    <ProjectReference Include="..\VSaga.Persistence.EFCore.SqlServer\VSaga.Persistence.EFCore.SqlServer.csproj" />
     <ProjectReference Include="..\VSaga.Persistence.MongoDB\VSaga.Persistence.MongoDB.csproj" />
     <ProjectReference Include="..\VSaga.Persistence.Redis\VSaga.Persistence.Redis.csproj" />
     <ProjectReference Include="..\VSaga.Transport.RabbitMQ\VSaga.Transport.RabbitMQ.csproj" />

@@ -10,7 +10,7 @@ public sealed class SqliteProviderFixture : IProviderFixture
     /// <summary>Every store shares one <see cref="VSagaDbContext"/> per unit of work, so a staged row is flushed only by a commit on it.</summary>
     public bool SupportsAtomicUnitOfWork => true;
 
-    /// <summary>Anything but Npgsql takes the load-then-update claim fallback, correct for one dispatcher only (ADR 0004).</summary>
+    /// <summary>Anything but Npgsql and SQL Server takes the load-then-update claim fallback, correct for one dispatcher only (ADR 0004, ADR 0009).</summary>
     public bool SupportsConcurrentClaim => false;
 
     /// <summary>EF Core's SQLite provider stores a <see cref="DateTime"/> as text with up to seven fractional digits (trailing zeros dropped) — full tick precision.</summary>

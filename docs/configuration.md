@@ -285,8 +285,11 @@ applies no migrations — which is documented there rather than duplicated here.
 
 Not a library key: like `Transport:Provider`, both shipped hosts (`VSaga.Dashboard.Api` and the
 OrderProcessing sample) read it themselves and switch on it. `Postgres` (the default, EF Core with
-`UseNpgsql`), `Redis` or `MongoDb`. Both hosts must agree — the dashboard reads the store the saga host
-writes — and `docker-compose.redis.yml` and `docker-compose.mongo.yml` are the two overlays that set it.
+`UseNpgsql`), `SqlServer` (EF Core with `UseSqlServer`, migrations from
+`VSaga.Persistence.EFCore.SqlServer`), `Redis` or `MongoDb`. Both relational values read the ADO.NET string
+in `ConnectionStrings:VSaga`, in each database's own format. Both hosts must agree — the dashboard reads the
+store the saga host writes — and `docker-compose.sqlserver.yml`, `docker-compose.redis.yml` and
+`docker-compose.mongo.yml` are the overlays that set it.
 It is a greenfield choice, not a migration: flipping it on a running system points every store at an
 empty key space or database, so in-flight sagas vanish, pending timeouts never fire and pending outbox
 rows are never drained. The dashboard's `/health` reports the chosen store under the provider-neutral
@@ -345,7 +348,9 @@ Host=localhost;Port=5432;Database=vsaga;Username=postgres;Password=postgres
 Both hosts' `appsettings.json` also set `ConnectionStrings:VSaga` to this same string, so `dotnet run`
 against a local Postgres needs no configuration at all; the hardcoded fallback applies only if that entry
 is removed. Either way it is a development default, not a safe production one, and nothing warns when it
-is used. In containers it is supplied as the environment form `ConnectionStrings__VSaga` —
+is used. With `Persistence:Provider=SqlServer` that appsettings entry is still the Postgres string, so
+set `ConnectionStrings:VSaga` to a SQL Server one (`Server=localhost,1433;Database=vsaga;User Id=sa;Password=...;TrustServerCertificate=True`);
+there is no SQL Server fallback, because a SQL Server string carries a login (the hosts throw if the key is absent). In containers it is supplied as the environment form `ConnectionStrings__VSaga` —
 `docker-compose.yml` sets it on both `dashboard-api` and `order-processing`, and
 `docker-compose.http.yml` sets it again on the extra `order-processing-participants` service the HTTP
 track adds.

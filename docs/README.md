@@ -17,7 +17,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
   `Dashboard:*` key in one table (the identity store, the first administrator, sessions, passwords and
   lockout, rate limits, the API key and its role, CORS origin, trusted proxies, snapshots) and the UI
   container's variables, OpenTelemetry wiring.
-- [`persistence.md`](persistence.md) — EF Core/Postgres (migrations, the Postgres-volume caveat),
+- [`persistence.md`](persistence.md) — EF Core/Postgres (migrations, the Postgres-volume caveat), EF Core/SQL Server
+  (its migrations package, the `READPAST` claim, collation and key-length notes),
   MongoDB (the replica-set prerequisite, pinned write concern, the collections and indexes, supported
   servers), Redis (durability tiers, supported servers, the key space, the capacity model) and in-memory
   persistence. Each provider has a runnable sample in
@@ -112,6 +113,10 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0008-dashboard-retry-reruns-the-failed-step.md`](adr/0008-dashboard-retry-reruns-the-failed-step.md)
     — **Accepted** 2026-10-02 and **implemented** 2026-10-05: a dashboard retry resets the saga to the
     state before the failed step and republishes that step's message, targeted at the retried saga type.
+  - [`adr/0009-sql-server-persistence-provider.md`](adr/0009-sql-server-persistence-provider.md) —
+    **Accepted** and **implemented** 2026-11-02: SQL Server as a fifth provider on the EF Core
+    stores, with its own migrations package and an atomic `READPAST` claim, extending ADR 0004's claim to a
+    second database.
 
 ## History
 
