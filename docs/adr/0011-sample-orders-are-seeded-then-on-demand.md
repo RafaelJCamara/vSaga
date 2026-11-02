@@ -1,6 +1,6 @@
 # ADR 0011: The sample submits a seed batch of orders, then only on demand
 
-**Status:** **Proposed**
+**Status:** **Accepted** — 2026-11-02, by the maintainer. **Implemented** — 2026-11-02, `265185a`.
 **Date:** 2026-11-02
 **Relates to:** [`0010-dashboard-design-tokens-and-light-theme.md`](0010-dashboard-design-tokens-and-light-theme.md)
 (the dashboard list the sample feeds); the sample's saga design in

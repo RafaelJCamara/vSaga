@@ -125,8 +125,8 @@ new here; the rest of this index is organized by topic, roughly in the order you
     — **Accepted** and **implemented** 2026-11-02: spacing, shape and type tokens, a light theme (OS setting plus a user-menu
     choice), status dots told apart by shape, a colour per saga kind, and real ARIA tabs on the saga page.
   - [`adr/0011-sample-orders-are-seeded-then-on-demand.md`](adr/0011-sample-orders-are-seeded-then-on-demand.md)
-    — **Proposed**: the sample submits a seed batch of orders at startup and more only through
-    `POST /orders`, instead of one every 8 seconds forever.
+    — **Accepted** and **implemented** 2026-11-02: the sample submits a seed batch of orders at startup
+    and more only through `POST /orders`, instead of one every 8 seconds forever.
 
 ## History
 
