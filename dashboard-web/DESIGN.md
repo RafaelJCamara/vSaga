@@ -36,9 +36,11 @@ skips, so the dark base stands. `color-scheme` follows, so
 scrollbars, the open list of a native `select`, date pickers and autofill match the page.
 
 The choice is made in the user menu (`ThemeService`), stored in `localStorage` under `vsaga.theme` as `light` or `dark`
-(no value means System) and applied as `data-theme` on `<html>`. Because the CSP forbids an inline script, it is
-applied when the bundle starts, not before the first paint: a stored choice that differs from the OS may show the OS
-theme for a moment on a cold load. A browser that blocks storage keeps System.
+(no value means System) and applied as `data-theme` on `<html>`. `public/theme-init.js`, a same-origin script
+loaded from `<head>` (the CSP allows `script-src 'self'` and forbids only the inline kind), applies it before the
+first paint, so a stored choice that differs from the OS does not flash; `ThemeService` applies it again when the app
+starts and on every change. The script duplicates the storage key, which `theme-init.spec.ts` pins to the service's.
+A browser that blocks storage keeps System.
 
 ### Colour roles
 
@@ -130,7 +132,11 @@ Radii: `--radius-sm` `5px` (buttons, menu items), `--radius-md` `6px` (inputs, b
 (`0 8px 24px`, 40 % black in dark and 16 % ink in light), on the user menu; nothing else floats. The guide overlay's
 scrim and spotlight are the one place a literal colour stays: it is a dim layer over either theme.
 
-Global classes use the scales. A component stylesheet moves to them when it is touched; it is not swept.
+Every spacing and radius value that equals a scale step is a token, in the global classes and in every component
+stylesheet (the computed padding, margin, gap, radius and font size of every element on nine pages, at 360 and
+1280 px, were identical before and after that change). About fifty spacing values sit between steps (`.3rem`, `.35rem`,
+`.4rem`, `.6rem`, `.9rem` and the like) and are still literals: snapping them moves pixels, so it is a design
+decision for the maintainer, not a mechanical one.
 
 ### Status and kind marks
 
@@ -261,5 +267,3 @@ Still open:
 1. **Density.** One density today. A compact/comfortable switch is cheap to add on the spacing tokens if operators ask
    for it; nobody has.
 2. **A higher-contrast theme.** Possible on the same token set; not asked for.
-3. **The theme flash.** Closing it needs the theme applied before first paint, which the CSP's no-inline-script rule
-   prevents; a server-set attribute is the only route and would need the nginx image to know the user's choice.
