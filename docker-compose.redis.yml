@@ -54,6 +54,7 @@ services:
     ports: !override ["127.0.0.1:4800:8080"]
 
   order-processing:
+    ports: !override ["127.0.0.1:5681:8080"] # POST /orders
     environment:
       Persistence__Provider: "Redis"
       Redis__ConnectionString: "redis:6379"

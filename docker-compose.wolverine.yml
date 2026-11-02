@@ -22,5 +22,6 @@ services:
   dashboard-web:
     ports: !override ["127.0.0.1:4300:8080"]
   order-processing:
+    ports: !override ["127.0.0.1:5181:8080"] # POST /orders
     environment:
       Transport__Provider: "Wolverine"

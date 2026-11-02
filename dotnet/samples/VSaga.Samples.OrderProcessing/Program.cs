@@ -14,6 +14,7 @@ using VSaga.Transport.Http;
 using VSaga.Transport.Wolverine;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -140,7 +141,11 @@ if (role != ServiceRole.Participants)
         // under OrderSubmitter's own fresh correlation id, so it never shares an instance with OrderSaga.
         .AddSaga<MixedFulfilmentSaga, MixedFulfilmentSagaState>());
 
-    builder.Services.AddHostedService<OrderSubmitter>();
+    // A seed batch at startup, then orders only when POST /orders (mapped below) asks for them -- one
+    // instance serves both, so it is registered as a singleton and as the hosted service.
+    builder.Services.Configure<OrderSubmitterOptions>(builder.Configuration.GetSection("OrderSubmitter"));
+    builder.Services.AddSingleton<OrderSubmitter>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<OrderSubmitter>());
 }
 
 if (role != ServiceRole.Sagas)
@@ -170,6 +175,19 @@ if (string.Equals(builder.Configuration["Transport:Provider"], "Http", StringCom
 // Participants), matching where its own .CallHttp call executes.
 if (role != ServiceRole.Participants)
 {
+    // Starts more sagas on demand: `POST /orders` submits one order, `POST /orders?count=5` five. The sample
+    // submits only a seed batch at startup (OrderSubmitter), so this is how a running stack gets more.
+    app.MapPost("/orders", async (int? count, OrderSubmitter submitter, IOptions<OrderSubmitterOptions> submitterOptions, CancellationToken cancellationToken) =>
+    {
+        var requested = count ?? 1;
+        var max = submitterOptions.Value.MaxOrdersPerRequest;
+        if (requested < 1 || requested > max)
+            return Results.BadRequest(new { error = $"count must be between 1 and {max}." });
+
+        var orderIds = await submitter.SubmitAsync(requested, cancellationToken);
+        return Results.Accepted(value: new { submitted = orderIds.Count, orderIds });
+    });
+
     app.MapPost("/loyalty/lookup", (LoyaltyLookupRequest request) =>
     {
         // Simulated flaky gateway, same spirit as the RabbitMQ participants' own occasional declines/

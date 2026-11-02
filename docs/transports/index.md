@@ -160,17 +160,19 @@ docker compose -p vsaga-http         -f docker-compose.yml -f docker-compose.htt
 Each overlay remaps a different, non-overlapping port range, so more than one can genuinely run at
 once — see that overlay's own file header for its exact ports:
 
-| Overlay | Postgres | RabbitMQ (AMQP / mgmt) | Dashboard API | Dashboard UI |
-| --- | --- | --- | --- | --- |
-| `docker-compose.wolverine.yml` | `5443` | `5772` / `15772` | `5180` | `4300` |
-| `docker-compose.masstransit.yml` | `5444` | `5872` / `15872` | `5280` | `4400` |
-| `docker-compose.brighter.yml` | `5445` | `5972` / `15972` | `5380` | `4500` |
-| `docker-compose.http.yml` | `5446` | `6072` / `16072` | `5480` | `4600` |
-| `docker-compose.redis.yml` (a persistence overlay, not a transport one — see [`../persistence.md`](../persistence.md#redis); adds `redis` on `6479`) | `5447` | `6272` / `16272` | `5680` | `4800` |
-| `docker-compose.mongo.yml` (a persistence overlay — see [`../persistence.md`](../persistence.md#mongodb); adds `mongo` on `27018`) | `5448` | `6172` / `16172` | `5580` | `4700` |
+| Overlay | Postgres | RabbitMQ (AMQP / mgmt) | Dashboard API | Dashboard UI | Sample (`POST /orders`) |
+| --- | --- | --- | --- | --- | --- |
+| `docker-compose.wolverine.yml` | `5443` | `5772` / `15772` | `5180` | `4300` | `5181` |
+| `docker-compose.masstransit.yml` | `5444` | `5872` / `15872` | `5280` | `4400` | `5281` |
+| `docker-compose.brighter.yml` | `5445` | `5972` / `15972` | `5380` | `4500` | `5381` |
+| `docker-compose.http.yml` | `5446` | `6072` / `16072` | `5480` | `4600` | `5481` |
+| `docker-compose.redis.yml` (a persistence overlay, not a transport one — see [`../persistence.md`](../persistence.md#redis); adds `redis` on `6479`) | `5447` | `6272` / `16272` | `5680` | `4800` | `5681` |
+| `docker-compose.mongo.yml` (a persistence overlay — see [`../persistence.md`](../persistence.md#mongodb); adds `mongo` on `27018`) | `5448` | `6172` / `16172` | `5580` | `4700` | `5581` |
+| `docker-compose.sqlserver.yml` (a persistence overlay � see [`../persistence.md`](../persistence.md#ef-core--sql-server); adds `sqlserver` on `1435`) | `5449` | `6372` / `16372` | `5780` | `4900` | `5781` |
 
 The dashboard ports, API and UI, are bound to `127.0.0.1` in every stack, and the UI's port is always
-the API's minus 880.
+the API's minus 880. The sample's own port (`POST /orders`, see
+[`../configuration.md`](../configuration.md#ordersubmitter--how-many-sagas-the-sample-creates)) is the API's plus 1, `5081` in the plain stack.
 
 Tear one down the same way you brought it up, naming the same `-p` project:
 `docker compose -p vsaga-wolverine down`.

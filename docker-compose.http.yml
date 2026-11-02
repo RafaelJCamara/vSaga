@@ -46,6 +46,7 @@ services:
     ports: !override ["127.0.0.1:4600:8080"]
 
   order-processing:
+    ports: !override ["127.0.0.1:5481:8080"] # POST /orders
     environment:
       ASPNETCORE_URLS: "http://+:8080"
       Role: "Sagas"

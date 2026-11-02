@@ -65,7 +65,7 @@ sagas.
 ## Run the demo
 
 The full reference stack — Postgres, RabbitMQ, the dashboard API, the dashboard UI, and a
-continuously-submitting `OrderProcessing` sample exercising orchestration, choreography, sub-sagas,
+`OrderProcessing` sample exercising orchestration, choreography, sub-sagas,
 parallel fan-out, and `.CallHttp` all at once — is one command, and Docker is all it needs:
 
 ```bash
@@ -106,6 +106,7 @@ docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml 
 | --- | --- | --- |
 | Dashboard UI | http://localhost:4200 | Sign in as `admin` / `dev-local-only-change-me`, seeded by `Dashboard__Admin__*` in `docker-compose.yml`. Served by nginx in the `dashboard-web` container, which proxies `/api` and `/hubs` to the API — see [`docs/dashboard.md`](docs/dashboard.md#the-spa) |
 | Dashboard API | http://localhost:5080 | For `curl` and machine clients: API key `dev-local-only-change-me`, read-only (the Viewer role) — see [`docs/dashboard.md`](docs/dashboard.md#authentication). The UI does not use this port |
+| Sample: create orders | `POST http://localhost:5081/orders` | Starts more sagas on demand; see [Create more sagas](#create-more-sagas). No authentication, loopback only |
 | RabbitMQ management | http://localhost:15672 | `guest` / `guest` |
 | RabbitMQ (AMQP) | `localhost:5672` | `guest` / `guest`, i.e. `amqp://guest:guest@localhost:5672/` |
 | Postgres | `localhost:5433` | `postgres`/`postgres`, database `vsaga` (port 5433, not 5432, to avoid clashing with a local Postgres) |
@@ -122,14 +123,35 @@ run alongside it:
 | RabbitMQ (AMQP / management) | `localhost:6172` / `16172` | `localhost:6272` / `16272` |
 | Postgres (running, unused by that overlay) | `localhost:5448` | `localhost:5447` |
 
-The sample submits orders on a loop as soon as it starts, so the saga list fills on its own — nothing
-to trigger by hand. Try the chaos overlay for fault injection
+The sample submits ten orders when it starts, so the saga list has rows within a few seconds, and then
+stops. Try the chaos overlay for fault injection
 (`docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --build`, see
 [`docs/chaos.md`](docs/chaos.md)), or one of the other transport adapters via their own overlay — these
 need a `-p <project-name>` flag and use different, remapped ports so they can run alongside the plain
 stack; see ["Running an adapter's own overlay"](docs/transports/index.md#running-an-adapters-own-overlay)
 for the exact commands and ports. Every stack serves its own dashboard UI; open that stack's UI port,
 there is nothing to edit.
+
+### Create more sagas
+
+The sample submits ten orders at startup and nothing after that, so a stack left running does not pile up
+sagas. To create more, call the sample's `POST /orders` endpoint (host port `5081` in the plain stack):
+
+```bash
+curl -X POST http://localhost:5081/orders                # one order
+curl -X POST "http://localhost:5081/orders?count=25"     # twenty-five
+```
+
+It answers `202` with the order ids (`{"submitted":25,"orderIds":["ORD-20261102-0011", ...]}`), and `400`
+when `count` is below 1 or above 50. Each order starts up to seven saga instances (the order itself, the
+post-shipment choreography, a loyalty lookup, a mixed-transport fulfilment, and the invoice sub-sagas), and
+they appear in the dashboard as they run. Each overlay publishes the endpoint on its dashboard API's port
+plus one, for example `5181` for the Wolverine overlay and `5681` for Redis; the full list is in
+["Running an adapter's own overlay"](docs/transports/index.md#running-an-adapters-own-overlay). The
+startup count and the cap per call are `OrderSubmitter:SeedOrders` and `OrderSubmitter:MaxOrdersPerRequest`
+([`docs/configuration.md`](docs/configuration.md#ordersubmitter--how-many-sagas-the-sample-creates)); set
+`OrderSubmitter__SeedOrders=0` on the `order-processing` service to start empty. In Windows PowerShell,
+call `curl.exe` (see the note above).
 
 > **The demo's credentials are public.** The administrator's password and the API key are both
 > `dev-local-only-change-me`, committed in `docker-compose.yml`, so the dashboard ports (UI and API, in every

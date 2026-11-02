@@ -205,12 +205,33 @@ well, while `docker-compose.wolverine.yml`/`.brighter.yml`/`.masstransit.yml` se
 
 A sample-only key: `VSaga.Samples.OrderProcessing` reads it, and neither the library nor the dashboard
 does. Unset, empty or `All` runs the whole sample in one process. `Sagas` runs only the saga engine,
-the `OrderSubmitter` front door and the sample's own `/loyalty/lookup` and `/payments/*` endpoints;
+the `OrderSubmitter` front door (with its `POST /orders`) and the sample's own `/loyalty/lookup` and `/payments/*` endpoints;
 `Participants` runs only the participant services. Any other value throws `InvalidOperationException`
 at startup. Only `docker-compose.http.yml` sets it: over the HTTP transport a single process resolves
 every message to its own local subscribers and sends no message over HTTP at all, so that track runs the one
 image as two containers, one per role. Under `Transport:Provider=Http` the role also picks the section
 `HttpTransportOptions` binds from — `HttpParticipants` for `Participants`, `HttpSagas` otherwise.
+
+### `OrderSubmitter` — how many sagas the sample creates
+
+A sample-only section: `VSaga.Samples.OrderProcessing` reads it, and neither the library nor the
+dashboard does. The sample submits a seed batch of orders at startup and then nothing on its own
+([ADR 0011](adr/0011-sample-orders-are-seeded-then-on-demand.md)); `POST /orders` submits more.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `OrderSubmitter:SeedOrders` | `10` | Orders submitted once at startup, one second apart. `0` starts with none. |
+| `OrderSubmitter:MaxOrdersPerRequest` | `50` | The most one `POST /orders` call may ask for. |
+
+`POST /orders` submits one order; `POST /orders?count=N` submits `N`. It answers `202` with the order ids,
+and `400` when `count` is below 1 or above `MaxOrdersPerRequest`. Each order starts up to seven saga
+instances. The base compose file publishes it on `http://localhost:5081`, and each overlay on its
+dashboard API's port plus one (see [`transports/index.md`](transports/index.md#running-an-adapters-own-overlay)).
+It is mapped wherever the saga engine runs, so the `Participants` role does not serve it.
+
+```bash
+curl -X POST "http://localhost:5081/orders?count=5"
+```
 
 ### `RabbitMqOptions` (`VSaga.Transport.RabbitMQ`)
 

@@ -26,6 +26,7 @@ services:
   dashboard-web:
     ports: !override ["127.0.0.1:4400:8080"]
   order-processing:
+    ports: !override ["127.0.0.1:5281:8080"] # POST /orders
     environment:
       Transport__Provider: "MassTransit"
       # docker-compose.yml's own RabbitMq__ConnectionString env var only ever populates the "RabbitMq"

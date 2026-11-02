@@ -60,6 +60,7 @@ services:
     ports: !override ["127.0.0.1:4700:8080"]
 
   order-processing:
+    ports: !override ["127.0.0.1:5581:8080"] # POST /orders
     environment:
       Persistence__Provider: "MongoDb"
       MongoDb__ConnectionString: "mongodb://mongo:27017/?replicaSet=rs0"

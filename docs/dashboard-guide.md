@@ -27,8 +27,9 @@ docker compose up -d --build
 ```
 
 Then open <http://localhost:4200>. The first build is slow (it builds the page inside the `dashboard-web`
-image), and the page is reachable once the dashboard API reports healthy. The demo's sample submits orders
-continuously, so the list fills on its own. Docker is all it needs; see
+image), and the page is reachable once the dashboard API reports healthy. The demo's sample submits ten
+orders when it starts, so the list has rows within a few seconds; `curl -X POST "http://localhost:5081/orders?count=5"`
+creates more. Docker is all it needs; see
 ["Run the demo"](../README.md#run-the-demo) for the other services.
 
 Every stack serves its own page on its own port, always the API's port minus 880, so several stacks can run side

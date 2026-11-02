@@ -58,6 +58,7 @@ services:
     ports: !override ["127.0.0.1:4900:8080"]
 
   order-processing:
+    ports: !override ["127.0.0.1:5781:8080"] # POST /orders
     environment:
       Persistence__Provider: "SqlServer"
       ConnectionStrings__VSaga: "Server=sqlserver,1433;Database=vsaga;User Id=sa;Password=Vsaga_dev_only_1;TrustServerCertificate=True"

@@ -99,6 +99,10 @@ services:
     build:
       context: ./dotnet
       dockerfile: samples/VSaga.Samples.OrderProcessing/Dockerfile
+    # Loopback only, like the dashboard ports. POST http://localhost:5081/orders[?count=N] starts more sagas;
+    # in every stack this is dashboard-api's host port plus 1. The sample submits only a seed batch at startup.
+    ports:
+      - "127.0.0.1:5081:8080"
     environment:
       ConnectionStrings__VSaga: "Host=postgres;Port=5432;Database=vsaga;Username=postgres;Password=postgres"
       RabbitMq__ConnectionString: "amqp://guest:guest@rabbitmq:5672/"

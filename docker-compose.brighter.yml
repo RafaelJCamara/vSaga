@@ -33,5 +33,6 @@ services:
       - "127.0.0.1:4500:8080"
 
   order-processing:
+    ports: !override ["127.0.0.1:5381:8080"] # POST /orders
     environment:
       Transport__Provider: "Brighter"

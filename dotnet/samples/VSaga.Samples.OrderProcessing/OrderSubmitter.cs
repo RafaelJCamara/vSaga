@@ -1,28 +1,57 @@
-using VSaga.Abstractions.Transport;
-using VSaga.Samples.OrderProcessing.Contracts;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using VSaga.Abstractions.Transport;
+using VSaga.Samples.OrderProcessing.Contracts;
 
 namespace VSaga.Samples.OrderProcessing;
 
-/// <summary>Stands in for a real "place order" front door: submits a new order every few seconds so the dashboard has continuous, observable activity.</summary>
-internal sealed class OrderSubmitter(IMessageTransport transport, ILogger<OrderSubmitter> logger) : BackgroundService
+/// <summary>Bound from the "OrderSubmitter" configuration section.</summary>
+internal sealed class OrderSubmitterOptions
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(8);
+    /// <summary>Orders submitted once at startup so the dashboard has something to show. 0 starts with none.</summary>
+    public int SeedOrders { get; set; } = 10;
+
+    /// <summary>The ceiling on a single <c>POST /orders</c> call, so one request cannot flood the broker.</summary>
+    public int MaxOrdersPerRequest { get; set; } = 50;
+}
+
+/// <summary>
+/// Stands in for a real "place order" front door. Submits a small seed batch at startup, then only on demand
+/// through <c>POST /orders</c>: it never submits on a timer, so a long-running stack does not keep piling up
+/// sagas (docs/adr/0011-sample-orders-are-seeded-then-on-demand.md).
+/// </summary>
+internal sealed class OrderSubmitter(IMessageTransport transport, IOptions<OrderSubmitterOptions> options, ILogger<OrderSubmitter> logger) : BackgroundService
+{
+    // The seed is spread out so the list shows sagas at different stages rather than ten identical rows.
+    private static readonly TimeSpan SeedSpacing = TimeSpan.FromSeconds(1);
     private int _orderNumber;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval);
+        var seed = options.Value.SeedOrders;
+        if (seed <= 0)
+            return;
 
-        // Fire one immediately instead of waiting a full interval on startup.
-        await SubmitOrderAsync(stoppingToken);
-
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        logger.LogInformation("Submitting {Count} seed orders; POST /orders submits more", seed);
+        for (var i = 0; i < seed; i++)
+        {
+            if (i > 0)
+                await Task.Delay(SeedSpacing, stoppingToken);
             await SubmitOrderAsync(stoppingToken);
+        }
     }
 
-    private async Task SubmitOrderAsync(CancellationToken cancellationToken)
+    /// <summary>Submits <paramref name="count"/> orders now and returns their ids, in submission order.</summary>
+    public async Task<IReadOnlyList<string>> SubmitAsync(int count, CancellationToken cancellationToken)
+    {
+        var orderIds = new List<string>(count);
+        for (var i = 0; i < count; i++)
+            orderIds.Add(await SubmitOrderAsync(cancellationToken));
+        return orderIds;
+    }
+
+    private async Task<string> SubmitOrderAsync(CancellationToken cancellationToken)
     {
         var orderId = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Interlocked.Increment(ref _orderNumber):D4}";
         var amount = Math.Round((decimal)(Random.Shared.NextDouble() * 480 + 20), 2);
@@ -39,5 +68,7 @@ internal sealed class OrderSubmitter(IMessageTransport transport, ILogger<OrderS
         // MixedFulfilmentSaga never shares a correlation id with OrderSaga/PostShipmentChoreography and
         // gets a clean Saga Map of its own.
         await transport.PublishAsync(new FulfilmentRequested(orderId, amount), MessageEnvelope.From("OrderSubmitter", Guid.NewGuid()), cancellationToken);
+
+        return orderId;
     }
 }
