@@ -248,7 +248,7 @@
 
     <div class="actions">
       <!-- aria-disabled, not disabled: the button keeps the focus it holds while the request runs (save() refuses meanwhile). -->
-      <button type="submit" class="btn" [attr.aria-disabled]="working() ? 'true' : null">
+      <button type="submit" class="btn btn--primary" [attr.aria-disabled]="working() ? 'true' : null">
         {{ busy() ? 'Saving…' : creating() ? 'Create user' : 'Save' }}
       </button>
       <!-- Not "Cancel" on a user that exists: the delete's own question has a Cancel, and two would be ambiguous. -->

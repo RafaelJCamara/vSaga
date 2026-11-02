@@ -1,7 +1,9 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed, ComponentFixture } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
+import { THEME_STORAGE, THEME_STORAGE_KEY } from '../../services/theme.service';
 import { AuthMock, createAuthMock, provideAuthMock } from '../../testing/auth-mock';
+import { MemoryStorage } from '../../testing/guide';
 import { UserMenu } from './user-menu';
 
 /** Where the account link goes; the page itself is not what this spec is about. */
@@ -15,6 +17,13 @@ class AccountStub {}
 describe('UserMenu', () => {
   let fixture: ComponentFixture<UserMenu>;
   let auth: AuthMock;
+  let themeStorage: MemoryStorage;
+
+  beforeEach(() => {
+    themeStorage = new MemoryStorage();
+  });
+
+  afterEach(() => document.documentElement.removeAttribute('data-theme'));
 
   function create(options: Parameters<typeof createAuthMock>[0] = {}): void {
     auth = createAuthMock({
@@ -25,6 +34,7 @@ describe('UserMenu', () => {
       providers: [
         provideRouter([{ path: 'account', component: AccountStub }]),
         provideAuthMock(auth),
+        { provide: THEME_STORAGE, useValue: themeStorage },
       ],
     });
     fixture = TestBed.createComponent(UserMenu);
@@ -35,6 +45,8 @@ describe('UserMenu', () => {
   const trigger = () => root().querySelector<HTMLButtonElement>('button.user-menu-trigger')!;
   const panel = () => root().querySelector<HTMLElement>('.user-menu-panel');
   const items = () => Array.from(root().querySelectorAll<HTMLElement>('[role="menuitem"]'));
+  const themes = () =>
+    Array.from(root().querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
   const account = () => items()[0] as HTMLAnchorElement;
   const signOutButton = () => items()[1] as HTMLButtonElement;
   const focused = () => document.activeElement;
@@ -319,6 +331,13 @@ describe('UserMenu', () => {
       await open();
 
       key(focused()!, 'ArrowDown');
+      expect(focused()).toBe(themes()[0]);
+
+      key(focused()!, 'ArrowDown');
+      key(focused()!, 'ArrowDown');
+      expect(focused()).toBe(themes()[2]);
+
+      key(focused()!, 'ArrowDown');
       expect(focused()).toBe(signOutButton());
 
       key(focused()!, 'ArrowDown');
@@ -328,7 +347,49 @@ describe('UserMenu', () => {
       expect(focused()).toBe(signOutButton());
 
       key(focused()!, 'ArrowUp');
-      expect(focused()).toBe(account());
+      expect(focused()).toBe(themes()[2]);
+    });
+  });
+
+  describe('the theme', () => {
+    const checked = () => themes().map((b) => b.getAttribute('aria-checked'));
+
+    it('offers System, Light and Dark as radio items in a group named Theme, System being the default', async () => {
+      create();
+      await open();
+
+      expect(themes().map((b) => b.textContent?.trim())).toEqual(['System', 'Light', 'Dark']);
+      expect(checked()).toEqual(['true', 'false', 'false']);
+      const group = root().querySelector('[role="group"]')!;
+      expect(root().querySelector(`#${group.getAttribute('aria-labelledby')}`)?.textContent).toBe('Theme');
+    });
+
+    it('applies a choice at once, stores it and leaves the menu open on it', async () => {
+      create();
+      await open();
+
+      themes()[1].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+      expect(themeStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
+      expect(checked()).toEqual(['false', 'true', 'false']);
+      expect(panel()).not.toBeNull();
+
+      themes()[0].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
+      expect(themeStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
+      expect(checked()).toEqual(['true', 'false', 'false']);
+    });
+
+    it('shows a stored choice as the checked one', async () => {
+      themeStorage.setItem(THEME_STORAGE_KEY, 'dark');
+      create();
+      await open();
+
+      expect(checked()).toEqual(['false', 'false', 'true']);
     });
   });
 

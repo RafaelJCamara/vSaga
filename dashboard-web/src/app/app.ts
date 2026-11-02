@@ -7,6 +7,7 @@ import { GuideToggle } from './components/guide-toggle/guide-toggle';
 import { UserMenu } from './components/user-menu/user-menu';
 import { AuthService } from './services/auth.service';
 import { GuideService } from './services/guide.service';
+import { ThemeService } from './services/theme.service';
 
 /** The shell: the top bar around whichever page the router shows. The sign-in and setup pages render under
  *  the same bar, so it shows the navigation, the guide toggle and the user menu only for a signed-in user.
@@ -22,6 +23,8 @@ export class App {
   protected readonly auth = inject(AuthService);
   // Created with the shell, so it is following the router before the first page is shown.
   protected readonly guide = inject(GuideService);
+  // Created with the shell, so a stored light or dark choice is on `<html>` before any page is shown.
+  protected readonly theme = inject(ThemeService);
   private readonly document = inject(DOCUMENT);
 
   /** "Skip to main content": moves the focus to the page's `main`. Not a plain `#main` link, which the router

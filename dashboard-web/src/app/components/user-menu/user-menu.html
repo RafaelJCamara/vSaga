@@ -31,6 +31,18 @@
       (keydown.shift.tab)="leaveBackwards($event)"
     >
       <a role="menuitem" tabindex="-1" routerLink="/account" (click)="select()">Account</a>
+      <div role="group" aria-labelledby="user-menu-theme-label" class="user-menu-theme">
+        <div class="user-menu-group-label" id="user-menu-theme-label">Theme</div>
+        @for (option of themeOptions; track option.value) {
+          <button
+            role="menuitemradio"
+            tabindex="-1"
+            type="button"
+            [attr.aria-checked]="theme.choice() === option.value"
+            (click)="theme.set(option.value)"
+          >{{ option.label }}</button>
+        }
+      </div>
       <button role="menuitem" tabindex="-1" type="button" (click)="signOut()">Sign out</button>
     </div>
   </div>

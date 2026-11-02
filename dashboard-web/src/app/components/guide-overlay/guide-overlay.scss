@@ -67,17 +67,17 @@
 
 .guide-title {
   margin: 0 0 0.4rem;
-  font-size: 1rem;
+  font-size: var(--text-lg);
 }
 
 .guide-body {
   margin: 0 0 0.75rem;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 .guide-progress {
   margin: 0 0 0.75rem;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
 }
 
 .guide-actions {

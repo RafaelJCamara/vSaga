@@ -5,7 +5,7 @@
 .new-role {
   margin-left: auto;
   padding: 0.4rem 1rem;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 .new-role:hover {
@@ -17,7 +17,7 @@
 }
 
 .description {
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
 }
 
 .chips {

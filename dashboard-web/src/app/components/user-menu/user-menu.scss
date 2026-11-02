@@ -37,3 +37,35 @@
 .user-menu-display {
   font-weight: 600;
 }
+
+.user-menu-theme {
+  margin: var(--space-1) 0;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.user-menu-group-label {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* The chosen theme is marked by a check as well as the tint, so it does not rest on colour. The check's
+   column is always reserved, so the three words stay aligned. */
+.user-menu-theme button::before {
+  display: inline-block;
+  width: 1.25rem;
+  content: '';
+}
+
+.user-menu-theme button[aria-checked='true'] {
+  background: var(--accent-soft);
+}
+
+.user-menu-theme button[aria-checked='true']::before {
+  content: '✓' / '';
+}

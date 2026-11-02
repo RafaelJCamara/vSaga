@@ -111,7 +111,7 @@
   border: 1px solid var(--accent);
   border-radius: 8px;
   background: var(--accent-soft);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 .focus-banner p {
@@ -129,14 +129,14 @@
   color: var(--text);
   border-radius: 6px;
   padding: 0.25rem 0.6rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .legend {
   display: flex;
   flex-wrap: wrap;
   gap: 0.9rem;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -178,7 +178,7 @@
   color: var(--text);
   border-radius: 6px;
   padding: 0.3rem 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   line-height: 1;
 }
 
@@ -204,22 +204,22 @@
 }
 
 .status-line {
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
 .error-card {
-  background: rgba(239, 85, 102, 0.12);
-  border: 1px solid rgba(239, 85, 102, 0.3);
-  border-radius: 8px;
-  padding: 0.6rem 0.9rem;
+  background: color-mix(in srgb, var(--status-failed) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-4);
   color: var(--status-failed);
 }
 
 .error-card p {
   margin: 0.3rem 0 0;
   color: var(--text);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 @media (prefers-reduced-motion: reduce) {

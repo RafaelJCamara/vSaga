@@ -136,7 +136,7 @@
         <!-- aria-disabled, not disabled: the button keeps the focus it holds while the request runs (save() refuses meanwhile). -->
         <button
           type="submit"
-          class="btn"
+          class="btn btn--primary"
           [attr.aria-disabled]="busy() || deleting() ? 'true' : null"
         >
           {{ busy() ? 'Saving…' : creating() ? 'Create role' : 'Save' }}

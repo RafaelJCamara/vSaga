@@ -2,7 +2,11 @@
   box-sizing: border-box;
 }
 
-:root {
+/* The two palettes. Dark is the default; the light one applies when the OS asks for it and the user has not
+   chosen (`:root:not([data-theme])`), or when the user chose Light (`data-theme='light'`). A user who chose Dark
+   under a light OS has `data-theme='dark'`, which the media rule skips, so the dark default stands.
+   Every text pair is measured: see dashboard-web/DESIGN.md, "Colour roles". */
+@mixin dark-palette {
   /* The page is dark, so the browser's own widgets are too: scrollbars, the open list of a select, a date picker,
      autofill. Without it a scroll box on this page has a white scrollbar. */
   color-scheme: dark;
@@ -11,6 +15,8 @@
   --bg-elevated: #12161f;
   --bg-hover: #1a2030;
   --border: #232a3b;
+  /* The edge of a control the user must find (an input): 3.2:1 against the surface, where --border is 1.3:1. */
+  --border-control: #5b667f;
   --text: #e6e9f0;
   --text-muted: #8891a7;
   --accent: #5b8cff;
@@ -25,11 +31,81 @@
   --danger-solid: #c92a3e;
   --status-compensating: #f2a93b;
   --status-compensated: #b98af2;
-  --status-timedout: #f2a93b;
+  --status-timedout: #ff8a4c;
   --status-cancelled: #8891a7;
+
+  --kind-orchestrated: #5b8cff;
+  --kind-choreographed: #2fc1d3;
+
+  --shadow-popup: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+@mixin light-palette {
+  color-scheme: light;
+
+  --bg: #f4f6fb;
+  --bg-elevated: #ffffff;
+  --bg-hover: #e8edf7;
+  --border: #d3dae8;
+  --border-control: #7a859d;
+  --text: #141a26;
+  --text-muted: #586178;
+  --accent: #2457d6;
+  --accent-soft: rgba(36, 87, 214, 0.1);
+  --accent-solid: #2457d6;
+
+  --status-running: #2457d6;
+  --status-completed: #0b7a52;
+  --status-failed: #c0243a;
+  --danger-solid: #c0243a;
+  --status-compensating: #935300;
+  --status-compensated: #7a42c8;
+  --status-timedout: #b4410b;
+  --status-cancelled: #586178;
+
+  --kind-orchestrated: #2457d6;
+  --kind-choreographed: #08626f;
+
+  --shadow-popup: 0 8px 24px rgba(20, 26, 38, 0.16);
+}
+
+:root {
+  @include dark-palette;
+
+  /* Spacing: a 4px step on the browser's 16px root. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-7: 2rem;
+  --space-8: 3rem;
+
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* Type: five steps, none below 12px. `rem` is the browser's 16px; `body` is 14px. */
+  --text-xs: 0.75rem;
+  --text-sm: 0.8rem;
+  --text-md: 0.875rem;
+  --text-lg: 1.1rem;
+  --text-xl: 1.3rem;
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    @include light-palette;
+  }
+}
+
+:root[data-theme='light'] {
+  @include light-palette;
 }
 
 html, body {
@@ -77,13 +153,13 @@ code, .mono {
 /* Centred text where a list or a tab has nothing to show yet: "Loading…", "No events recorded yet." */
 .empty {
   color: var(--text-muted);
-  padding: 2rem 0;
+  padding: var(--space-7) 0;
   text-align: center;
 }
 
 /* A small caps label in front of a value: "Step 3", "Recorded at". */
 .micro-label {
-  font-size: 0.68rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -93,12 +169,12 @@ code, .mono {
 /* A plain bordered button; `--quiet` is the low-weight one used in toolbars and step headers.
    `aria-pressed="true"` marks the selected one of a group of view buttons. */
 .btn {
-  padding: 0.2rem 0.6rem;
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--text);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
@@ -162,25 +238,26 @@ code, .mono {
 
 /* A message across the top of a page or a tab. The base carries the box; `--warning` is a degraded
    but usable view (live updates down, stale content), `--error` a failure with nothing to show,
-   `--info` a neutral notice and `--success` a completed action. */
+   `--info` a neutral notice and `--success` a completed action. The tint is the status colour at 12 %, so it
+   follows the theme. */
 .banner {
-  padding: 0.6rem 0.9rem;
+  padding: var(--space-2) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  margin-bottom: 1rem;
-  font-size: 0.85rem;
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-md);
 }
 
 .banner--error {
-  background: rgba(239, 85, 102, 0.12);
+  background: color-mix(in srgb, var(--status-failed) 12%, transparent);
   color: var(--status-failed);
-  border-color: rgba(239, 85, 102, 0.3);
+  border-color: color-mix(in srgb, var(--status-failed) 30%, transparent);
 }
 
 .banner--warning {
-  background: rgba(242, 169, 59, 0.12);
+  background: color-mix(in srgb, var(--status-compensating) 12%, transparent);
   color: var(--status-compensating);
-  border-color: rgba(242, 169, 59, 0.3);
+  border-color: color-mix(in srgb, var(--status-compensating) 30%, transparent);
 }
 
 .banner--info {
@@ -189,13 +266,13 @@ code, .mono {
 }
 
 .banner--success {
-  background: rgba(53, 201, 140, 0.12);
+  background: color-mix(in srgb, var(--status-completed) 12%, transparent);
   color: var(--status-completed);
-  border-color: rgba(53, 201, 140, 0.3);
+  border-color: color-mix(in srgb, var(--status-completed) 30%, transparent);
 }
 
 .banner .btn {
-  margin-left: 0.5rem;
+  margin-left: var(--space-2);
 }
 
 /* A labelled form control: the `.label` above it, an optional `.field-hint`, and an inline
@@ -203,12 +280,12 @@ code, .mono {
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  margin-bottom: 1rem;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
 }
 
 .label {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -216,11 +293,11 @@ code, .mono {
 
 .input {
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-control);
   color: var(--text);
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
-  font-size: 0.85rem;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-md);
 }
 
 .input[aria-invalid='true'] {
@@ -239,7 +316,7 @@ textarea.input {
 
 .field-hint,
 .field-error {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 
 .field-hint {
@@ -254,32 +331,32 @@ textarea.input {
 .page-header {
   display: flex;
   align-items: baseline;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 /* The heading of a section of a page: the roles list, a role. The account page's cards set their own. */
 .section-title {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: var(--text-lg);
 }
 
 /* The title of a page that is a card or a stack of cards: sign-in, setup, account. */
 .page-title {
-  margin: 0 0 1rem;
-  font-size: 1.3rem;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-xl);
 }
 
 /* The buttons that end a form, side by side; a `.btn` in it is the size of a form's submit. */
 .actions {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .actions .btn {
-  padding: 0.4rem 1rem;
-  font-size: 0.85rem;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-md);
 }
 
 .actions a.btn:hover {
@@ -290,16 +367,17 @@ textarea.input {
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
-/* Tabs under a page's header, as buttons or links; the current one carries `.active`. */
+/* Tabs under a page's header, as buttons or links; the current one carries `.active` (a link) or
+   `aria-selected="true"` (a `role="tab"` button). */
 .subtabs {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-1);
   border-bottom: 1px solid var(--border);
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-4);
 }
 
 .subtabs button,
@@ -307,8 +385,8 @@ textarea.input {
   background: none;
   border: none;
   color: var(--text-muted);
-  padding: 0.5rem 0.9rem;
-  font-size: 0.85rem;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-md);
   font-weight: 600;
   border-bottom: 2px solid transparent;
 }
@@ -317,7 +395,8 @@ textarea.input {
   text-decoration: none;
 }
 
-.subtabs .active {
+.subtabs .active,
+.subtabs [aria-selected='true'] {
   color: var(--text);
   border-bottom-color: var(--accent);
 }
@@ -326,14 +405,14 @@ textarea.input {
 .card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1.25rem;
-  margin-bottom: 1.25rem;
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
 }
 
 .auth-card {
   max-width: 26rem;
-  margin: 3rem auto;
+  margin: var(--space-8) auto;
 }
 
 /* The scrollport of a wide table: below its natural width the table scrolls inside this box, not the page.
@@ -349,24 +428,24 @@ textarea.input {
   border-collapse: collapse;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
 .data-table th {
   text-align: left;
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
-  padding: 0.6rem 0.9rem;
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 
 .data-table td {
-  padding: 0.6rem 0.9rem;
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 .data-table tbody tr:last-child td {
@@ -377,11 +456,11 @@ textarea.input {
    `--danger` the red one. */
 .chip {
   display: inline-block;
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   padding: 0.15rem 0.55rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent);
   border: 1px solid transparent;
@@ -395,31 +474,31 @@ textarea.input {
 }
 
 .chip--danger {
-  background: rgba(239, 85, 102, 0.12);
-  border-color: rgba(239, 85, 102, 0.3);
+  background: color-mix(in srgb, var(--status-failed) 12%, transparent);
+  border-color: color-mix(in srgb, var(--status-failed) 30%, transparent);
   color: var(--status-failed);
 }
 
 /* A pop-up list of links and buttons. The component that owns it positions it. */
 .menu {
   min-width: 12rem;
-  padding: 0.3rem;
+  padding: var(--space-1);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-elevated);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-popup);
 }
 
 .menu a,
 .menu button {
   display: block;
   width: 100%;
-  padding: 0.4rem 0.6rem;
+  padding: var(--space-2) var(--space-3);
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   text-align: left;
 }
 
@@ -432,12 +511,12 @@ textarea.input {
 /* Pretty-printed JSON: a saga's state or a message payload. Focusable where it scrolls. */
 .json-block {
   overflow: auto;
-  padding: 0.75rem;
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   white-space: pre;
 }
 

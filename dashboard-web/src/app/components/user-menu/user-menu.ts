@@ -14,10 +14,12 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { filter } from 'rxjs';
 import { AuthService } from '../../services/auth.service';
+import { ThemeChoice, ThemeService } from '../../services/theme.service';
 
 /**
  * The signed-in user in the top bar: a button with their name that opens a small menu (who they are, the
- * account page, sign out). A menu button as the WAI-ARIA authoring practices describe it: opening moves
+ * account page, the theme, sign out). The theme items are radio items (System, Light, Dark): choosing one applies
+ * it at once and leaves the menu open, so the effect can be seen and another tried. A menu button as the WAI-ARIA authoring practices describe it: opening moves
  * focus into the menu, the arrow keys (and Home and End) move between its items, Space activates the
  * account link as Enter does, and Escape closes the menu and returns focus to the button. Choosing an
  * item, a click outside, tabbing out of the component and any navigation close it too. The items are not in
@@ -37,12 +39,18 @@ import { AuthService } from '../../services/auth.service';
 })
 export class UserMenu {
   private readonly auth = inject(AuthService);
+  protected readonly theme = inject(ThemeService);
   private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
   private readonly trigger = viewChild.required<ElementRef<HTMLButtonElement>>('trigger');
 
+  protected readonly themeOptions: readonly { value: ThemeChoice; label: string }[] = [
+    { value: 'system', label: 'System' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' },
+  ];
   protected readonly user = this.auth.user;
   protected readonly open = signal(false);
   protected readonly signingOut = signal(false);
@@ -148,6 +156,6 @@ export class UserMenu {
   }
 
   private items(): HTMLElement[] {
-    return Array.from(this.host.nativeElement.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    return Array.from(this.host.nativeElement.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'));
   }
 }

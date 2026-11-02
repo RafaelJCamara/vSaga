@@ -1,11 +1,11 @@
 h1 {
-  font-size: 1.3rem;
+  font-size: var(--text-xl);
   margin: 0;
 }
 
 .count {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 input[type='search'] {
@@ -18,20 +18,20 @@ input[type='search'] {
 .toolbar .btn,
 .banner .btn,
 .pagination .btn {
-  padding: 0.4rem 0.9rem;
-  font-size: 0.85rem;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-md);
 }
 
 /* The "new sagas" notice is a text-and-button row; the colours come from the global .banner--info. */
 .banner--info {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .banner--info .btn {
-  padding: 0.2rem 0.6rem;
-  font-size: 0.8rem;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
 }
 
 .data-table th.sortable {
@@ -61,7 +61,7 @@ input[type='search'] {
 
 .sort-indicator {
   margin-left: 0.3rem;
-  font-size: 0.65rem;
+  font-size: var(--text-xs);
 }
 
 .saga-row {
@@ -73,16 +73,29 @@ input[type='search'] {
   background: var(--bg-hover);
 }
 
-/* The correlation id is the row's link: it reads as the id, and shows it is a link on hover and focus. */
+/* The correlation id is the row's link, so it is coloured as one: hover alone is no cue on touch, and the row
+   opens on a click anywhere in it. */
 .row-link {
   display: inline-block;
-  padding: 0.25rem 0;
-  color: inherit;
+  padding: var(--space-1) 0;
+  color: var(--accent);
 }
 
 .row-link:hover {
-  color: var(--accent);
   text-decoration: underline;
+}
+
+/* A chevron ends the row on a wide screen: it says the row goes somewhere. Decorative, so it has an empty
+   alternative text; where the browser cannot take one, the rule is dropped and the id link remains. */
+.data-table td.cell-updated::after {
+  content: '›' / '';
+  margin-left: var(--space-3);
+  color: var(--text-muted);
+}
+
+.saga-row:hover td.cell-updated::after,
+.saga-row:focus-within td.cell-updated::after {
+  color: var(--accent);
 }
 
 .pagination {
@@ -99,12 +112,12 @@ input[type='search'] {
   align-items: center;
   gap: 0.4rem;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   margin-right: auto;
 }
 
 .page-size select {
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-1) var(--space-2);
 }
 
 .page-jump {
@@ -112,12 +125,12 @@ input[type='search'] {
   align-items: center;
   gap: 0.4rem;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 .page-jump input {
   width: 4rem;
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-1) var(--space-2);
 }
 
 /* The updated time stays on one line; below the breakpoint the stacked layout takes over before it can crowd. */
@@ -129,6 +142,10 @@ input[type='search'] {
    reader scans for), then the state and when it changed, then the id and the kind. The header row keeps only the
    two sort controls; the other headings stay in the accessibility tree, clipped. */
 @media (max-width: 860px) {
+  .data-table td.cell-updated::after {
+    content: none;
+  }
+
   .saga-table,
   .saga-table thead,
   .saga-table tbody {

@@ -1,18 +1,19 @@
+/* A pill in the colour of the kind, with the kind in words; the tint is that colour at 12 %. */
 .kind-badge {
   display: inline-block;
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--kind-orchestrated) 12%, transparent);
+  color: var(--kind-orchestrated);
+  border: 1px solid color-mix(in srgb, var(--kind-orchestrated) 40%, transparent);
   white-space: nowrap;
 }
 
 .kind-badge--choreographed {
-  background: transparent;
-  border-color: var(--text-muted);
-  color: var(--text-muted);
+  background: color-mix(in srgb, var(--kind-choreographed) 12%, transparent);
+  color: var(--kind-choreographed);
+  border-color: color-mix(in srgb, var(--kind-choreographed) 40%, transparent);
 }

@@ -2,17 +2,20 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   white-space: nowrap;
 }
 
+/* The mark before the word. Its shape is the second cue beside the colour (DESIGN.md, "Status and kind marks"):
+   a filled circle by default, and a shape of its own for the statuses that share a hue with something else. */
 .status-dot {
-  width: 0.5rem;
-  height: 0.5rem;
+  width: 0.6rem;
+  height: 0.6rem;
   border-radius: 50%;
   background: currentColor;
   flex: none;
+  box-sizing: border-box;
 }
 
 .status-badge--running { color: var(--status-running); }
@@ -22,3 +25,34 @@
 .status-badge--compensated { color: var(--status-compensated); }
 .status-badge--timedout { color: var(--status-timedout); }
 .status-badge--cancelled { color: var(--status-cancelled); }
+
+/* Failed: a diamond. */
+.status-badge--failed .status-dot {
+  border-radius: 1px;
+  transform: rotate(45deg) scale(0.85);
+}
+
+/* Compensating: half filled, because it is under way and not yet back to where it started. */
+.status-badge--compensating .status-dot {
+  border: 1.5px solid currentColor;
+  background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+}
+
+/* Timed out: a ring, empty because nothing came back. */
+.status-badge--timedout .status-dot {
+  border: 1.5px solid currentColor;
+  background: transparent;
+}
+
+/* Cancelled: a ring with a slash through it. */
+.status-badge--cancelled .status-dot {
+  border: 1.5px solid currentColor;
+  background: linear-gradient(135deg, transparent 42%, currentColor 42% 58%, transparent 58%);
+}
+
+/* The shape is the cue: keep it drawn in forced-colours mode rather than letting the browser repaint the fill. */
+@media (forced-colors: active) {
+  .status-dot {
+    forced-color-adjust: none;
+  }
+}
