@@ -1,66 +1,99 @@
 # Dashboard design system
 
 The source of truth for how the dashboard SPA looks and behaves. It documents what exists in
-`src/styles.scss` and the components today, and says plainly where it does not yet decide something. How to
+`src/styles.scss` and the components, and says plainly where it does not decide something. How to
 change it, and the checks that go with a change, are in [`docs/frontend.md`](../docs/frontend.md). A rule here
 comes before, or with, the code that depends on it. Where this file and the code disagree, one of them is a bug:
-fix the other in the same change.
+fix the other in the same change. The decisions of the redesign are in
+[ADR 0010](../docs/adr/0010-dashboard-design-tokens-and-light-theme.md).
 
 ## Product and users
 
 An operations console for a saga engine. People open it to find the saga that failed or got stuck, read its
 timeline and data, retry it, and (for administrators) manage who may do what. It is dense, read-heavy and used
 for long sessions, often next to a terminal. So: calm, low-glare, information first, state shown by colour and by
-text, never by colour alone.
+text and shape, never by colour alone.
 
 ## Direction
 
-A dark, flat, single-theme console. Surfaces are separated by a 1 px border, not by shadow; colour is spent on
-status and on the one accent. There is no light theme and no `prefers-color-scheme` handling today (open
-question below). No component library, no icon font and no web fonts: the system font stack keeps the page inside
-the container's Content Security Policy and costs no request.
+A flat console in two themes, dark and light. Surfaces are separated by a 1 px border, not by shadow; colour is
+spent on status and on the one accent. The theme follows the operating system (`prefers-color-scheme`) and the user
+menu overrides it (System, Light, Dark). No component library, no icon font and no web fonts: the system font stack
+keeps the page inside the container's Content Security Policy and costs no request. Nothing is an icon: state is a
+shape drawn in CSS beside a word.
 
 ## Tokens
 
-All defined on `:root` in `src/styles.scss`. Use the token, never its hex.
+All defined on `:root` in `src/styles.scss`. Use the token, never its value. A literal that is not on a scale is a
+reason to ask whether the scale is wrong.
+
+### Themes
+
+The values below are the dark theme, which is also what a browser with no preference gets. The light theme redefines
+the same names under `@media (prefers-color-scheme: light)` for `:root:not([data-theme])`, and under
+`:root[data-theme='light']`. A user who chose Dark under a light OS has `data-theme='dark'`, which the media rule
+skips, so the dark base stands. `color-scheme` follows, so
+scrollbars, the open list of a native `select`, date pickers and autofill match the page.
+
+The choice is made in the user menu (`ThemeService`), stored in `localStorage` under `vsaga.theme` as `light` or `dark`
+(no value means System) and applied as `data-theme` on `<html>`. Because the CSP forbids an inline script, it is
+applied when the bundle starts, not before the first paint: a stored choice that differs from the OS may show the OS
+theme for a moment on a cold load. A browser that blocks storage keeps System.
 
 ### Colour roles
 
-| Token | Value | Role |
+| Token | Dark | Light | Role |
+| --- | --- | --- | --- |
+| `--bg` | `#0b0e14` | `#f4f6fb` | Page background; also the inset of code and JSON blocks |
+| `--bg-elevated` | `#12161f` | `#ffffff` | Cards, tables, inputs, menus, the top bar |
+| `--bg-hover` | `#1a2030` | `#e8edf7` | Hover and selected row or menu item |
+| `--border` | `#232a3b` | `#d3dae8` | Every divider and outline: quiet, decorative |
+| `--border-control` | `#5b667f` | `#7a859d` | The edge of a control the user must find: `.input` (WCAG 1.4.11, 3:1) |
+| `--text` | `#e6e9f0` | `#141a26` | Body and headings |
+| `--text-muted` | `#8891a7` | `#586178` | Secondary text, labels, placeholders |
+| `--accent` | `#5b8cff` | `#2457d6` | Links, focus ring, selected tab and toggle, primary emphasis |
+| `--accent-soft` | 14 % of `--accent` | 10 % of `--accent` | Selected-state fill |
+| `--accent-solid` | `#3566e0` | `#2457d6` | The fill of the one primary button, white text |
+| `--danger-solid` | `#c92a3e` | `#c0243a` | The fill of a destructive button, white text |
+
+Status colours carry a saga's state and also appear as the tone of banners and chips. The tint behind a banner or a
+pill is `color-mix(in srgb, <colour> 12%, transparent)` so it follows the theme.
+
+| Token | Dark | Light | Used for |
+| --- | --- | --- | --- |
+| `--status-running` | `#5b8cff` | `#2457d6` | Running |
+| `--status-completed` | `#35c98c` | `#0b7a52` | Completed; the success banner |
+| `--status-failed` | `#ef5566` | `#c0243a` | Failed; the error banner; field errors |
+| `--status-compensating` | `#f2a93b` | `#935300` | Compensating; the warning banner |
+| `--status-compensated` | `#b98af2` | `#7a42c8` | Compensated |
+| `--status-timedout` | `#ff8a4c` | `#b4410b` | Timed out (an orange of its own, apart from the compensating amber) |
+| `--status-cancelled` | `#8891a7` | `#586178` | Cancelled (shares `--text-muted`: the quiet, final state) |
+| `--kind-orchestrated` | `#5b8cff` | `#2457d6` | The Orchestrated kind pill |
+| `--kind-choreographed` | `#2fc1d3` | `#08626f` | The Choreographed kind pill |
+
+Measured contrast (WCAG: 4.5:1 for text, 3:1 for large text and UI components), computed from the values above, not
+assumed. Text on `--bg-elevated`, then on `--bg-hover`:
+
+| Pair | Dark | Light |
 | --- | --- | --- |
-| `--bg` | `#0b0e14` | Page background; also the inset of code and JSON blocks |
-| `--bg-elevated` | `#12161f` | Cards, tables, inputs, menus, the top bar |
-| `--bg-hover` | `#1a2030` | Hover and selected row or menu item |
-| `--border` | `#232a3b` | Every divider and outline |
-| `--text` | `#e6e9f0` | Body and headings |
-| `--text-muted` | `#8891a7` | Secondary text, labels, placeholders |
-| `--accent` | `#5b8cff` | Links, focus ring, selected tab and toggle, primary emphasis |
-| `--accent-soft` | `rgba(91, 140, 255, .14)` | Selected-state fill, chip fill |
-| `--accent-solid` | `#3566e0` | The fill of the one primary button, white text (5.1:1; the plain accent under white is 3.2:1) |
-| `--danger-solid` | `#c92a3e` | The fill of a destructive button, white text |
+| `--text` | 14.9, 13.4 | 17.4, 14.8 |
+| `--text-muted` | 5.7, 5.2 | 6.2, 5.3 |
+| `--accent` (also running, Orchestrated) | 5.7, 5.1 | 6.2, 5.3 |
+| completed | 8.5, 7.6 | 5.4, 4.6 |
+| failed | 5.3, 4.8 | 5.9, 5.0 |
+| compensating | 9.1, 8.1 | 6.0, 5.1 |
+| compensated | 6.9, 6.2 | 6.1, 5.2 |
+| timed out | 7.8, 7.0 | 5.7, 4.8 |
+| Choreographed | 8.4, 7.5 | 7.0, 6.0 |
+| white on `--accent-solid` | 5.1 | 6.2 |
+| white on `--danger-solid` | 5.4 | 5.9 |
+| `--border-control` on `--bg-elevated` | 3.2 | 3.7 |
 
-Status colours carry a saga's state and also appear as the tone of banners:
+Status text on its own 12 % tint (banners, pills): dark 4.6 to 7.3, light 4.5 to 5.2, measured on `--bg-elevated`. A pill also sits on `--bg` and `--bg-hover` (the sibling links on the detail page, a hovered row), where the light teal first measured 4.39 and 4.06 and was darkened to `#08626f` (5.4 and 5.0 on those tints). A rendered-page scan (computed colours of every text element, both themes, three widths) is how that was found; repeat it after a palette change. The lowest are the light
+"completed" (4.53) and the dark failed red (4.64). A new colour pair is measured, not assumed; `--danger-solid` exists
+because the status red under white text is only 3.4.
 
-| Token | Value | Used for |
-| --- | --- | --- |
-| `--status-running` | `#5b8cff` | Running |
-| `--status-completed` | `#35c98c` | Completed; the success banner |
-| `--status-failed` | `#ef5566` | Failed; the error banner; field errors |
-| `--status-compensating` | `#f2a93b` | Compensating; the warning banner |
-| `--status-compensated` | `#b98af2` | Compensated |
-| `--status-timedout` | `#f2a93b` | Timed out (shares the warning amber) |
-| `--status-cancelled` | `#8891a7` | Cancelled (shares `--text-muted`) |
-
-Measured contrast against `--bg-elevated` (WCAG: 4.5:1 for text, 3:1 for large text and UI components):
-`--text` 14.9, `--text-muted` 5.7, `--accent` 5.7, completed 8.5, failed 5.3, warning 9.1, compensated 6.9. White
-on `--danger-solid` is 5.4. On `--bg-hover` the failed red drops to 4.8 and muted to 5.2, still above 4.5.
-A new colour pair is measured, not assumed; `--danger-solid` exists because the status red under white text is
-only 3.4.
-
-State is never carried by colour alone: a status badge is a dot **and** the status word.
-
-The root sets `color-scheme: dark`, so the browser's own widgets (scrollbars, the open list of a native `select`,
-autofill) match the page rather than showing light.
+State is never carried by colour alone: a status badge is a **shape** and the status word (below).
 
 ### Typography
 
@@ -69,16 +102,51 @@ autofill) match the page rather than showing light.
 | `--font-sans` | `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif` |
 | `--font-mono` | `'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace` |
 
-Base size is `14px` at line-height `1.5`. In use today (rem against that base): page title `1.3`, section title `1.1`,
-body and table cells `.85`, buttons `.78`, status badges `.78`, JSON `.78`, chips and uppercase labels `.72`,
-micro labels `.68`. Labels (`.label`, table headers, `.micro-label`) are uppercase with `.04em` tracking and
+`body` is `14px` at line-height `1.5`. `rem` is the browser's root size (16 px), not that 14 px. The scale, in `rem`
+and in pixels:
+
+| Token | rem | px | For |
+| --- | --- | --- | --- |
+| `--text-xs` | `.75` | 12 | Uppercase labels, table headings, micro labels, chips, the kind pill |
+| `--text-sm` | `.8` | 12.8 | Buttons, status badges, JSON, hints and field errors |
+| `--text-md` | `.875` | 14 | Body, table cells, inputs, banners, menus |
+| `--text-lg` | `1.1` | 17.6 | Section titles |
+| `--text-xl` | `1.3` | 20.8 | Page titles |
+
+Nothing is set below 12 px. Labels (`.label`, table headings, `.micro-label`) are uppercase with `.04em` tracking and
 `--text-muted`. Use `--font-mono` for identifiers, JSON and anything a person might copy.
 
 ### Spacing, shape, elevation
 
-There is no spacing token yet; values are `rem` literals, and the scale is irregular (`.25 .3 .4 .5 .6 .75 .9 1
-1.25 2 3`). Radii in use: `5px` buttons and menu items, `6px` inputs, banners and JSON blocks, `8px` cards, tables
-and menus, `999px` chips. The only shadow is the menu's `0 8px 24px rgba(0,0,0,.4)`; nothing else floats.
+| Token | Value | Token | Value |
+| --- | --- | --- | --- |
+| `--space-1` | `.25rem` (4 px) | `--space-5` | `1.25rem` (20 px) |
+| `--space-2` | `.5rem` (8 px) | `--space-6` | `1.5rem` (24 px) |
+| `--space-3` | `.75rem` (12 px) | `--space-7` | `2rem` (32 px) |
+| `--space-4` | `1rem` (16 px) | `--space-8` | `3rem` (48 px) |
+
+Radii: `--radius-sm` `5px` (buttons, menu items), `--radius-md` `6px` (inputs, banners, JSON blocks), `--radius-lg` `8px`
+(cards, tables, menus), `--radius-pill` `999px` (chips, pills). The only shadow is `--shadow-popup`
+(`0 8px 24px`, 40 % black in dark and 16 % ink in light), on the user menu; nothing else floats. The guide overlay's
+scrim and spotlight are the one place a literal colour stays: it is a dim layer over either theme.
+
+Global classes use the scales. A component stylesheet moves to them when it is touched; it is not swept.
+
+### Status and kind marks
+
+A status badge is a dot of the status colour in a **shape of its own**, then the word:
+
+| Status | Shape |
+| --- | --- |
+| Running, Completed, Compensated | filled circle |
+| Failed | filled diamond |
+| Compensating | half-filled circle |
+| Timed out | ring |
+| Cancelled | ring with a slash |
+
+The shape is drawn in CSS (`status-badge.scss`) and is `aria-hidden`; the word is the accessible name. The kind pill
+(`app-kind-badge`) is a filled-tint pill in `--kind-orchestrated` or `--kind-choreographed`, with the kind in words,
+on every saga row and on the detail page.
 
 ## Components
 
@@ -92,40 +160,49 @@ Global classes in `src/styles.scss`. Reuse them before writing a new one.
 | `.card`, `.auth-card` | A bordered panel; the narrow centred one for sign-in, setup, account | |
 | `.data-table`, `.table-scroll` | Records; the scroll box is focusable so a keyboard can scroll it | row hover is the owning component's |
 | `.chip` | A pill beside a name: `--muted`, `--danger` | |
-| `.menu` | A pop-up list of links and buttons | hover |
-| `.subtabs` | Tabs under a page header | `.active` |
+| `.menu` | A pop-up list of links, buttons and (the theme) radio items | hover, `aria-checked` |
+| `.subtabs` | Tabs under a page header: real `role="tab"` buttons on the saga page, plain links in the administration nav | `.active`, `aria-selected` |
 | `.page-header`, `.page-title`, `.section-title`, `.toolbar`, `.actions` | Page structure and the row that ends a form | |
 | `.json-block` | Pretty-printed state or payload; focusable where it scrolls | |
 | `.empty`, `.muted`, `.micro-label`, `.mono`, `.sr-only` | Utility text styles | |
 
 Shared Angular components: `status-badge`, `kind-badge`, `confirm-button`, `local-time`, `user-menu`,
 `access-summary`, `saga-timeline`, `saga-map`, `saga-data-inspector`, `saga-data-overview`, `guide-overlay`,
-`guide-toggle`.
+`guide-toggle`, `guide-hint`; and `ThemeService`.
 
 Rules for them:
 
 - **At most one primary action in view**, and it is the only filled blue button (`.btn--primary`). A page whose
   buttons are all equals (the saga list's Refresh and pager) uses plain `.btn` for all of them. Destructive actions
   use `.btn--danger` and ask for confirmation (`confirm-button`).
+  A form's submit (Save, Create, Change password, Sign in) is that primary; the way out (Cancel, Back) stays plain.
 - **A first-run offer or notice never floats over content.** The guide-mode offer is a bar in the page flow under
   the top bar (`app-guide-hint`); an element that must appear over the page takes the focus and can be dismissed.
 - **A control has an accessible name that does not depend on its placeholder** (`aria-label` for a search box that
   has no visible label), and a pointer target of at least 24 px in each direction.
-- **Say it in words as well as colour.** A failed saga's summary states where it stopped; the colour is the
+- **Say it in words as well as colour and shape.** A failed saga's summary states where it stopped; the colour is the
   second cue.
 - **Every list and tab has a loading, an empty and an error state**, using `.empty` and `.banner--error`. A
   degraded but usable view (live updates down, stale content) uses `.banner--warning`.
 - **A form control has a visible label**, a hint when the format is not obvious, and an inline `.field-error`
   with `aria-invalid` on failure. Placeholder text is never the label.
 - **Disable by `aria-disabled` when the control holds focus while busy**; a native `disabled` drops focus.
+- **A row that opens something looks like it does.** The saga list's row opens on a click anywhere in it and on
+  Enter on its id; the id is link-coloured and a chevron ends the row on a wide screen. Hover alone is never the
+  only cue (it does not exist on touch).
+- **Tabs are tabs.** Switching views of one page in place uses `role="tablist"`, `role="tab"` with `aria-selected`
+  and a roving `tabindex` (Left, Right, Home, End move and select), and a `role="tabpanel"` labelled by its tab. Links
+  to other pages are not tabs.
 
 ## Interaction
 
 - **Focus.** A 2 px `--accent` ring at 2 px offset on `:focus-visible`, globally. Never remove an outline without
   replacing it. Any region that scrolls is focusable.
 - **Motion.** There is almost none, by choice. What exists (the guide overlay, the saga map) honours
-  `prefers-reduced-motion`; new motion must too, and must say what it communicates.
-- **Forced colours.** The guide overlay has a `forced-colors` rule; new custom-drawn controls need one.
+  `prefers-reduced-motion`; new motion must too, and must say what it communicates. A theme change is instant.
+- **Forced colours.** The guide overlay has a `forced-colors` rule; new custom-drawn controls need one. The status
+  shapes are drawn with `currentColor` so they keep their colour in forced-colours mode, and the status word is
+  always present.
 
 ## Responsive behaviour
 
@@ -139,8 +216,10 @@ with no horizontal page scroll; verify at about 360, 768 and 1280 px (see
   off-screen; its two sort headings stay as a bar above. The other headings stay in the accessibility tree.
 - **A drawing that must stay legible** (the saga map) keeps a minimum width (`36rem`) and scrolls inside a focusable
   region, rather than shrinking its labels to a few pixels.
-- **Rows of controls and metadata** (a saga's created and updated times, the map's playback controls) wrap, and a
-  long value breaks rather than widening the page.
+- **Rows of controls and metadata** (a saga's created and updated times, the map's playback controls, the links to
+  sagas that share a correlation id, the retry confirmation's question and its two buttons) wrap, and a long value
+  breaks rather than widening the page. A flex row that must not widen the page sets `flex-wrap: wrap` and
+  `max-width: 100%`; the first redesign pass missed two that did not.
 
 ## Constraints from the container
 
@@ -149,32 +228,38 @@ fonts, styles or scripts. A visual change that needs one is not available; CI ch
 
 ## Research behind these rules
 
-The installed UI UX Pro Max skill was run for this product (`--design-system` for an internal, dark, dense
-operations console, and `--domain ux` for each concern the audit raised). What it returned and what we did with it:
+The installed UI UX Pro Max skill was run for this product, first with `--design-system` and `--domain ux` for each
+concern the audit raised, then (for the redesign) with `--domain ux`, `color` and `typography` for theming, row
+affordance, touch targets and density, and icons. What it returned and what we did with it:
 
 - **Used (sourced).** The Dark Mode (OLED) style fits a low-light console and requires 4.5:1 text contrast, visible
-  focus and reduced motion, which this file already holds; the operational green, incident red and maintenance amber
-  match the status colours in use. Its UX guidance is that users must be able to skip tutorials and onboarding must
-  not lock the screen, and that tables should scroll or turn into cards on a phone. Its 4.5:1 text-contrast
-  rule is what the white-on-accent button failed.
-- **Rejected.** The suggested page pattern was a landing page, the typography was a cyberpunk pairing loaded from
-  Google Fonts (the container's CSP forbids external fonts, and the tone is wrong for an ops tool), and the primary
-  colour was green where the app's accent is blue. None applies.
-- **Our own judgement, not from the tool.** The exact `--accent-solid` value, the 860 px two-line row layout for the
-  list, the failure line in the saga summary, and keeping the map's minimum width at `36rem`.
+  focus and reduced motion, which this file already holds. Its UX guidance is that colour must not carry information
+  alone (the status shapes), that body text needs 4.5:1, that hover effects do not work on touch (the row's chevron
+  and link-coloured id), that the web target size is 24 CSS px with about 8 px between targets, that tables should
+  scroll or turn into cards on a phone, and that users must be able to skip tutorials.
+- **Rejected.** The suggested page pattern was a landing page; the typography results (a cyberpunk pairing, Inter,
+  Fira) are all loaded from Google Fonts, which the container's CSP forbids; the primary colour was green where the
+  app's accent is blue; the colour results were light analytics and IoT palettes with no status guidance. None
+  applies.
+- **Returned nothing usable.** Queries about theming, density, icons and type scale returned only the generic rules
+  above. The decisions on those are our own judgement.
+- **Our own judgement, not from the tool.** The exact `--accent-solid` value, the 860 px two-line row layout, the
+  failure line in the saga summary, the map's `36rem` minimum; and, for the redesign: the whole light palette and the
+  `--border-control` value (each measured, not looked up), the five-step type scale and its 12 px floor, the spacing
+  scale, the shape for each status, the orange for timed out, the teal for Choreographed, the System / Light / Dark
+  menu, ARIA tabs, "handled" on the timeline, and not adding a density switch or icons.
 - **Not found.** A search of the Angular stack guidance for responsive layout and tables returned no match, so
   nothing here cites it.
 
-## Open questions
+## Decided, and what is left
 
-Not decided here, for the design research to settle, not to be assumed:
+Answered by ADR 0010: light theme (System / Light / Dark), spacing, radius and shadow tokens, a five-step type scale,
+status colour and shape, table row affordance, icons (none), and density (deferred).
 
-1. **Light theme and `prefers-color-scheme`.** Absent today. Whether operators want one is unanswered.
-2. **Spacing, radius and shadow tokens.** Literals today; a scale would remove drift but touches every component.
-3. **A type scale in tokens.** Sizes are literals between `.68rem` and `1.3rem`; the small end (`.68`, `.72`) is
-   tight for a read-heavy console.
-4. **Density.** Whether the saga list and timeline want a compact/comfortable switch.
-5. **Status colour sharing.** `timedout` shares the warning amber and `cancelled` shares muted grey; whether those
-   should be told apart at a glance.
-6. **Table row affordance.** Which rows link somewhere and how that is shown is each component's own today.
-7. **Icons.** There are none; whether any earn their place is open, and an icon font is out (CSP, dependency).
+Still open:
+
+1. **Density.** One density today. A compact/comfortable switch is cheap to add on the spacing tokens if operators ask
+   for it; nobody has.
+2. **A higher-contrast theme.** Possible on the same token set; not asked for.
+3. **The theme flash.** Closing it needs the theme applied before first paint, which the CSP's no-inline-script rule
+   prevents; a server-set attribute is the only route and would need the nginx image to know the user's choice.
