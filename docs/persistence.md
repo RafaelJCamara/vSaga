@@ -130,9 +130,11 @@ act on every row.
 > against `"Npgsql.EntityFrameworkCore.PostgreSQL"` or `"Microsoft.EntityFrameworkCore.SqlServer"`
 > (`EfCoreProviderNames`, tested by `EfCoreSagaTimeoutStore.ClaimDueAsync` and
 > `EfCoreSagaOutboxStore.ClaimPendingAsync`). **Every** other EF Core provider — SQLite, or one you bring
-> yourself — silently takes a plain load-then-update fallback that is correct for exactly one
-> dispatcher instance. Two replicas on any other EF Core provider will fire the same timeout twice and
-> publish the same outbox row twice, with no error anywhere. See
+> yourself — takes a plain load-then-update fallback that is correct for exactly one
+> dispatcher instance, and each store logs a warning saying so, once per process, the first time its
+> fallback claim runs (a few seconds after start, when the host has logging). Two replicas on any other EF
+> Core provider will fire the same timeout twice and publish the same outbox row twice, with no error
+> anywhere. See
 > [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md), which predates SQL
 > Server's claim ([`adr/0009-sql-server-persistence-provider.md`](adr/0009-sql-server-persistence-provider.md)).
 > (The Redis and MongoDB providers claim atomically and are not affected.)

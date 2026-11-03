@@ -1,10 +1,11 @@
 using System.Text.Json;
 using VSaga.Abstractions.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace VSaga.Persistence.EFCore;
 
-public sealed class EfCoreSagaOutboxStore(VSagaDbContext db) : ISagaOutboxStore
+public sealed class EfCoreSagaOutboxStore(VSagaDbContext db, ILogger<EfCoreSagaOutboxStore>? logger = null) : ISagaOutboxStore
 {
     /// <remarks>
     /// Adds to the change tracker without saving, per <see cref="ISagaOutboxStore.EnqueueAsync"/>'s
@@ -79,9 +80,11 @@ public sealed class EfCoreSagaOutboxStore(VSagaDbContext db) : ISagaOutboxStore
         if (EfCoreProviderNames.IsNpgsql(provider))
             return ClaimPendingViaSkipLockedAsync(olderThan, batchSize, cancellationToken);
 
-        return EfCoreProviderNames.IsSqlServer(provider)
-            ? ClaimPendingViaReadPastAsync(olderThan, batchSize, cancellationToken)
-            : ClaimPendingViaLoadAndUpdateAsync(olderThan, batchSize, cancellationToken);
+        if (EfCoreProviderNames.IsSqlServer(provider))
+            return ClaimPendingViaReadPastAsync(olderThan, batchSize, cancellationToken);
+
+        EfCoreProviderNames.WarnAboutNonAtomicClaim(logger, nameof(EfCoreSagaOutboxStore), provider);
+        return ClaimPendingViaLoadAndUpdateAsync(olderThan, batchSize, cancellationToken);
     }
 
     /// <summary>

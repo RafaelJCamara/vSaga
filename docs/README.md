@@ -102,9 +102,9 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0003-persistence-contract-clauses.md`](adr/0003-persistence-contract-clauses.md) —
     **Accepted** 2026-09-25 and **implemented** 2026-09-26.
   - [`adr/0004-postgres-only-atomic-claim.md`](adr/0004-postgres-only-atomic-claim.md) — **Accepted**,
-    retroactive: records shipped behaviour, including the claim fallback every non-Postgres EF Core
-    provider silently takes, safe for one dispatcher instance only. `persistence.md` now states it; the
-    startup warning the ADR requires has not been added.
+    retroactive: records shipped behaviour, including the claim fallback every EF Core provider other
+    than Postgres and SQL Server takes, safe for one dispatcher instance only. `persistence.md` now states it, and the stores
+    log the warning the ADR requires, once per process, when the fallback first runs.
   - [`adr/0005-saga-state-storage-model.md`](adr/0005-saga-state-storage-model.md) — **Accepted**,
     retroactive: one shared table, one opaque state blob, and the promotion rule.
   - [`adr/0006-dashboard-authentication-and-identity-store.md`](adr/0006-dashboard-authentication-and-identity-store.md)

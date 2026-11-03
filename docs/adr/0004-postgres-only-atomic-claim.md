@@ -88,7 +88,7 @@ the fallback — including `UseSqlServer`, which the same document recommends th
 `:19`. Two replicas on SQL Server will double-claim timeouts and double-publish outbox rows, silently,
 with no error anywhere. [2026-09-27: the documentation half is no longer live — `docs/persistence.md`
 now says the atomic claim is Postgres-only and names `UseSqlServer` among the providers that take the
-fallback. The fallback itself is still silent at runtime; see **Required** below.]
+fallback. The fallback itself was still silent at runtime then; see **Required** below.]
 
 This is worse than a documentation gap because SQL Server *does* have an equivalent construct
 (`UPDLOCK, READPAST`), so a reader has no reason to suspect the fallback applies to them.
@@ -96,8 +96,12 @@ This is worse than a documentation gap because SQL Server *does* have an equival
 **Required:** correct `docs/persistence.md`, and emit a startup warning when
 `db.Database.ProviderName` is not Npgsql, naming the concurrency limitation. A silent unsafe default on
 a documented-as-supported provider is not acceptable once it is known. [2026-09-27: the documentation
-correction is done; no startup warning has been added yet, so a non-Npgsql provider still takes the
-fallback silently.]
+correction is done; no startup warning had been added yet, so a non-Npgsql provider still took the
+fallback silently. 2026-11-02: added, and narrowed by ADR 0009 to providers that are neither Npgsql nor
+SQL Server. `EfCoreSagaTimeoutStore` and `EfCoreSagaOutboxStore` take an optional `ILogger` and log one
+warning per process and store, naming the provider, when the fallback claim first runs. That is not a
+literal startup message: the package has no hosting dependency to run code at start, and the dispatchers
+poll within seconds.]
 
 **The same gate is written twice**, byte-identically, in two files that must never disagree — folded
 into one internal constant by

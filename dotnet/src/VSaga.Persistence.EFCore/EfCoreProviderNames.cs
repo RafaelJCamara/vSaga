@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
+
 namespace VSaga.Persistence.EFCore;
 
 /// <summary>
@@ -21,6 +24,25 @@ internal static class EfCoreProviderNames
     /// ignores trailing spaces, as every SQL Server comparison does; the raw claim SQL adds a length check for that.
     /// </summary>
     public const string SqlServerBinaryCollation = "Latin1_General_100_BIN2";
+
+    private static readonly ConcurrentDictionary<string, byte> WarnedStores = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// ADR 0004's required warning: a provider that is neither Npgsql nor SQL Server claims with a plain
+    /// load-then-update, which double-claims under two dispatchers with no error anywhere. Logged once per
+    /// process and store, the first time the fallback runs (a few seconds after start, as the dispatchers poll),
+    /// so a scoped store created on every poll does not repeat it.
+    /// </summary>
+    public static void WarnAboutNonAtomicClaim(ILogger? logger, string store, string? providerName)
+    {
+        if (logger is null || !WarnedStores.TryAdd(store, 0))
+            return;
+
+        logger.LogWarning(
+            "{Store} claims with a plain load-then-update on EF Core provider {Provider}, which is only correct for a single dispatcher instance: " +
+            "two instances would claim the same rows and fire timeouts or publish outbox messages twice. Run exactly one dispatcher, or use Npgsql or SQL Server.",
+            store, providerName ?? "(unknown)");
+    }
 
     public static bool IsNpgsql(string? providerName) => string.Equals(providerName, Npgsql, StringComparison.Ordinal);
 

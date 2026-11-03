@@ -1,10 +1,11 @@
 using System.Text.Json;
 using VSaga.Abstractions.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace VSaga.Persistence.EFCore;
 
-public sealed class EfCoreSagaTimeoutStore(VSagaDbContext db) : ISagaTimeoutStore
+public sealed class EfCoreSagaTimeoutStore(VSagaDbContext db, ILogger<EfCoreSagaTimeoutStore>? logger = null) : ISagaTimeoutStore
 {
     public Task ScheduleAsync(string sagaType, Guid correlationId, string forState, DateTimeOffset dueAtUtc, CancellationToken cancellationToken = default)
     {
@@ -54,9 +55,11 @@ public sealed class EfCoreSagaTimeoutStore(VSagaDbContext db) : ISagaTimeoutStor
         if (EfCoreProviderNames.IsNpgsql(provider))
             return ClaimDueViaSkipLockedAsync(asOf, batchSize, wanted, cancellationToken);
 
-        return EfCoreProviderNames.IsSqlServer(provider)
-            ? ClaimDueViaReadPastAsync(asOf, batchSize, wanted, cancellationToken)
-            : ClaimDueViaLoadAndUpdateAsync(asOf, batchSize, wanted, cancellationToken);
+        if (EfCoreProviderNames.IsSqlServer(provider))
+            return ClaimDueViaReadPastAsync(asOf, batchSize, wanted, cancellationToken);
+
+        EfCoreProviderNames.WarnAboutNonAtomicClaim(logger, nameof(EfCoreSagaTimeoutStore), provider);
+        return ClaimDueViaLoadAndUpdateAsync(asOf, batchSize, wanted, cancellationToken);
     }
 
     /// <summary>
