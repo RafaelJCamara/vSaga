@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { firstValueFrom, timeout } from 'rxjs';
 import { API_BASE_URL } from '../api-config';
 import {
+  DisplayPreferences,
   PermissionKey,
   SessionAccess,
   SessionInfo,
@@ -93,6 +94,9 @@ export class AuthService {
    *  server may have acted either way). A request sent under an older value may describe, or have been
    *  refused for, an identity that is gone. */
   private identityEpoch = 0;
+  /** Counts the preference changes the server confirmed (`savePreferences`). A session read sent under an
+   *  older value may describe the choices from before the change, so the session keeps the confirmed ones. */
+  private preferencesEpoch = 0;
   /** Whether the latest session read that was not dropped failed; `login` tells "could not confirm" from
    *  "confirmed, still anonymous" by it. */
   private readonly readFailedState = signal(false);
@@ -113,6 +117,9 @@ export class AuthService {
   /** The signed-in user; null when anonymous, before the first answer, and for the API key. */
   readonly user = computed(() => this.sessionState()?.user ?? null);
   readonly access = computed(() => this.sessionState()?.access ?? null);
+  /** The signed-in user's display choices as the server last said; null when anonymous, for the API key and
+   *  for a user with none. */
+  readonly preferences = computed(() => this.sessionState()?.preferences ?? null);
   /** True while no user exists. */
   readonly setupRequired = computed(() => this.sessionState()?.setupRequired ?? false);
   /** True when first-run setup can be completed now, with the one-time code. */
@@ -247,6 +254,20 @@ export class AuthService {
     }
   }
 
+  /**
+   * Replaces the account's display choices (`PUT /api/auth/preferences`) and, once the server confirms, adopts
+   * them as the session's. Rejects with the `HttpErrorResponse` when the call fails (a 401 also ends the
+   * session through the interceptor); the caller decides what an unsaved choice means. The identity does not
+   * change, so unlike the flows above this neither moves the identity epoch nor reads the session again.
+   */
+  async savePreferences(preferences: DisplayPreferences): Promise<void> {
+    await firstValueFrom(
+      this.http.put(`${AUTH_URL}/preferences`, preferences).pipe(timeout(SESSION_TIMEOUT_MS)),
+    );
+    this.preferencesEpoch += 1;
+    this.sessionState.update((s) => (s ? { ...s, preferences } : s));
+  }
+
   /** Whether the session holds `permission`, for `sagaType` when one is given (see `holds`). */
   can(permission: PermissionKey, sagaType?: string): boolean {
     return holds(this.access(), permission, sagaType);
@@ -340,6 +361,7 @@ export class AuthService {
    *  nothing about the identity there is now. */
   private async fetchSession(): Promise<SessionStatus> {
     const epoch = this.identityEpoch;
+    const preferencesEpoch = this.preferencesEpoch;
     try {
       const session = await firstValueFrom(
         this.http.get<SessionInfo>(SESSION_URL).pipe(timeout(SESSION_TIMEOUT_MS)),
@@ -348,7 +370,14 @@ export class AuthService {
       if (!isSessionInfo(session))
         throw new Error('The session endpoint did not answer a session.');
       this.readFailedState.set(false);
-      this.accept(session);
+      this.accept({
+        ...session,
+        // Sent before a preference change the server has since confirmed: it may still describe the old ones.
+        preferences:
+          preferencesEpoch === this.preferencesEpoch
+            ? asPreferences(session.preferences)
+            : (this.sessionState()?.preferences ?? null),
+      });
     } catch (err) {
       if (epoch === this.identityEpoch) this.markFailed(err);
     }
@@ -390,7 +419,7 @@ export class AuthService {
 
   private signOutLocally(): void {
     this.sessionState.update((s) =>
-      s ? { ...s, authenticated: false, user: null, access: null } : s,
+      s ? { ...s, authenticated: false, user: null, access: null, preferences: null } : s,
     );
     this.statusState.set('anonymous');
     this.identityEpoch += 1;
@@ -428,6 +457,17 @@ function isSessionInfo(value: unknown): value is SessionInfo {
     typeof session.setupAvailable === 'boolean' &&
     isSessionAccess(session.access)
   );
+}
+
+/** The display choices of a session, or null when it carries none (or an API that predates them sent none): a
+ *  member that is not a string is "no choice" too, so a malformed answer cannot make applying it throw. */
+function asPreferences(value: unknown): DisplayPreferences | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { theme, density } = value as Partial<Record<keyof DisplayPreferences, unknown>>;
+  return {
+    theme: typeof theme === 'string' ? theme : null,
+    density: typeof density === 'string' ? density : null,
+  };
 }
 
 function isSessionAccess(value: unknown): boolean {

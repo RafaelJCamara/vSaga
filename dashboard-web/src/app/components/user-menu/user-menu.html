@@ -41,7 +41,7 @@
             tabindex="-1"
             type="button"
             [attr.aria-checked]="theme.choice() === option.value"
-            (click)="theme.set(option.value)"
+            (click)="preferences.setTheme(option.value)"
           ><span [class]="'icon icon--' + option.icon" aria-hidden="true"></span>{{ option.label }}</button>
         }
       </div>
@@ -53,7 +53,7 @@
             tabindex="-1"
             type="button"
             [attr.aria-checked]="density.choice() === option.value"
-            (click)="density.set(option.value)"
+            (click)="preferences.setDensity(option.value)"
           ><span [class]="'icon icon--' + option.icon" aria-hidden="true"></span>{{ option.label }}</button>
         }
       </div>

@@ -51,6 +51,18 @@ export interface SetupProblem {
   detail: string;
 }
 
+/**
+ * The display choices an account keeps (`DisplayPreferencesDto` in the API; ADR 0015, part 4). A `null` member is
+ * "no account choice for it": the browser's own stays. The values are strings here and checked where they are
+ * applied (`DisplayPreferencesService`), so a value a newer API adds cannot break the session.
+ */
+export interface DisplayPreferences {
+  /** `system`, `light`, `dark` or `high-contrast`. */
+  theme: string | null;
+  /** `comfortable` or `compact`. */
+  density: string | null;
+}
+
 export interface SessionInfo {
   /** True for a signed-in user and for the API key. */
   authenticated: boolean;
@@ -65,6 +77,8 @@ export interface SessionInfo {
   access: SessionAccess | null;
   /** The shortest password the policy accepts, for the forms. */
   passwordMinLength: number;
+  /** The signed-in user's display choices; null when anonymous, for the API key and for a user with none. */
+  preferences: DisplayPreferences | null;
 }
 
 /** `POST /api/auth/setup`: the first administrator, and the one-time code the API logged at start. */

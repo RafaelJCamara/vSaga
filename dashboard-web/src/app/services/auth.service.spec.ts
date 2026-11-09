@@ -69,6 +69,7 @@ function anonymous(overrides: Partial<SessionInfo> = {}): SessionInfo {
     user: null,
     access: null,
     passwordMinLength: 12,
+    preferences: null,
     ...overrides,
   };
 }
@@ -792,6 +793,109 @@ describe('AuthService', () => {
 
       expect(service.setupRequired()).toBe(false);
       expect(service.setupAvailable()).toBe(false);
+    });
+  });
+
+  describe('display preferences', () => {
+    const DARK_COMPACT = { theme: 'dark', density: 'compact' };
+
+    it('exposes what the session carries, and null for a session that carries none', async () => {
+      await load(signedIn());
+      expect(service.preferences()).toBeNull();
+
+      const refreshing = service.refresh();
+      await answerSession({ ...signedIn(), preferences: DARK_COMPACT });
+      await refreshing;
+
+      expect(service.preferences()).toEqual(DARK_COMPACT);
+    });
+
+    it('reads a session from an API that predates them, or with malformed ones, as no choice', async () => {
+      await load(signedIn());
+
+      const old = service.refresh();
+      await answerSession(without(signedIn(), 'preferences') as unknown as SessionInfo);
+      await old;
+      expect(service.preferences()).toBeNull();
+
+      const malformed = service.refresh();
+      await answerSession({
+        ...signedIn(),
+        preferences: { theme: 7, density: 'compact' } as unknown as SessionInfo['preferences'],
+      });
+      await malformed;
+      expect(service.preferences()).toEqual({ theme: null, density: 'compact' });
+    });
+
+    it('is cleared when the session ends locally', async () => {
+      await load({ ...signedIn(), preferences: DARK_COMPACT });
+
+      const done = service.logout();
+      (await request('POST', LOGOUT)).flush({});
+      await answerSession(anonymous());
+      await done;
+
+      expect(service.preferences()).toBeNull();
+    });
+
+    describe('savePreferences()', () => {
+      it('PUTs both choices, and the session holds them once the server confirms', async () => {
+        await load(signedIn());
+
+        const saving = service.savePreferences(DARK_COMPACT);
+        const put = await request('PUT', '/api/auth/preferences');
+        expect(put.request.body).toEqual(DARK_COMPACT);
+        expect(service.preferences()).toBeNull();
+
+        put.flush(DARK_COMPACT);
+        await expect(saving).resolves.toBeUndefined();
+
+        expect(service.preferences()).toEqual(DARK_COMPACT);
+        await expectNoRequest(SESSION);
+        expect(order).toEqual([`PUT /api/auth/preferences [authenticated]`]);
+      });
+
+      it('rejects with the error and leaves the session as it was when the server refuses', async () => {
+        await load({ ...signedIn(), preferences: { theme: 'light', density: null } });
+
+        const rejection = service.savePreferences(DARK_COMPACT).catch((e: unknown) => e);
+        (await request('PUT', '/api/auth/preferences')).flush(
+          { code: 'validation' },
+          { status: 400, statusText: 'Bad Request' },
+        );
+
+        expect(await rejection).toBeInstanceOf(HttpErrorResponse);
+        expect(service.preferences()).toEqual({ theme: 'light', density: null });
+      });
+
+      it('keeps the confirmed choices when a session read that was sent before the change answers after it', async () => {
+        await load(signedIn());
+        const reading = service.refresh();
+        const read = await request('GET', SESSION);
+
+        const saving = service.savePreferences(DARK_COMPACT);
+        (await request('PUT', '/api/auth/preferences')).flush(DARK_COMPACT);
+        await saving;
+        // The read was answered by a server that had not yet seen the change.
+        read.flush({ ...signedIn(), preferences: null });
+        await reading;
+
+        expect(service.preferences()).toEqual(DARK_COMPACT);
+        expect(service.isAuthenticated()).toBe(true);
+      });
+
+      it('adopts what a read sent after the change says', async () => {
+        await load(signedIn());
+        const saving = service.savePreferences(DARK_COMPACT);
+        (await request('PUT', '/api/auth/preferences')).flush(DARK_COMPACT);
+        await saving;
+
+        const reading = service.refresh();
+        await answerSession({ ...signedIn(), preferences: { theme: 'light', density: null } });
+        await reading;
+
+        expect(service.preferences()).toEqual({ theme: 'light', density: null });
+      });
     });
   });
 

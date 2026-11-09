@@ -7,6 +7,7 @@ import { GuideToggle } from './components/guide-toggle/guide-toggle';
 import { UserMenu } from './components/user-menu/user-menu';
 import { AuthService } from './services/auth.service';
 import { DensityService } from './services/density.service';
+import { DisplayPreferencesService } from './services/display-preferences.service';
 import { GuideService } from './services/guide.service';
 import { ThemeService } from './services/theme.service';
 
@@ -27,6 +28,8 @@ export class App {
   // Created with the shell, so a stored theme and density are on `<html>` before any page is shown.
   protected readonly theme = inject(ThemeService);
   protected readonly density = inject(DensityService);
+  // Created with the shell too, so a signed-in session's stored choices are applied as soon as it is known.
+  protected readonly preferences = inject(DisplayPreferencesService);
   private readonly document = inject(DOCUMENT);
 
   /** "Skip to main content": moves the focus to the page's `main`. Not a plain `#main` link, which the router

@@ -14,7 +14,7 @@
  * Every state is a writable signal, so a spec can change the session after the component exists, and every
  * method is a `vi.fn()`: assert on it, or reprogram it (`mock.login.mockRejectedValue(err)`).
  *
- * The flows do not move the state: `login`, `setup`, `changePassword` and `logout` resolve and record the
+ * The flows do not move the state: `login`, `setup`, `changePassword`, `savePreferences` and `logout` resolve and record the
  * call, and leave `status`, `user` and `access` as they are (the real ones read the session afterwards). A
  * spec whose component reacts to the outcome says what the outcome is:
  *
@@ -24,6 +24,7 @@
 import { Provider, computed, signal } from '@angular/core';
 import { vi } from 'vitest';
 import {
+  DisplayPreferences,
   PermissionKey,
   SessionAccess,
   SessionStatus,
@@ -54,6 +55,8 @@ export interface AuthMockOptions {
   user?: SessionUser | null;
   /** Default: every permission, for every saga type. */
   access?: SessionAccess | null;
+  /** Default null: the account has no stored display choices. */
+  preferences?: DisplayPreferences | null;
   setupRequired?: boolean;
   setupAvailable?: boolean;
   setupProblem?: SetupProblem | null;
@@ -91,6 +94,7 @@ export function createAuthMock(options: AuthMockOptions = {}) {
     isAuthenticated: computed(() => status() === 'authenticated'),
     user,
     access,
+    preferences: signal<DisplayPreferences | null>(options.preferences ?? null),
     setupRequired: signal(options.setupRequired ?? false),
     setupAvailable: signal(options.setupAvailable ?? false),
     setupProblem: signal<SetupProblem | null>(options.setupProblem ?? null),
@@ -107,6 +111,7 @@ export function createAuthMock(options: AuthMockOptions = {}) {
     logout: vi.fn<AuthService['logout']>(() => Promise.resolve()),
     setup: vi.fn<AuthService['setup']>(() => Promise.resolve()),
     changePassword: vi.fn<AuthService['changePassword']>(() => Promise.resolve()),
+    savePreferences: vi.fn<AuthService['savePreferences']>(() => Promise.resolve()),
     handleUnauthorized: vi.fn<AuthService['handleUnauthorized']>(),
     currentIdentityEpoch: vi.fn<AuthService['currentIdentityEpoch']>(() => 0),
     noteForbidden: vi.fn<AuthService['noteForbidden']>(),

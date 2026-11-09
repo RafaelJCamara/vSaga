@@ -503,6 +503,45 @@ describe('UserMenu', () => {
     });
   });
 
+  describe('keeping the choices on the account', () => {
+    it('writes a theme and a density choice through to the account, both together', async () => {
+      create();
+      await open();
+
+      themes()[2].click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(auth.savePreferences).toHaveBeenLastCalledWith({ theme: 'dark', density: 'comfortable' });
+
+      densities()[1].click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(auth.savePreferences).toHaveBeenLastCalledWith({ theme: 'dark', density: 'compact' });
+    });
+
+    it('applies what the account holds and shows it as the checked choice', async () => {
+      create({ preferences: { theme: 'light', density: 'compact' } });
+      await open();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+      expect(document.documentElement.getAttribute('data-density')).toBe('compact');
+      expect(themes().map((t) => t.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false', 'false']);
+      expect(densities().map((d) => d.getAttribute('aria-checked'))).toEqual(['false', 'true']);
+    });
+
+    it('sends nothing for the API key, which has no account', async () => {
+      create({ user: null });
+      await open();
+
+      themes()[2].click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(auth.savePreferences).not.toHaveBeenCalled();
+    });
+  });
+
   describe('the keyboard, continued', () => {
     it('goes to the first and the last item with Home and End', async () => {
       create();
