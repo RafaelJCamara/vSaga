@@ -30,8 +30,10 @@
       (keydown.space)="activateWithSpace($event)"
       (keydown.shift.tab)="leaveBackwards($event)"
     >
-      <a role="menuitem" tabindex="-1" routerLink="/account" (click)="select()">Account</a>
-      <div role="group" aria-labelledby="user-menu-theme-label" class="user-menu-theme">
+      <a role="menuitem" tabindex="-1" routerLink="/account" (click)="select()"
+        ><span class="icon icon--user" aria-hidden="true"></span>Account</a
+      >
+      <div role="group" aria-labelledby="user-menu-theme-label" class="user-menu-choices">
         <div class="user-menu-group-label" id="user-menu-theme-label">Theme</div>
         @for (option of themeOptions; track option.value) {
           <button
@@ -40,10 +42,24 @@
             type="button"
             [attr.aria-checked]="theme.choice() === option.value"
             (click)="theme.set(option.value)"
-          >{{ option.label }}</button>
+          ><span [class]="'icon icon--' + option.icon" aria-hidden="true"></span>{{ option.label }}</button>
         }
       </div>
-      <button role="menuitem" tabindex="-1" type="button" (click)="signOut()">Sign out</button>
+      <div role="group" aria-labelledby="user-menu-density-label" class="user-menu-choices">
+        <div class="user-menu-group-label" id="user-menu-density-label">Density</div>
+        @for (option of densityOptions; track option.value) {
+          <button
+            role="menuitemradio"
+            tabindex="-1"
+            type="button"
+            [attr.aria-checked]="density.choice() === option.value"
+            (click)="density.set(option.value)"
+          ><span [class]="'icon icon--' + option.icon" aria-hidden="true"></span>{{ option.label }}</button>
+        }
+      </div>
+      <button role="menuitem" tabindex="-1" type="button" (click)="signOut()"
+        ><span class="icon icon--sign-out" aria-hidden="true"></span>Sign out</button
+      >
     </div>
   </div>
 }

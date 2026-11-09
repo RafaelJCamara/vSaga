@@ -16,11 +16,12 @@ text and shape, never by colour alone.
 
 ## Direction
 
-A flat console in two themes, dark and light. Surfaces are separated by a 1 px border, not by shadow; colour is
+A flat console in three themes: dark, light and a high-contrast one. Surfaces are separated by a 1 px border, not by shadow; colour is
 spent on status and on the one accent. The theme follows the operating system (`prefers-color-scheme`) and the user
-menu overrides it (System, Light, Dark). No component library, no icon font and no web fonts: the system font stack
-keeps the page inside the container's Content Security Policy and costs no request. Nothing is an icon: state is a
-shape drawn in CSS beside a word.
+menu overrides it (System, Light, Dark, High contrast). No component library, no icon font and no web fonts: the system font stack
+keeps the page inside the container's Content Security Policy and costs no request. State is a shape drawn in CSS beside
+a word, never an icon. The few icons there are (banner tones, the user menu) are decorative SVG masks drawn by the
+stylesheet, always beside a word (see Icons).
 
 ## Tokens
 
@@ -35,8 +36,8 @@ the same names under `@media (prefers-color-scheme: light)` for `:root:not([data
 skips, so the dark base stands. `color-scheme` follows, so
 scrollbars, the open list of a native `select`, date pickers and autofill match the page.
 
-The choice is made in the user menu (`ThemeService`), stored in `localStorage` under `vsaga.theme` as `light` or `dark`
-(no value means System) and applied as `data-theme` on `<html>`. `public/theme-init.js`, a same-origin script
+The choice is made in the user menu (`ThemeService`), stored in `localStorage` under `vsaga.theme` as `light`, `dark` or
+`high-contrast` (no value means System) and applied as `data-theme` on `<html>`. `public/theme-init.js`, a same-origin script
 loaded from `<head>` (the CSP allows `script-src 'self'` and forbids only the inline kind), applies it before the
 first paint, so a stored choice that differs from the OS does not flash; `ThemeService` applies it again when the app
 starts and on every change. The script duplicates the storage key, which `theme-init.spec.ts` pins to the service's.
@@ -95,6 +96,32 @@ Status text on its own 12 % tint (banners, pills): dark 4.6 to 7.3, light 4.5 to
 "completed" (4.53) and the dark failed red (4.64). A new colour pair is measured, not assumed; `--danger-solid` exists
 because the status red under white text is only 3.4.
 
+#### The high-contrast theme
+
+`:root[data-theme='high-contrast']`, chosen in the user menu and never selected by the OS setting (`prefers-contrast` is
+not read: see [ADR 0015](../docs/adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md)). It redefines the
+same names on a black page and aims at WCAG AAA: 7:1 for text, measured below. It is dark-based; there is no light
+high-contrast palette. It adds two rules a palette cannot: a link is always underlined (except `.btn` and the brand),
+and the focus ring is 3 px.
+
+| Token | Value | Token | Value |
+| --- | --- | --- | --- |
+| `--bg` | `#000000` | `--status-running`, `--kind-orchestrated`, `--accent` | `#9cc0ff` |
+| `--bg-elevated` | `#0a0a0a` | `--status-completed` | `#4ee0a0` |
+| `--bg-hover` | `#1a1a1a` | `--status-failed` | `#ffa0aa` |
+| `--border` | `#9a9a9a` | `--status-compensating` | `#ffc24d` |
+| `--border-control` | `#ffffff` | `--status-compensated` | `#d6b8ff` |
+| `--text` | `#ffffff` | `--status-timedout` | `#ffa66b` |
+| `--text-muted`, `--status-cancelled` | `#d0d0d0` | `--kind-choreographed` | `#55e3f2` |
+| `--accent-solid` | `#0a3fc4` | `--danger-solid` | `#a8001a` |
+
+Computed with the WCAG 2.x relative-luminance formula (the throwaway script is not in the repository), on
+`--bg-elevated`, on `--bg-hover`, and for the status colours on their own 12 % tint over each: `--text` 19.8, 17.4;
+`--text-muted` 12.8, 11.3; `--accent` 10.8, 9.5; completed 11.8, 10.4; failed 10.2, 9.0; compensating 12.3, 10.8;
+compensated 11.5, 10.1; timed out 10.3, 9.1; Choreographed 12.9, 11.3. On a tint the lowest is 7.1 (failed on the
+tinted hover row). White on `--accent-solid` 8.3 and on `--danger-solid` 7.8. `--border` on `--bg-elevated` 7.0 and on
+`--bg-hover` 6.2; `--border-control` 19.8.
+
 State is never carried by colour alone: a status badge is a **shape** and the status word (below).
 
 ### Typography
@@ -138,6 +165,39 @@ stylesheet (the computed padding, margin, gap, radius and font size of every ele
 `.4rem`, `.6rem`, `.9rem` and the like) and are still literals: snapping them moves pixels, so it is a design
 decision for the maintainer, not a mechanical one.
 
+### Density
+
+Two: **Comfortable** (the table above, the default) and **Compact**. The user menu offers them (`DensityService`),
+stored in `localStorage` under `vsaga.density` as `compact` (no value means Comfortable) and applied as
+`data-density="compact"` on `<html>`; `public/theme-init.js` applies it before the first paint, and a spec pins the
+key. Independent of the theme. Compact redefines the spacing tokens under `:root[data-density='compact']` and nothing
+else except the body's line height (1.5 to 1.4):
+
+| Token | Comfortable | Compact | Token | Comfortable | Compact |
+| --- | --- | --- | --- | --- | --- |
+| `--space-1` | `.25rem` (4 px) | unchanged | `--space-5` | `1.25rem` (20 px) | `1rem` (16 px) |
+| `--space-2` | `.5rem` (8 px) | `.375rem` (6 px) | `--space-6` | `1.5rem` (24 px) | `1.125rem` (18 px) |
+| `--space-3` | `.75rem` (12 px) | `.5625rem` (9 px) | `--space-7` | `2rem` (32 px) | `1.5rem` (24 px) |
+| `--space-4` | `1rem` (16 px) | `.75rem` (12 px) | `--space-8` | `3rem` (48 px) | `2.25rem` (36 px) |
+
+`--space-1` stays so a `.btn` (its vertical padding) keeps the 24 px pointer target. The limit of the switch: only what
+uses a token follows. The spacing literals between steps (see above) and the text sizes do not move, so a page with many
+of them changes less than one built on tokens. Snapping those literals is what would finish it.
+
+### Icons
+
+A small set, in `src/styles/_icons.scss`: information, success, warning and error (the lead of the four banner tones,
+`.banner--*::before`, so a banner is told apart by a mark as well as its tint), and monitor, sun, moon, contrast, rows,
+user and sign-out (the user menu). Each is the body of a 24 by 24 stroked SVG held as a `data:` URL and used as a CSS
+`mask` over a `currentColor` box (`<span class="icon icon--sun" aria-hidden="true"></span>`), so it takes the text
+colour in every theme. No icon font, no package, no request. Rules:
+
+- An icon is decorative: `aria-hidden`, beside a word, never the only cue. State stays a shape and a word (below).
+- It needs `img-src 'self' data:` in the container's policy, which the nginx template has; a policy that dropped
+  `data:` would lose the icons and nothing else.
+- Under `forced-colors` the mask's background is set to `CanvasText`, or the system would paint it as the canvas.
+- A new icon is one entry in the `$icons` map on the same grid (2 px stroke, round caps). Do not add one for ornament.
+
 ### Status and kind marks
 
 A status badge is a dot of the status colour in a **shape of its own**, then the word:
@@ -171,6 +231,7 @@ Global classes in `src/styles.scss`. Reuse them before writing a new one.
 | `.page-header`, `.page-title`, `.section-title`, `.toolbar`, `.actions` | Page structure and the row that ends a form | |
 | `.json-block` | Pretty-printed state or payload; focusable where it scrolls | |
 | `.empty`, `.muted`, `.micro-label`, `.mono`, `.sr-only` | Utility text styles | |
+| `.icon--<name>` | A decorative icon in the text colour (see Icons) | |
 
 Shared Angular components: `status-badge`, `kind-badge`, `confirm-button`, `local-time`, `user-menu`,
 `access-summary`, `saga-timeline`, `saga-map`, `saga-data-inspector`, `saga-data-overview`, `guide-overlay`,
@@ -230,7 +291,8 @@ with no horizontal page scroll; verify at about 360, 768 and 1280 px (see
 ## Constraints from the container
 
 The nginx image sets a strict Content Security Policy: no inline `<script>`, no `on*=` handlers, no external
-fonts, styles or scripts. A visual change that needs one is not available; CI checks the built `index.html`.
+fonts, styles or scripts. A visual change that needs one is not available; CI checks the built `index.html`. `img-src`
+allows `data:`, which the icon masks rely on.
 
 ## Research behind these rules
 
@@ -253,17 +315,25 @@ affordance, touch targets and density, and icons. What it returned and what we d
   failure line in the saga summary, the map's `36rem` minimum; and, for the redesign: the whole light palette and the
   `--border-control` value (each measured, not looked up), the five-step type scale and its 12 px floor, the spacing
   scale, the shape for each status, the orange for timed out, the teal for Choreographed, the System / Light / Dark
-  menu, ARIA tabs, "handled" on the timeline, and not adding a density switch or icons.
+  menu, ARIA tabs, "handled" on the timeline, and not adding a density switch or icons. For ADR 0015 (density, icons, high
+  contrast) the tool was not run again: the high-contrast palette, the compact scale and the icon set are our own
+  judgement, the palette measured.
 - **Not found.** A search of the Angular stack guidance for responsive layout and tables returned no match, so
   nothing here cites it.
 
 ## Decided, and what is left
 
 Answered by ADR 0010: light theme (System / Light / Dark), spacing, radius and shadow tokens, a five-step type scale,
-status colour and shape, table row affordance, icons (none), and density (deferred).
+status colour and shape, table row affordance, icons (none), and density (deferred). Answered by
+[ADR 0015](../docs/adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md) (proposed): a high-contrast theme,
+Comfortable and Compact density, and a small set of decorative icons.
 
 Still open:
 
-1. **Density.** One density today. A compact/comfortable switch is cheap to add on the spacing tokens if operators ask
-   for it; nobody has.
-2. **A higher-contrast theme.** Possible on the same token set; not asked for.
+1. **The display choices are per browser.** ADR 0015 designs a per-account store (a column on the identity store's
+   `Users` table, one generated migration) and does not build it; until it is accepted and built the choices live in
+   `localStorage`.
+2. **Compact reaches only the tokenised spacing.** About fifty literals between scale steps do not follow it; snapping
+   them would finish the switch and moves pixels.
+3. **A light high-contrast palette**, and choosing the high-contrast one from `prefers-contrast: more`. Neither built.
+4. **The Unicode glyphs** (the sort arrows, the menu arrow, the check) are text, not icons; they could move to the set.

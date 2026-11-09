@@ -19,7 +19,7 @@ describe('ThemeService', () => {
     expect(root.hasAttribute('data-theme')).toBe(false);
   });
 
-  it.each(['light', 'dark'] as const)('applies a stored %s choice at start', (stored) => {
+  it.each(['light', 'dark', 'high-contrast'] as const)('applies a stored %s choice at start', (stored) => {
     const storage = new MemoryStorage();
     storage.setItem(THEME_STORAGE_KEY, stored);
 
@@ -50,6 +50,10 @@ describe('ThemeService', () => {
     theme.set('dark');
     expect(root.getAttribute('data-theme')).toBe('dark');
     expect(storage.getItem(THEME_STORAGE_KEY)).toBe('dark');
+
+    theme.set('high-contrast');
+    expect(root.getAttribute('data-theme')).toBe('high-contrast');
+    expect(storage.getItem(THEME_STORAGE_KEY)).toBe('high-contrast');
 
     theme.set('system');
     expect(root.hasAttribute('data-theme')).toBe(false);

@@ -133,6 +133,9 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0013-running-sagas-gauge-reads-the-store.md`](adr/0013-running-sagas-gauge-reads-the-store.md)
     — **Proposed**: a `vsaga.saga.running` gauge that counts `Running` instances in the store through a new
     `ISagaSummaryReader.CountByTypeAsync`, refreshed by a background service in `VSaga.Observability`.
+  - [`adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md`](adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md)
+    — **Proposed**: a compact/comfortable density switch, CSS-drawn icons and a high-contrast theme in the dashboard;
+    the display choices following the account is designed there but not built.
 
 ## History
 

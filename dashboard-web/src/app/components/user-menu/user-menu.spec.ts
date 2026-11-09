@@ -1,10 +1,13 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed, ComponentFixture } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
+import { DENSITY_STORAGE_KEY } from '../../services/density.service';
 import { THEME_STORAGE, THEME_STORAGE_KEY } from '../../services/theme.service';
 import { AuthMock, createAuthMock, provideAuthMock } from '../../testing/auth-mock';
 import { MemoryStorage } from '../../testing/guide';
 import { UserMenu } from './user-menu';
+// @ts-expect-error The partial is plain text here: the spec reads which icon names it defines.
+import iconsScss from '../../../styles/_icons.scss' with { loader: 'text' };
 
 /** Where the account link goes; the page itself is not what this spec is about. */
 @Component({
@@ -23,7 +26,10 @@ describe('UserMenu', () => {
     themeStorage = new MemoryStorage();
   });
 
-  afterEach(() => document.documentElement.removeAttribute('data-theme'));
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-density');
+  });
 
   function create(options: Parameters<typeof createAuthMock>[0] = {}): void {
     auth = createAuthMock({
@@ -45,8 +51,14 @@ describe('UserMenu', () => {
   const trigger = () => root().querySelector<HTMLButtonElement>('button.user-menu-trigger')!;
   const panel = () => root().querySelector<HTMLElement>('.user-menu-panel');
   const items = () => Array.from(root().querySelectorAll<HTMLElement>('[role="menuitem"]'));
-  const themes = () =>
-    Array.from(root().querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+  const radios = (group: number) =>
+    Array.from(
+      root().querySelectorAll<HTMLElement>('[role="group"]')[group].querySelectorAll<HTMLButtonElement>(
+        '[role="menuitemradio"]',
+      ),
+    );
+  const themes = () => radios(0);
+  const densities = () => radios(1);
   const account = () => items()[0] as HTMLAnchorElement;
   const signOutButton = () => items()[1] as HTMLButtonElement;
   const focused = () => document.activeElement;
@@ -335,8 +347,13 @@ describe('UserMenu', () => {
 
       key(focused()!, 'ArrowDown');
       key(focused()!, 'ArrowDown');
-      expect(focused()).toBe(themes()[2]);
+      key(focused()!, 'ArrowDown');
+      expect(focused()).toBe(themes()[3]);
 
+      key(focused()!, 'ArrowDown');
+      expect(focused()).toBe(densities()[0]);
+
+      key(focused()!, 'ArrowDown');
       key(focused()!, 'ArrowDown');
       expect(focused()).toBe(signOutButton());
 
@@ -347,19 +364,24 @@ describe('UserMenu', () => {
       expect(focused()).toBe(signOutButton());
 
       key(focused()!, 'ArrowUp');
-      expect(focused()).toBe(themes()[2]);
+      expect(focused()).toBe(densities()[1]);
     });
   });
 
   describe('the theme', () => {
     const checked = () => themes().map((b) => b.getAttribute('aria-checked'));
 
-    it('offers System, Light and Dark as radio items in a group named Theme, System being the default', async () => {
+    it('offers System, Light, Dark and High contrast as radio items in a group named Theme, System being the default', async () => {
       create();
       await open();
 
-      expect(themes().map((b) => b.textContent?.trim())).toEqual(['System', 'Light', 'Dark']);
-      expect(checked()).toEqual(['true', 'false', 'false']);
+      expect(themes().map((b) => b.textContent?.trim())).toEqual([
+        'System',
+        'Light',
+        'Dark',
+        'High contrast',
+      ]);
+      expect(checked()).toEqual(['true', 'false', 'false', 'false']);
       const group = root().querySelector('[role="group"]')!;
       expect(root().querySelector(`#${group.getAttribute('aria-labelledby')}`)?.textContent).toBe('Theme');
     });
@@ -373,7 +395,7 @@ describe('UserMenu', () => {
 
       expect(document.documentElement.getAttribute('data-theme')).toBe('light');
       expect(themeStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
-      expect(checked()).toEqual(['false', 'true', 'false']);
+      expect(checked()).toEqual(['false', 'true', 'false', 'false']);
       expect(panel()).not.toBeNull();
 
       themes()[0].click();
@@ -381,7 +403,19 @@ describe('UserMenu', () => {
 
       expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
       expect(themeStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
-      expect(checked()).toEqual(['true', 'false', 'false']);
+      expect(checked()).toEqual(['true', 'false', 'false', 'false']);
+    });
+
+    it('applies High contrast and stores it', async () => {
+      create();
+      await open();
+
+      themes()[3].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('high-contrast');
+      expect(themeStorage.getItem(THEME_STORAGE_KEY)).toBe('high-contrast');
+      expect(checked()).toEqual(['false', 'false', 'false', 'true']);
     });
 
     it('shows a stored choice as the checked one', async () => {
@@ -389,7 +423,83 @@ describe('UserMenu', () => {
       create();
       await open();
 
-      expect(checked()).toEqual(['false', 'false', 'true']);
+      expect(checked()).toEqual(['false', 'false', 'true', 'false']);
+    });
+  });
+
+  describe('the icons', () => {
+    it('marks every item with a decorative icon that the stylesheet defines, and keeps the words', async () => {
+      create();
+      await open();
+
+      const all = Array.from(
+        root().querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
+      );
+      expect(all).toHaveLength(8);
+      for (const item of all) {
+        const icon = item.querySelector<HTMLElement>('.icon');
+        expect(icon, item.textContent ?? '').not.toBeNull();
+        expect(icon!.getAttribute('aria-hidden')).toBe('true');
+        const name = Array.from(icon!.classList)
+          .find((c) => c.startsWith('icon--'))!
+          .slice('icon--'.length);
+        expect(iconsScss as string, name).toContain(`'${name}':`);
+        expect(icon!.textContent).toBe('');
+      }
+    });
+  });
+
+  describe('the density', () => {
+    const checked = () => densities().map((b) => b.getAttribute('aria-checked'));
+
+    it('offers Comfortable and Compact as radio items in a group named Density, Comfortable being the default', async () => {
+      create();
+      await open();
+
+      expect(densities().map((b) => b.textContent?.trim())).toEqual(['Comfortable', 'Compact']);
+      expect(checked()).toEqual(['true', 'false']);
+      const group = root().querySelectorAll('[role="group"]')[1];
+      expect(root().querySelector(`#${group.getAttribute('aria-labelledby')}`)?.textContent).toBe('Density');
+    });
+
+    it('applies Compact at once, stores it, and Comfortable clears both', async () => {
+      create();
+      await open();
+
+      densities()[1].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.getAttribute('data-density')).toBe('compact');
+      expect(themeStorage.getItem(DENSITY_STORAGE_KEY)).toBe('compact');
+      expect(checked()).toEqual(['false', 'true']);
+      expect(panel()).not.toBeNull();
+
+      densities()[0].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.hasAttribute('data-density')).toBe(false);
+      expect(themeStorage.getItem(DENSITY_STORAGE_KEY)).toBeNull();
+      expect(checked()).toEqual(['true', 'false']);
+    });
+
+    it('is independent of the theme', async () => {
+      create();
+      await open();
+
+      themes()[2].click();
+      densities()[1].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(document.documentElement.getAttribute('data-density')).toBe('compact');
+    });
+
+    it('shows a stored choice as the checked one', async () => {
+      themeStorage.setItem(DENSITY_STORAGE_KEY, 'compact');
+      create();
+      await open();
+
+      expect(checked()).toEqual(['false', 'true']);
     });
   });
 

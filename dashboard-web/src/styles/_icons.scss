@@ -1,0 +1,68 @@
+/* Icons: an SVG drawn by the stylesheet, painted in the text colour. No icon font and no icon package (ADR 0010,
+   ADR 0015): each icon is the body of a 24x24 stroked SVG, held here as a `data:` URL and used as a CSS mask over a
+   `currentColor` box, so it follows every theme. The container's Content Security Policy allows it
+   (`img-src 'self' data:`) and nothing is fetched; the SVG is decorative, always beside a word, never the only cue.
+
+   Use: `<span class="icon icon--sun" aria-hidden="true"></span>`, or `@include icon('error')` in a pseudo-element.
+   A new icon is one entry in $icons, drawn on the same 24x24 grid, 2 px stroke, round caps (< and > are %3C and %3E). */
+
+@use 'sass:map';
+
+$icons: (
+  'info': "%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 16v-4M12 8h.01'/%3E",
+  'success': "%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M8 12.5l3 3 5-6'/%3E",
+  'warning': "%3Cpath d='M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 9v4M12 17h.01'/%3E",
+  'error': "%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M15 9l-6 6M9 9l6 6'/%3E",
+  'monitor': "%3Crect x='2' y='3' width='20' height='14' rx='2'/%3E%3Cpath d='M8 21h8M12 17v4'/%3E",
+  'sun': "%3Ccircle cx='12' cy='12' r='4'/%3E%3Cpath d='M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'/%3E",
+  'moon': "%3Cpath d='M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'/%3E",
+  'contrast': "%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 2a10 10 0 0 1 0 20z' fill='black'/%3E",
+  'rows-loose': "%3Cpath d='M4 6h16M4 12h16M4 18h16'/%3E",
+  'rows-tight': "%3Cpath d='M4 4h16M4 8h16M4 12h16M4 16h16M4 20h16'/%3E",
+  'user': "%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M4 21a8 8 0 0 1 16 0'/%3E",
+  'sign-out': "%3Cpath d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9'/%3E",
+);
+
+@function icon-url($name) {
+  @return url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E#{map.get($icons, $name)}%3C/svg%3E");
+}
+
+/* The box and the mask of an icon. `-webkit-mask` first: Safari before 15.4 knows only that spelling. */
+@mixin icon($name) {
+  display: inline-block;
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.2em;
+  background-color: currentColor;
+  -webkit-mask: #{icon-url($name)} center / contain no-repeat;
+  mask: #{icon-url($name)} center / contain no-repeat;
+
+  /* In forced-colours mode the system replaces a background with Canvas, which would paint the icon invisible. */
+  @media (forced-colors: active) {
+    forced-color-adjust: none;
+    background-color: CanvasText;
+  }
+}
+
+@each $name, $body in $icons {
+  .icon--#{$name} {
+    @include icon($name);
+  }
+}
+
+/* Each banner tone leads with its icon, so the tone is not carried by the tint alone. The plain `.banner` has none.
+   The icon hangs in the left padding, so a message that wraps keeps its lines aligned. `.banner.banner--x` is
+   needed to beat the `.banner` padding, which is declared after this partial. */
+@each $tone, $name in ('error': 'error', 'warning': 'warning', 'info': 'info', 'success': 'success') {
+  .banner.banner--#{$tone} {
+    padding-left: calc(var(--space-4) + 1.15em + var(--space-2));
+  }
+
+  .banner--#{$tone}::before {
+    @include icon($name);
+    content: '';
+    margin-left: calc(-1.15em - var(--space-2));
+    margin-right: var(--space-2);
+  }
+}
