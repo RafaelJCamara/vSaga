@@ -19,8 +19,9 @@ text and shape, never by colour alone.
 A flat console in three themes: dark, light and a high-contrast one. Surfaces are separated by a 1 px border, not by shadow; colour is
 spent on status and on the one accent. The theme follows the operating system (`prefers-color-scheme`) and the user
 menu overrides it (System, Light, Dark, High contrast). No component library, no icon font and no web fonts: the system font stack
-keeps the page inside the container's Content Security Policy and costs no request. Nothing is an icon: state is a
-shape drawn in CSS beside a word.
+keeps the page inside the container's Content Security Policy and costs no request. State is a shape drawn in CSS beside
+a word, never an icon. The few icons there are (banner tones, the user menu) are decorative SVG masks drawn by the
+stylesheet, always beside a word (see Icons).
 
 ## Tokens
 
@@ -183,6 +184,20 @@ else except the body's line height (1.5 to 1.4):
 uses a token follows. The spacing literals between steps (see above) and the text sizes do not move, so a page with many
 of them changes less than one built on tokens. Snapping those literals is what would finish it.
 
+### Icons
+
+A small set, in `src/styles/_icons.scss`: information, success, warning and error (the lead of the four banner tones,
+`.banner--*::before`, so a banner is told apart by a mark as well as its tint), and monitor, sun, moon, contrast, rows,
+user and sign-out (the user menu). Each is the body of a 24 by 24 stroked SVG held as a `data:` URL and used as a CSS
+`mask` over a `currentColor` box (`<span class="icon icon--sun" aria-hidden="true"></span>`), so it takes the text
+colour in every theme. No icon font, no package, no request. Rules:
+
+- An icon is decorative: `aria-hidden`, beside a word, never the only cue. State stays a shape and a word (below).
+- It needs `img-src 'self' data:` in the container's policy, which the nginx template has; a policy that dropped
+  `data:` would lose the icons and nothing else.
+- Under `forced-colors` the mask's background is set to `CanvasText`, or the system would paint it as the canvas.
+- A new icon is one entry in the `$icons` map on the same grid (2 px stroke, round caps). Do not add one for ornament.
+
 ### Status and kind marks
 
 A status badge is a dot of the status colour in a **shape of its own**, then the word:
@@ -216,6 +231,7 @@ Global classes in `src/styles.scss`. Reuse them before writing a new one.
 | `.page-header`, `.page-title`, `.section-title`, `.toolbar`, `.actions` | Page structure and the row that ends a form | |
 | `.json-block` | Pretty-printed state or payload; focusable where it scrolls | |
 | `.empty`, `.muted`, `.micro-label`, `.mono`, `.sr-only` | Utility text styles | |
+| `.icon--<name>` | A decorative icon in the text colour (see Icons) | |
 
 Shared Angular components: `status-badge`, `kind-badge`, `confirm-button`, `local-time`, `user-menu`,
 `access-summary`, `saga-timeline`, `saga-map`, `saga-data-inspector`, `saga-data-overview`, `guide-overlay`,
@@ -275,7 +291,8 @@ with no horizontal page scroll; verify at about 360, 768 and 1280 px (see
 ## Constraints from the container
 
 The nginx image sets a strict Content Security Policy: no inline `<script>`, no `on*=` handlers, no external
-fonts, styles or scripts. A visual change that needs one is not available; CI checks the built `index.html`.
+fonts, styles or scripts. A visual change that needs one is not available; CI checks the built `index.html`. `img-src`
+allows `data:`, which the icon masks rely on.
 
 ## Research behind these rules
 
@@ -298,17 +315,25 @@ affordance, touch targets and density, and icons. What it returned and what we d
   failure line in the saga summary, the map's `36rem` minimum; and, for the redesign: the whole light palette and the
   `--border-control` value (each measured, not looked up), the five-step type scale and its 12 px floor, the spacing
   scale, the shape for each status, the orange for timed out, the teal for Choreographed, the System / Light / Dark
-  menu, ARIA tabs, "handled" on the timeline, and not adding a density switch or icons.
+  menu, ARIA tabs, "handled" on the timeline, and not adding a density switch or icons. For ADR 0015 (density, icons, high
+  contrast) the tool was not run again: the high-contrast palette, the compact scale and the icon set are our own
+  judgement, the palette measured.
 - **Not found.** A search of the Angular stack guidance for responsive layout and tables returned no match, so
   nothing here cites it.
 
 ## Decided, and what is left
 
 Answered by ADR 0010: light theme (System / Light / Dark), spacing, radius and shadow tokens, a five-step type scale,
-status colour and shape, table row affordance, icons (none), and density (deferred).
+status colour and shape, table row affordance, icons (none), and density (deferred). Answered by
+[ADR 0015](../docs/adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md) (proposed): a high-contrast theme,
+Comfortable and Compact density, and a small set of decorative icons.
 
 Still open:
 
-1. **Density.** One density today. A compact/comfortable switch is cheap to add on the spacing tokens if operators ask
-   for it; nobody has.
-2. **A higher-contrast theme.** Possible on the same token set; not asked for.
+1. **The display choices are per browser.** ADR 0015 designs a per-account store (a column on the identity store's
+   `Users` table, one generated migration) and does not build it; until it is accepted and built the choices live in
+   `localStorage`.
+2. **Compact reaches only the tokenised spacing.** About fifty literals between scale steps do not follow it; snapping
+   them would finish the switch and moves pixels.
+3. **A light high-contrast palette**, and choosing the high-contrast one from `prefers-contrast: more`. Neither built.
+4. **The Unicode glyphs** (the sort arrows, the menu arrow, the check) are text, not icons; they could move to the set.

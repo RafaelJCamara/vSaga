@@ -49,15 +49,15 @@ export class UserMenu {
   private readonly injector = inject(Injector);
   private readonly trigger = viewChild.required<ElementRef<HTMLButtonElement>>('trigger');
 
-  protected readonly themeOptions: readonly { value: ThemeChoice; label: string }[] = [
-    { value: 'system', label: 'System' },
-    { value: 'light', label: 'Light' },
-    { value: 'dark', label: 'Dark' },
-    { value: 'high-contrast', label: 'High contrast' },
+  protected readonly themeOptions: readonly { value: ThemeChoice; label: string; icon: string }[] = [
+    { value: 'system', label: 'System', icon: 'monitor' },
+    { value: 'light', label: 'Light', icon: 'sun' },
+    { value: 'dark', label: 'Dark', icon: 'moon' },
+    { value: 'high-contrast', label: 'High contrast', icon: 'contrast' },
   ];
-  protected readonly densityOptions: readonly { value: DensityChoice; label: string }[] = [
-    { value: 'comfortable', label: 'Comfortable' },
-    { value: 'compact', label: 'Compact' },
+  protected readonly densityOptions: readonly { value: DensityChoice; label: string; icon: string }[] = [
+    { value: 'comfortable', label: 'Comfortable', icon: 'rows-loose' },
+    { value: 'compact', label: 'Compact', icon: 'rows-tight' },
   ];
   protected readonly user = this.auth.user;
   protected readonly open = signal(false);

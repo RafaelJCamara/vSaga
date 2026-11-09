@@ -6,6 +6,8 @@ import { THEME_STORAGE, THEME_STORAGE_KEY } from '../../services/theme.service';
 import { AuthMock, createAuthMock, provideAuthMock } from '../../testing/auth-mock';
 import { MemoryStorage } from '../../testing/guide';
 import { UserMenu } from './user-menu';
+// @ts-expect-error The partial is plain text here: the spec reads which icon names it defines.
+import iconsScss from '../../../styles/_icons.scss' with { loader: 'text' };
 
 /** Where the account link goes; the page itself is not what this spec is about. */
 @Component({
@@ -422,6 +424,28 @@ describe('UserMenu', () => {
       await open();
 
       expect(checked()).toEqual(['false', 'false', 'true', 'false']);
+    });
+  });
+
+  describe('the icons', () => {
+    it('marks every item with a decorative icon that the stylesheet defines, and keeps the words', async () => {
+      create();
+      await open();
+
+      const all = Array.from(
+        root().querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
+      );
+      expect(all).toHaveLength(8);
+      for (const item of all) {
+        const icon = item.querySelector<HTMLElement>('.icon');
+        expect(icon, item.textContent ?? '').not.toBeNull();
+        expect(icon!.getAttribute('aria-hidden')).toBe('true');
+        const name = Array.from(icon!.classList)
+          .find((c) => c.startsWith('icon--'))!
+          .slice('icon--'.length);
+        expect(iconsScss as string, name).toContain(`'${name}':`);
+        expect(icon!.textContent).toBe('');
+      }
     });
   });
 

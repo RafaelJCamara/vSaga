@@ -86,6 +86,9 @@ white text, brighter outlines, links that are always underlined and a thicker fo
 space between and inside elements so more fits on a screen. It applies at once and works with any theme. Some spacing
 is fixed and does not change, so a page with little to tighten changes little.
 
+**Icons.** Messages at the top of a page start with a small icon for their kind (information, success, warning or
+error), and the items of the user menu have one each. They are a second cue beside the colour and the words, never the only one.
+
 Theme and density are kept in this browser only (they do not follow your account to another one). Where the browser
 blocks site storage, the choices last until you reload.
 

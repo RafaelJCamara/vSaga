@@ -67,6 +67,11 @@
   content: '';
 }
 
+/* The icon before an item's word, in the item's own colour. */
+.icon {
+  margin-right: var(--space-2);
+}
+
 .user-menu-choices button[aria-checked='true'] {
   background: var(--accent-soft);
 }
