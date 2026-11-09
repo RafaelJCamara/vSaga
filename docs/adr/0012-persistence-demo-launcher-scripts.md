@@ -1,6 +1,6 @@
 # ADR 0012: One launcher script runs any persistence sample, or all five in turn
 
-**Status:** **Proposed**
+**Status:** **Accepted** — 2026-11-09, by the maintainer. **Implemented** — 2026-11-09, `9aa3c56`.
 **Date:** 2026-11-09
 **Relates to:** [`0009-sql-server-persistence-provider.md`](0009-sql-server-persistence-provider.md) (the
 fifth provider, and the fifth sample, which made "start the right compose file, then the right project"

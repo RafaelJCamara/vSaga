@@ -128,14 +128,14 @@ new here; the rest of this index is organized by topic, roughly in the order you
     — **Accepted** and **implemented** 2026-11-02: the sample submits a seed batch of orders at startup
     and more only through `POST /orders`, instead of one every 8 seconds forever.
   - [`adr/0012-persistence-demo-launcher-scripts.md`](adr/0012-persistence-demo-launcher-scripts.md)
-    — **Proposed** 2026-11-09: `run-sample.ps1` / `run-sample.sh` start a persistence sample's database
+    — **Accepted** and **implemented** 2026-11-09: `run-sample.ps1` / `run-sample.sh` start a persistence sample's database
     and run it (one provider or all five), instead of a single project with a `--provider` switch.
   - [`adr/0013-running-sagas-gauge-reads-the-store.md`](adr/0013-running-sagas-gauge-reads-the-store.md)
-    — **Proposed**: a `vsaga.saga.running` gauge that counts `Running` instances in the store through a new
+    — **Accepted** and **implemented** 2026-11-09: a `vsaga.saga.running` gauge that counts `Running` instances in the store through a new
     `ISagaSummaryReader.CountByTypeAsync`, refreshed by a background service in `VSaga.Observability`.
   - [`adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md`](adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md)
-    — **Proposed**: a compact/comfortable density switch, CSS-drawn icons and a high-contrast theme in the dashboard;
-    the display choices following the account is designed there but not built.
+    — **Accepted** 2026-11-09: a compact/comfortable density switch, CSS-drawn icons and a high-contrast theme in the
+    dashboard, all implemented; the display choices following the account is accepted as a design but not built.
   - [`adr/0016-dashboard-single-sign-on-through-openid-connect.md`](adr/0016-dashboard-single-sign-on-through-openid-connect.md)
     — **Accepted** 2026-11-09 (not yet built): optional OpenID Connect sign-in beside local accounts, provider groups mapped
     onto existing teams so the permission model and the last-administrator rule are unchanged, the demo

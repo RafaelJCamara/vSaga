@@ -1,7 +1,8 @@
 # ADR 0015: The dashboard gets a density switch, CSS-drawn icons and a high-contrast theme now, and keeps display choices on the account later
 
-**Status:** **Proposed** — 2026-11-09. Parts 1 to 3 are built on the branch that carries this record; part 4 (the
-per-account choice) is deliberately not built and waits for the maintainer.
+**Status:** **Accepted** — 2026-11-09, by the maintainer. Parts 1 to 3 **implemented** — 2026-11-09, `6250d15`,
+`f6dbbbb`, `dd75aef`, `6734ed7`; part 4 (the
+per-account choice) is accepted as a design and deliberately not built yet.
 **Date:** 2026-11-09
 **Relates to:** [`0010-dashboard-design-tokens-and-light-theme.md`](0010-dashboard-design-tokens-and-light-theme.md)
 (this builds what that record deferred: its item 9, "density switch, icons", and its "stated limitation: the choice is
@@ -90,10 +91,10 @@ build change. Part 4 is a design, not code.
 - It is a third palette mixin beside the dark and light ones (`src/styles.scss`), so a new token is added in three places
   and the spec that lists the tokens fails if one is missed.
 
-### 4. Account-level choice: proposed, not built
+### 4. Account-level choice: accepted, not built
 
 Everything above is per browser, and says so in the guide. The maintainer asked for the choice to follow the account.
-The design, ready to build once accepted:
+The accepted design, ready to build:
 
 - **Storage.** One nullable column on the identity store's `Users` table, `DisplayPreferences` (text, at most 256
   characters), holding a small JSON object, `{"theme":"dark","density":"compact"}`. A column of JSON instead of one
@@ -145,7 +146,7 @@ The design, ready to build once accepted:
 - **Per-account storage in the session cookie or in a claim.** Would need no migration, but the cookie is rewritten only
   at sign-in, so a change would not follow the user until the next sign-in, and the cookie is size-limited. Rejected.
 - **Keep it per browser (ADR 0010's answer).** Free, and already built. Rejected by the maintainer's request; it remains
-  the behaviour until part 4 is accepted and built.
+  the behaviour until part 4 is built.
 
 ## Consequences
 
@@ -165,5 +166,5 @@ The design, ready to build once accepted:
   compose stack in Playwright's Chromium, Firefox and WebKit builds (WebKit on Windows, which is not Safari itself): the
   menu, every theme and both densities, reload persistence and no horizontal overflow at 360 px. Not run: real Safari, a
   real Windows High Contrast session (only the browsers' `forced-colors` media emulation), a screen reader.
-- **Part 4, if accepted, costs one generated migration** and a rollback story (a nullable column an older image ignores);
+- **Part 4, when built, costs one generated migration** and a rollback story (a nullable column an older image ignores);
   until then nothing in the repository refers to it but this record.

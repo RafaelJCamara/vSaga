@@ -1,6 +1,6 @@
 # ADR 0013: A `vsaga.saga.running` gauge counts `Running` instances in the store, through a new count method on the summary reader
 
-**Status:** **Proposed**
+**Status:** **Accepted** — 2026-11-09, by the maintainer. **Implemented** — 2026-11-09, `a6cf4e9`, `d1b5f45`, `e659f3f`.
 **Date:** 2026-11-09
 **Relates to:** [`0003-persistence-contract-clauses.md`](0003-persistence-contract-clauses.md) (the store contracts
 every provider must satisfy, and the conformance suite that enforces them);
