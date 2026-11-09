@@ -127,6 +127,10 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0011-sample-orders-are-seeded-then-on-demand.md`](adr/0011-sample-orders-are-seeded-then-on-demand.md)
     — **Accepted** and **implemented** 2026-11-02: the sample submits a seed batch of orders at startup
     and more only through `POST /orders`, instead of one every 8 seconds forever.
+  - [`adr/0016-dashboard-single-sign-on-through-openid-connect.md`](adr/0016-dashboard-single-sign-on-through-openid-connect.md)
+    — **Proposed** 2026-11-09: optional OpenID Connect sign-in beside local accounts, provider groups mapped
+    onto existing teams so the permission model and the last-administrator rule are unchanged, the demo
+    staying provider-free; extends ADR 0006, supersedes nothing.
 
 ## History
 
