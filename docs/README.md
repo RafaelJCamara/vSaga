@@ -127,6 +127,9 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0011-sample-orders-are-seeded-then-on-demand.md`](adr/0011-sample-orders-are-seeded-then-on-demand.md)
     — **Accepted** and **implemented** 2026-11-02: the sample submits a seed batch of orders at startup
     and more only through `POST /orders`, instead of one every 8 seconds forever.
+  - [`adr/0013-running-sagas-gauge-reads-the-store.md`](adr/0013-running-sagas-gauge-reads-the-store.md)
+    — **Proposed**: a `vsaga.saga.running` gauge that counts `Running` instances in the store through a new
+    `ISagaSummaryReader.CountByTypeAsync`, refreshed by a background service in `VSaga.Observability`.
 
 ## History
 
