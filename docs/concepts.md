@@ -113,6 +113,13 @@ only runs when the transport correlation id misses. This means `CorrelateOn` doe
 for the common case where every message in a saga's flow carries the same transport correlation id
 throughout — it only helps when that assumption breaks.
 
+**Two messages resolving to one instance by different routes are not serialized by the transport.**
+The business-key fallback happens inside the orchestrator, after any transport-level ordering (the HTTP
+adapter's per-correlation gate, for one) has been applied to the transport id. The guard is the
+snapshot store's optimistic-concurrency `Version` check: one transition persists, state is never
+corrupted, and the loser's message is dropped rather than applied on redelivery. See
+[`transports/http.md`](transports/http.md#known-deliberate-limitations) for the full account.
+
 **A parent/child pair is a different mechanism entirely.** A child started via
 `ISagaContext.StartChildAsync` gets a **fresh** correlation id — deliberately not the parent's, since
 the snapshot primary key would then cap a parent at one child per saga type, and a self-recursive saga
