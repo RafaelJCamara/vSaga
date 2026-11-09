@@ -1,6 +1,6 @@
 # ADR 0018: The persistence contracts keep their implicit per-scope unit of work; an explicit unit-of-work seam is not built, because it would not unlock the Redis-plus-Postgres split
 
-**Status:** **Proposed** — 2026-11-09. Not accepted; only the maintainer accepts. This is an investigation
+**Status:** **Accepted** — 2026-11-09, by the maintainer. This is an investigation
 record: nothing here is implemented, and the recommendation is **not to build the seam**.
 **Date:** 2026-11-09
 **Relates to:** [`0002-redis-persistence-provider.md`](0002-redis-persistence-provider.md) (option D,

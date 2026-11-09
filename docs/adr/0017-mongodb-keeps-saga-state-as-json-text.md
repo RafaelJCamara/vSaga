@@ -1,6 +1,6 @@
 # ADR 0017: The MongoDB provider keeps saga state as JSON text; native BSON storage is not built, and a derived projection is the shape to build if operators need to query it
 
-**Status:** **Proposed** — 2026-11-09. Not accepted; only the maintainer accepts. This is an investigation
+**Status:** **Accepted** — 2026-11-09, by the maintainer. This is an investigation
 record: nothing here is implemented, and the recommendation is **not to build native BSON storage**.
 **Date:** 2026-11-09
 **Relates to:** [`0001-mongodb-persistence-provider.md`](0001-mongodb-persistence-provider.md) (names native

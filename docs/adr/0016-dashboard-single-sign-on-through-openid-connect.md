@@ -1,7 +1,7 @@
 # ADR 0016: The dashboard offers sign-in through an OpenID Connect provider beside local accounts; the permission model is unchanged and is fed from groups
 
-**Status:** **Proposed** — 2026-11-09. Written at the maintainer's request (stream F of the 2026-11-09 session);
-not accepted, and nothing in it is built.
+**Status:** **Accepted** — 2026-11-09, by the maintainer. Written at the maintainer's request (stream F of the 2026-11-09 session);
+accepted, and nothing in it is built yet.
 **Date:** 2026-11-09
 **Relates to:** [`0006-dashboard-authentication-and-identity-store.md`](0006-dashboard-authentication-and-identity-store.md)
 (this record is the single-sign-on follow-up it rejected "for now"; it **extends** 0006 and supersedes none of
@@ -473,7 +473,7 @@ at composition; `ClientSecret` is never logged and never in a response. New audi
 refusal (with the code), provisioning, membership reconcile and `last_administrator_kept`, in
 `DashboardAudit`'s numbering.
 
-## Build order, if accepted
+## Build order
 
 1. Maintainer decisions on the open questions below. Add the package only after question 1.
 2. Store: columns, unique index, `FindUserByExternalIdentityAsync` and a generated EF Core migration (never
