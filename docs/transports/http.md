@@ -135,6 +135,21 @@ product.
   at once with no reply to feed back, and only its own state timeout eventually rescues it. This is
   accepted deliberately rather than fixed: redeliveries are rare, and the alternative is making every
   participant cache and replay its replies.
+- **The per-correlation gate does not serialize business-key-correlated messages that carry different
+  transport correlation ids.** The gate is keyed on the transport correlation id, below the
+  orchestrator, so it cannot see that two such messages resolve to the same saga instance through
+  [`CorrelateOn`](../concepts.md#correlation-transport-id-then-business-key); they run concurrently.
+  The guard is the snapshot store's optimistic-concurrency `Version` check, not the gate: exactly one
+  transition is persisted and the saga state is never corrupted. What it does not give you is that the
+  loser's message is applied. The `SagaConcurrencyException` does reach the engine's infrastructure
+  failure path and a redelivery is published, but the redelivered copy reuses the original `MessageId`
+  and the engine already logged that id before the failed persist, so it is skipped as a duplicate: the
+  loser's state transition is dropped, not retried. An ordinary `.Publish(...)` in the losing step has
+  already gone out (it runs before the persist), whereas `ctx.PublishAfterCommitAsync` output is
+  discarded. If two producers can race the same saga through different correlation ids, make the
+  racing steps idempotent, and rely on the saga's state timeout as the net for the dropped one. Pinned
+  by `HttpInboundDispatcherGateHazardTests` and `SagaOrchestratorConcurrencyRedeliveryTests`; the
+  working-out is in [`design/production-readiness.md`](../design/production-readiness.md) section 5.4.
 
 ## Unroutable-publish detection
 
