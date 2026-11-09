@@ -15,6 +15,13 @@ dotnet add package VSaga.Observability
 services.AddVSagaOpenTelemetry();
 ```
 
+Opt in to the store-backed `vsaga.saga.running` gauge (sagas in status `Running`, by saga type) on one process per
+store, after the persistence registration. It reads the store once per `RefreshInterval` (30 seconds by default):
+
+```csharp
+services.AddVSagaRunningSagasGauge(opt => opt.RefreshInterval = TimeSpan.FromMinutes(1));
+```
+
 ## Docs
 
 [docs/observability.md](https://github.com/RafaelJCamara/vSaga/blob/main/docs/observability.md) —

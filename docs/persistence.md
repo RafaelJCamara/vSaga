@@ -27,6 +27,13 @@ total over the wrong set (never a row outside their scope: the API still drops t
 once had are catalogued, with their fixes, in
 [`design/persistence-contracts.md`](design/persistence-contracts.md) §1 and §3; all are fixed.
 
+`ISagaSummaryReader.CountByTypeAsync(status)` counts instances per saga type for the `vsaga.saga.running` gauge
+([`observability.md`](observability.md#running-sagas), [ADR 0013](adr/0013-running-sagas-gauge-reads-the-store.md)). It
+is a default interface member built on `ListAsync`, so a reader written without it stays correct, and every provider here
+overrides it: a pass over the dictionary (in-memory), one `GROUP BY` (EF Core on Postgres, SQL Server and SQLite), one
+covered `$match`/`$group` (MongoDB) and one `ZINTERCARD` per saga type (Redis, Redis 7.0 and Valkey 7.2, the provider's
+minimum). The cost of one call on each is in [`observability.md`](observability.md#running-sagas).
+
 The suite reads results back field by field, not only by id and count: every item `ListAsync` and
 `FindChildrenAsync` return projects the state that was written (its version after an update included, a root
 saga's parent link null), an outbox row

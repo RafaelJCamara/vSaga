@@ -158,6 +158,7 @@ Meter name `VSaga.Saga` (`VSagaDiagnostics.Meter`):
 | `vsaga.saga.step.duration` | `Histogram<double>` (ms) | Duration of one step's execution. |
 | `vsaga.saga.duration` | `Histogram<double>` (ms) | Total saga duration as `now - state.CreatedAtUtc`, recorded on every path that reaches a terminal status — step success, step failure, timeout outcome, and redelivery-exhausted dead-lettering alike. |
 | `vsaga.saga.stuck` | `ObservableGauge<long>` | Sagas idle past their threshold at the last [stuck-saga sweep](#stuck-sagas), by saga type and cause. Only when the sweep is enabled. |
+| `vsaga.saga.running` | `ObservableGauge<long>` (`{saga}`) | Sagas in status `Running` at the last [read of the store](#running-sagas), by saga type; `0` for a type that was running earlier in this process and no longer is. Only when `AddVSagaRunningSagasGauge` is called. |
 
 Every instrument carries the tag `saga.type`; `vsaga.saga.stuck` also carries `saga.stuck_cause`. `completed` and `failed` count only their own
 status: a saga finalized as `TimedOut`, `Compensated` or `Cancelled` increments neither, though
@@ -169,8 +170,8 @@ after the first step has succeeded *and* its persist has committed. The failure 
 (`HandleStepFailureAsync`) increments `SagasFailed` but never `SagasStarted`. A brand-new saga whose
 very first step throws is therefore counted in `vsaga.saga.failed` without ever having been counted in
 `vsaga.saga.started`, and `started - (completed + failed)` is **not** a valid in-flight estimate —
-it can even go negative. Use a store-backed `COUNT(*) WHERE Status = Running` for that number (see the
-next note). (`needsInsert`, the flag selecting `PersistAsync`'s insert-vs-update branch, is unrelated
+it can even go negative. Use the store-backed [`vsaga.saga.running`](#running-sagas) for that number.
+(`needsInsert`, the flag selecting `PersistAsync`'s insert-vs-update branch, is unrelated
 to newness for metrics purposes; `isNew` is tracked separately.)
 
 **Every terminal path records `vsaga.saga.duration`.** The rule is the terminal status, not any one
@@ -180,13 +181,73 @@ own persist has committed — recording before the commit would emit a phantom d
 a lost concurrency race then discarded. Treat that list as the current sites rather than an exhaustive
 contract; the rule is what holds.
 
-**No `vsaga.saga.running` gauge — deliberately.** An `UpDownCounter` for "how many sagas are running
-right now" was considered and rejected: it's process-local and non-idempotent, so a restart, a
-redelivery, or a second replica desynchronizes it permanently with no way to self-correct. The correct
-instrument is an `ObservableGauge` backed by `COUNT(*) WHERE Status = Running` against the store, which
-needs scoped-store access from a meter callback that `VSaga.Observability` doesn't have yet — a named
-follow-up, not built here (the [stuck-saga gauge](#stuck-sagas) is the one store-backed gauge that exists: it reads the store from a sweep and caches the reading for the callback). Wiring the wrong instrument (and shipping a permanently-wrong dashboard
-number) was judged worse than shipping none.
+## Running sagas
+
+`vsaga.saga.running` answers "how many sagas are running right now", by saga type. It is **opt-in**
+(`AddVSagaRunningSagasGauge`, [options](configuration.md#runningsagasoptions)), because every refresh is a read the
+store did not do before. The decision and the options weighed are in
+[ADR 0013](adr/0013-running-sagas-gauge-reads-the-store.md).
+
+```csharp
+services.AddVSagaOpenTelemetry(configureMetrics: m => m.AddOtlpExporter());
+services.AddVSagaRunningSagasGauge();   // after the persistence registration; RefreshInterval defaults to 30 s
+```
+
+**Why not an `UpDownCounter`.** One incremented on start and decremented on finish is process-local and
+non-idempotent, so a restart, a redelivery, or a second replica desynchronizes it permanently with no way to
+self-correct. The gauge instead reads the store, so a wrong reading corrects itself at the next refresh.
+(`started - (completed + failed)` is not an in-flight number either; see the note on `vsaga.saga.started` above.)
+
+**How it reads the store.** A meter callback is synchronous and the stores are async and, for EF Core, scoped. A
+hosted service in `VSaga.Observability` holds an `IServiceScopeFactory` (never a store), and every `RefreshInterval`
+opens a scope, resolves `ISagaSummaryReader` from it, calls `CountByTypeAsync(SagaStatus.Running)` under a deadline of
+one interval, and disposes the scope. The meter callback only returns the answer the service cached, so it never blocks
+on the store and no scoped service is captured by a singleton. It is the stuck-saga gauge's shape.
+
+- **What it counts.** Instances whose status is `Running`, per `saga.type`. A `Compensating` saga is not counted (the
+  [stuck-saga gauge](#stuck-sagas) watches those) and neither is any terminal one. It is a reading, up to
+  `RefreshInterval` old plus the exporter's own interval: a saga that starts and finishes between two refreshes is never
+  counted.
+- **Zeros.** The reader omits a type with none, so the service remembers every type it has seen running in this process and
+  reports one that has since dropped out as `0`: an alert rule sees a recovery as a value. A type never seen running by
+  this process is absent, and a restart forgets which types had been seen.
+- **Failure.** A failed or timed-out read is logged at Error and the previous reading kept. After three in a row the
+  reading is withdrawn (the gauge reports nothing), so a dead read does not look like a quiet store; the next success
+  publishes again. A process that enabled the gauge but registered no `ISagaSummaryReader` logs one warning and reports
+  nothing.
+- **Replicas.** Every replica that enables it reports the same population: **aggregate with `max`, not `sum`**, and
+  enable it on one process per store (the dashboard API is a natural one, since it reads every saga type), not on all.
+
+**Cost.** One grouped read per process that enables it, every `RefreshInterval`, however often the metric is scraped:
+the cost is per refresh, not per scrape. The read goes through the new `ISagaSummaryReader.CountByTypeAsync`, which every
+provider here answers with its cheapest grouped form. Measured on a throwaway probe over each provider's real
+conformance fixture (a Testcontainers server on the same machine, so network time is near zero; treat the figures as
+the shape of the cost, not as a benchmark): 100,000 instances across 8 saga types of very uneven size (29,100 down to
+700), 60,000 of them `Running`, the median of 20 calls after 3 warm-ups, against the interface's default implementation
+(`GetSagaTypesAsync` plus one `ListAsync(Status, SagaType, PageSize = 1)` per type) for contrast:
+
+| Provider | What one refresh does | Measured, 100k instances, 60k `Running` | The default implementation, same data |
+| --- | --- | --- | --- |
+| In-memory | One pass over the snapshot dictionary, grouped by type; no I/O. | Not measured; `O(instances)` in the host process. | n/a |
+| EF Core, SQL Server | `SELECT SagaType, COUNT(*) ... WHERE Status = @s GROUP BY SagaType`, one query. | 10.3 ms | 162 ms |
+| EF Core, Postgres | The same query. | 21.1 ms | 88 ms |
+| EF Core, SQLite | The same query. | Not measured (the sample and test database, not a deployment target). | n/a |
+| MongoDB | One aggregation, `$match` on the status then `$group` on the type; the `Status, UpdatedAtTicks, SagaType, CorrelationId` index covers it, so no document is read. | 28.2 ms | 159 ms |
+| Redis | `HKEYS ix:types`, then one `ZINTERCARD` of the status bucket with the type's index per type (8 here), issued together. No member is returned. | 42.9 ms wall; the server spent 8 x about 5 ms on its one thread (`INFO commandstats`: 5.0 ms per `ZINTERCARD`). | 215 ms |
+
+The relational figures are `O(instances in the status)` index or table work for one query and grow with the status's
+size, not with the number of saga types; the plan the engine chose was not captured, and the Postgres table had just been
+bulk-written and not vacuumed. **Redis is the expensive one**, and the only provider whose cost grows with the number
+of saga types as well: its indexes are per status and per type separately, so a count by both is an intersection per
+type, and `ZINTERCARD` walks the smaller of the two sets and does a lookup in the other for each member. Summed over the
+types that is about one pass over every instance, not only the `Running` ones, and each call occupies Redis's single
+command thread for its whole duration. The same probe at 500,000 instances (300,000 `Running`) measured 297 ms per refresh
+(`ZINTERCARD` at 36.9 ms per call on the server, 8 calls: about 295 ms of server time), against 1.19 s for the default
+implementation, so the cost grew faster than the data (5x the instances, about 7x the time). At 30 seconds that is about
+0.1 percent of Redis's command thread at 100,000 instances and 1 percent at 500,000, with stalls of about 5 ms and 37 ms for
+whatever else is waiting on the server; raise `RefreshInterval` for a Redis store that large, and measure it on your own
+data before enabling it on one. A counter kept in the persist script would make it `O(saga types)` (rejected for now in
+the ADR because it changes the stored key space).
 
 ## Stuck sagas
 
