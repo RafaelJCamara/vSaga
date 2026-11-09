@@ -1,8 +1,9 @@
 // Persistence sample: VSaga.Persistence.EFCore + VSaga.Persistence.EFCore.Postgres
 //
 // The checkout saga (VSaga.Samples.Persistence.Common) on EF Core against Postgres. Every [Postgres]
-// block below is specific to this provider; the rest of the file is identical in all four persistence
-// samples. Start the database first (see README.md):
+// block below is specific to this provider; the rest of the file is identical in all five persistence
+// samples. From dotnet/samples/Persistence, ./run-sample.sh postgres (or run-sample.ps1) does the two
+// steps below for you. Start the database first (see README.md):
 //
 //   docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.Postgres/docker-compose.yml up -d --wait
 //   dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.Postgres

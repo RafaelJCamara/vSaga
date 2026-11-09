@@ -1,0 +1,2 @@
+# The launcher runs under bash; a core.autocrlf checkout must not turn its line endings into CRLF.
+*.sh text eol=lf

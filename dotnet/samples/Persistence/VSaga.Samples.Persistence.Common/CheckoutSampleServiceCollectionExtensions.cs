@@ -11,7 +11,7 @@ public static class CheckoutSampleServiceCollectionExtensions
     /// Everything except persistence: the in-memory transport, the saga engine running
     /// <see cref="CheckoutSaga"/>, and the <see cref="PaymentGateway"/> participant. Each
     /// VSaga.Samples.Persistence.&lt;Provider&gt; host calls this and then registers exactly one
-    /// persistence provider — the only line that differs between the four samples.
+    /// persistence provider — the only line that differs between the five samples.
     /// </summary>
     /// <remarks>
     /// The transport is in-memory in every sample so that no broker is needed and the persistence

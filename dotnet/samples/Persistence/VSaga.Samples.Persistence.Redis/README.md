@@ -6,7 +6,14 @@ with no modules, so Valkey works too. The scenarios and output are described in 
 
 ## Run it
 
-From the repository root:
+One command, from `dotnet/samples/Persistence` (it starts the database, runs the sample, and with
+`--down` removes the container afterwards, or with `--clean` the volume too):
+
+```bash
+./run-sample.sh redis        # PowerShell: ./run-sample.ps1 redis
+```
+
+Or the two steps by hand, from the repository root:
 
 ```bash
 docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis/docker-compose.yml up -d --wait
