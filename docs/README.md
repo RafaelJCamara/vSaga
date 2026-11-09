@@ -127,6 +127,9 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0011-sample-orders-are-seeded-then-on-demand.md`](adr/0011-sample-orders-are-seeded-then-on-demand.md)
     — **Accepted** and **implemented** 2026-11-02: the sample submits a seed batch of orders at startup
     and more only through `POST /orders`, instead of one every 8 seconds forever.
+  - [`adr/0012-persistence-demo-launcher-scripts.md`](adr/0012-persistence-demo-launcher-scripts.md)
+    — **Proposed** 2026-11-09: `run-sample.ps1` / `run-sample.sh` start a persistence sample's database
+    and run it (one provider or all five), instead of a single project with a `--provider` switch.
 
 ## History
 
