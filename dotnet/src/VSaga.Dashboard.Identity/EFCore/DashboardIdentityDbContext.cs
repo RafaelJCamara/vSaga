@@ -66,6 +66,7 @@ public sealed class DashboardIdentityDbContext(DbContextOptions<DashboardIdentit
             b.Property(x => x.DisplayName).HasMaxLength(DisplayNameMaxLength).IsRequired();
             b.Property(x => x.PasswordHash).IsRequired();
             b.Property(x => x.SecurityStamp).HasMaxLength(64).IsRequired();
+            b.Property(x => x.DisplayPreferences).HasMaxLength(VSaga.Dashboard.Identity.Model.DisplayPreferences.MaxJsonLength);
             b.HasIndex(x => x.NormalizedUsername).IsUnique();
             b.HasMany(x => x.Grants).WithOne().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });

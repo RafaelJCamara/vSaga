@@ -138,6 +138,10 @@ namespace VSaga.Dashboard.Identity.Sqlite.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DisplayPreferences")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("FailedSignInCount")
                         .HasColumnType("INTEGER");
 

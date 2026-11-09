@@ -12,7 +12,8 @@ namespace VSaga.Dashboard.Api.Endpoints;
 
 /// <summary>
 /// Signing in and out (design §8.3, §8.4, §8.8, §8.9): <c>GET /api/auth/session</c>, <c>POST /api/auth/login</c>,
-/// <c>POST /api/auth/logout</c>, <c>POST /api/auth/setup</c> and <c>POST /api/auth/password</c>.
+/// <c>POST /api/auth/logout</c>, <c>POST /api/auth/setup</c>, <c>POST /api/auth/password</c> and
+/// <c>PUT /api/auth/preferences</c>.
 /// <list type="bullet">
 /// <item>Every one first makes sure the identity store is ready (its key ring protects the cookie and the
 /// antiforgery tokens) and answers 503 <c>identity_unavailable</c> when it is not.</item>
@@ -56,6 +57,8 @@ public static class AuthEndpoints
         group.MapPost("/setup", SetupAsync).WithName("Setup").AllowAnonymous().Accepts<SetupRequest>("application/json");
         group.MapPost("/password", ChangePasswordAsync).WithName("ChangePassword").RequireAuthorization()
             .Accepts<ChangePasswordRequest>("application/json");
+        group.MapPut("/preferences", SetPreferencesAsync).WithName("SetPreferences").RequireAuthorization()
+            .Accepts<DisplayPreferencesDto>("application/json");
         return app;
     }
 
@@ -221,6 +224,57 @@ public static class AuthEndpoints
         }
 
         return await PasswordChangeOutcomeAsync(context, caller, result, time);
+    }
+
+    /// <summary>
+    /// Replaces the signed-in user's display choices (ADR 0015, part 4) and answers what is now stored. Only a
+    /// user has an account to keep them on: the API key gets 403. A value the dashboard does not offer is a 400
+    /// <c>validation</c> naming the member; a body with neither member clears the account's choice. Nothing
+    /// else about the account changes, so the session, its stamp and its antiforgery token stand.
+    /// </summary>
+    private static async Task<IResult> SetPreferencesAsync(HttpContext context, IdentityStartup startup)
+    {
+        if (!await startup.EnsureReadyAsync(IdentityReadyWait, context.RequestAborted))
+            return AuthProblems.IdentityUnavailable();
+
+        if (context.GetCaller() is not { Kind: CallerKind.User, UserId: { } userId })
+        {
+            await AuthProblems.WriteForbiddenAsync(context, context.GetCaller(), permission: null, sagaType: null);
+            return Results.Empty;
+        }
+
+        var (request, invalid) = await ReadBodyAsync<DisplayPreferencesDto>(context);
+        if (request is null)
+            return invalid!;
+
+        var preferences = request.ToModel();
+        if (!preferences.IsValid)
+            return AuthProblems.Validation(InvalidPreferences(preferences));
+
+        try
+        {
+            await context.RequestServices.GetRequiredService<IDashboardIdentityStore>()
+                .SetDisplayPreferencesAsync(userId, preferences.ToJson(), context.RequestAborted);
+        }
+        catch (IdentityNotFoundException)
+        {
+            // Deleted meanwhile: the session no longer stands.
+            await context.SignOutAsync(DashboardAuthExtensions.CookieScheme);
+            await AuthProblems.WriteUnauthorizedAsync(context);
+            return Results.Empty;
+        }
+
+        return TypedResults.Ok(DisplayPreferencesDto.From(preferences));
+    }
+
+    private static Dictionary<string, string[]> InvalidPreferences(DisplayPreferences preferences)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (preferences.Theme is not null && !DisplayPreferences.Themes.Contains(preferences.Theme, StringComparer.Ordinal))
+            errors["theme"] = [$"Not a theme the dashboard offers. Use one of: {string.Join(", ", DisplayPreferences.Themes)}."];
+        if (preferences.Density is not null && !DisplayPreferences.Densities.Contains(preferences.Density, StringComparer.Ordinal))
+            errors["density"] = [$"Not a density the dashboard offers. Use one of: {string.Join(", ", DisplayPreferences.Densities)}."];
+        return errors;
     }
 
     /// <summary>

@@ -80,6 +80,15 @@ public interface IDashboardIdentityStore
     /// <exception cref="IdentityNotFoundException">No user has that id.</exception>
     Task RecordSignInAsync(Guid id, DateTimeOffset now, string? rehash, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Replaces the user's display choices (<see cref="DashboardUser.DisplayPreferences"/>) as a single atomic change
+    /// that touches nothing else: not the update time, not the security stamp, not the sign-in counters. No exclusive
+    /// scope is needed. The store keeps <paramref name="preferences"/> (JSON text, or null to clear the account's
+    /// choice) as given; validating it is the caller's.
+    /// </summary>
+    /// <exception cref="IdentityNotFoundException">No user has that id.</exception>
+    Task SetDisplayPreferencesAsync(Guid id, string? preferences, CancellationToken cancellationToken);
+
     Task<DashboardTeam?> FindTeamAsync(Guid id, CancellationToken cancellationToken);
 
     /// <summary>Every team, ordered by normalised name.</summary>

@@ -52,6 +52,14 @@ public sealed record DashboardUser(
     public DateTimeOffset? PasswordExpiresAtUtc { get; init; }
 
     /// <summary>
+    /// The user's display choices as the JSON text the store keeps (<see cref="Model.DisplayPreferences"/> reads and
+    /// writes it), or null when the account has none. Read-only here: <c>IDashboardIdentityStore.UpdateUserAsync</c>
+    /// leaves it alone, so an administrator's edit never undoes it; the one writer is
+    /// <c>IDashboardIdentityStore.SetDisplayPreferencesAsync</c>.
+    /// </summary>
+    public string? DisplayPreferences { get; init; }
+
+    /// <summary>
     /// Replaces the generated member list of <see cref="object.ToString"/>, which would print every
     /// property: the password hash and the security stamp are left out, so a user that reaches a log
     /// line, an exception message or an audit event never carries either.

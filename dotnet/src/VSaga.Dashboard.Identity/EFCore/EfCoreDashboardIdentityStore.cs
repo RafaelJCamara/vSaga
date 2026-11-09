@@ -129,6 +129,14 @@ public sealed class EfCoreDashboardIdentityStore(DashboardIdentityDbContext db) 
             throw new IdentityNotFoundException(IdentityEntityKind.User, id);
     }
 
+    public async Task SetDisplayPreferencesAsync(Guid id, string? preferences, CancellationToken cancellationToken)
+    {
+        var updated = await db.Users.Where(u => u.Id == id).ExecuteUpdateAsync(
+            s => s.SetProperty(u => u.DisplayPreferences, preferences), cancellationToken);
+        if (updated == 0)
+            throw new IdentityNotFoundException(IdentityEntityKind.User, id);
+    }
+
     public async Task<DashboardTeam?> FindTeamAsync(Guid id, CancellationToken cancellationToken)
     {
         var entity = await ReadTeams().FirstOrDefaultAsync(t => t.Id == id, cancellationToken);
@@ -405,6 +413,7 @@ public sealed class EfCoreDashboardIdentityStore(DashboardIdentityDbContext db) 
         [.. e.Grants.OrderBy(g => g.RoleId).Select(g => new AccessGrant(g.RoleId, g.AllSagaTypes, [.. g.SagaTypes]))])
     {
         PasswordExpiresAtUtc = e.PasswordExpiresAtUtc,
+        DisplayPreferences = e.DisplayPreferences,
     };
 
     private static DashboardTeam ToRecord(DashboardTeamEntity e) => new(

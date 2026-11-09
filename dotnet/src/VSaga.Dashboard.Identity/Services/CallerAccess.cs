@@ -30,6 +30,12 @@ public sealed record CallerAccess(
     bool MustChangePassword,
     EffectiveAccess Access)
 {
+    /// <summary>
+    /// The user's display choices (<see cref="Model.DisplayPreferences"/>) as read with the user on this request;
+    /// null for the API key, which has no account, and for a user who has none.
+    /// </summary>
+    public Model.DisplayPreferences? Preferences { get; init; }
+
     /// <summary>The username the API key acts under; reserved, so no user can be recorded the same way.</summary>
     public const string ApiKeyUsername = "api-key";
 

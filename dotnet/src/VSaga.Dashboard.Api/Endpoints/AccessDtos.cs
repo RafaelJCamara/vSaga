@@ -21,6 +21,10 @@ namespace VSaga.Dashboard.Api.Endpoints;
 /// <param name="User">The signed-in user, or null.</param>
 /// <param name="Access">What the caller may do, or null when anonymous.</param>
 /// <param name="PasswordMinLength">The shortest password the policy accepts, for the forms.</param>
+/// <param name="Preferences">
+/// The user's display choices, or null when anonymous, for the API key (which has no account) and for a user
+/// with none stored.
+/// </param>
 public sealed record SessionResponse(
     bool Authenticated,
     bool SetupRequired,
@@ -28,20 +32,37 @@ public sealed record SessionResponse(
     SetupProblem? SetupProblem,
     SessionUser? User,
     SessionAccess? Access,
-    int PasswordMinLength)
+    int PasswordMinLength,
+    DisplayPreferencesDto? Preferences)
 {
     /// <summary>The session of <paramref name="caller"/>, or an anonymous one when it is null.</summary>
     public static SessionResponse For(CallerAccess? caller, SetupState setup, int passwordMinLength)
     {
         ArgumentNullException.ThrowIfNull(setup);
         if (caller is null)
-            return new SessionResponse(false, setup.Required, setup.Available, setup.Problem, User: null, Access: null, passwordMinLength);
+            return new SessionResponse(false, setup.Required, setup.Available, setup.Problem, User: null, Access: null, passwordMinLength, Preferences: null);
 
         var user = caller is { Kind: CallerKind.User, UserId: { } id }
             ? new SessionUser(id, caller.Username, caller.DisplayName, caller.MustChangePassword)
             : null;
-        return new SessionResponse(true, setup.Required, setup.Available, setup.Problem, user, SessionAccess.From(caller.Access), passwordMinLength);
+        var preferences = user is not null && caller.Preferences is { } stored ? DisplayPreferencesDto.From(stored) : null;
+        return new SessionResponse(true, setup.Required, setup.Available, setup.Problem, user, SessionAccess.From(caller.Access), passwordMinLength, preferences);
     }
+}
+
+/// <summary>
+/// A user's display choices (ADR 0015, part 4), in the session and as the body of
+/// <c>PUT /api/auth/preferences</c>. A null member is "no account choice": the browser's own stays. An unknown
+/// member is a 400, not silently ignored, and so is a value the dashboard does not offer.
+/// </summary>
+/// <param name="Theme"><c>system</c>, <c>light</c>, <c>dark</c> or <c>high-contrast</c>.</param>
+/// <param name="Density"><c>comfortable</c> or <c>compact</c>.</param>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DisplayPreferencesDto(string? Theme, string? Density)
+{
+    internal static DisplayPreferencesDto From(DisplayPreferences preferences) => new(preferences.Theme, preferences.Density);
+
+    internal DisplayPreferences ToModel() => new(Theme, Density);
 }
 
 /// <summary>Where first-run setup stands, as the session reports it.</summary>

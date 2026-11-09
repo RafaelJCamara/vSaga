@@ -522,6 +522,7 @@ public sealed class AuthEndpointsTests : IAsyncLifetime, IAsyncDisposable
                 && t.GetMethod("<Clone>$") is not null
                 && t.Name.EndsWith("Request", StringComparison.Ordinal))
             .Append(typeof(GrantDto))
+            .Append(typeof(DisplayPreferencesDto))
             .ToList();
 
         Type[] known =

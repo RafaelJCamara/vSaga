@@ -33,6 +33,20 @@ public sealed class CallerAccessResolverTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task User_ResolvesWithTheirDisplayPreferences_ParsedTolerantly()
+    {
+        var alice = await _context.SeedUserAsync("alice", grants: AllTypes(BuiltInRoles.ViewerId));
+        var bob = await _context.SeedUserAsync("bob", grants: AllTypes(BuiltInRoles.ViewerId));
+        await _context.NewStore().SetDisplayPreferencesAsync(alice.Id, """{"theme":"dark","density":"roomy"}""", None);
+
+        var withChoice = await Resolver().ResolveAsync(DashboardClaims.ForUser(alice, "Cookie"), None);
+        var withoutChoice = await Resolver().ResolveAsync(DashboardClaims.ForUser(bob, "Cookie"), None);
+
+        Assert.Equal(new DisplayPreferences("dark", null), withChoice!.Preferences);
+        Assert.Null(withoutChoice!.Preferences);
+    }
+
+    [Fact]
     public async Task User_WhoseStampRotated_IsNotResolved()
     {
         var alice = await _context.SeedUserAsync("alice", grants: AllTypes(BuiltInRoles.ViewerId));

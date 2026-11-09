@@ -93,6 +93,9 @@ public sealed class CallerAccessResolver(
         var teams = await store.ListTeamsForUserAsync(userId, cancellationToken);
         var roles = await store.ListRolesAsync(cancellationToken);
         var access = AccessEvaluator.Evaluate(user, teams, roles);
-        return new CallerAccess(CallerKind.User, user.Id, user.Username, user.DisplayName, user.MustChangePassword, access);
+        return new CallerAccess(CallerKind.User, user.Id, user.Username, user.DisplayName, user.MustChangePassword, access)
+        {
+            Preferences = DisplayPreferences.Parse(user.DisplayPreferences),
+        };
     }
 }

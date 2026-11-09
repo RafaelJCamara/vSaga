@@ -28,6 +28,9 @@ public sealed class DashboardUserEntity
 
     public DateTimeOffset? PasswordExpiresAtUtc { get; set; }
 
+    /// <summary>The user's display choices as JSON text (<see cref="Model.DisplayPreferences"/>); null when none.</summary>
+    public string? DisplayPreferences { get; set; }
+
     public DateTimeOffset CreatedAtUtc { get; set; }
 
     public DateTimeOffset UpdatedAtUtc { get; set; }

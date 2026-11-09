@@ -625,6 +625,56 @@ public abstract class DashboardIdentityStoreContractTests : IAsyncLifetime
         await Assert.ThrowsAsync<IdentityNotFoundException>(() => Store.RecordSignInAsync(Guid.NewGuid(), T0, null, None));
     }
 
+    [Fact]
+    public async Task SetDisplayPreferences_StoresTheTextAndTouchesNothingElse()
+    {
+        var user = NewUser("yolanda") with { FailedSignInCount = 2, LastSignInAtUtc = T0.AddDays(-1) };
+        await Store.CreateUserAsync(user, None);
+        Assert.Null((await Store.FindUserAsync(user.Id, None))!.DisplayPreferences);
+
+        await Store.SetDisplayPreferencesAsync(user.Id, """{"theme":"dark"}""", None);
+
+        var stored = (await Store.FindUserAsync(user.Id, None))!;
+        Assert.Equal("""{"theme":"dark"}""", stored.DisplayPreferences);
+        Assert.Equal(user.UpdatedAtUtc, stored.UpdatedAtUtc);
+        Assert.Equal(user.SecurityStamp, stored.SecurityStamp);
+        Assert.Equal(2, stored.FailedSignInCount);
+        Assert.Equal(user.LastSignInAtUtc, stored.LastSignInAtUtc);
+    }
+
+    [Fact]
+    public async Task SetDisplayPreferences_WithNull_ClearsThem_AndAnUnknownUserIsNotFound()
+    {
+        var user = NewUser("zane");
+        await Store.CreateUserAsync(user, None);
+        await Store.SetDisplayPreferencesAsync(user.Id, """{"density":"compact"}""", None);
+
+        await Store.SetDisplayPreferencesAsync(user.Id, null, None);
+
+        Assert.Null((await Store.FindUserAsync(user.Id, None))!.DisplayPreferences);
+        await Assert.ThrowsAsync<IdentityNotFoundException>(() => Store.SetDisplayPreferencesAsync(Guid.NewGuid(), null, None));
+    }
+
+    [Fact]
+    public async Task UpdateUser_LeavesTheDisplayPreferencesAlone()
+    {
+        var user = NewUser("adele");
+        await Store.CreateUserAsync(user, None);
+        await Store.SetDisplayPreferencesAsync(user.Id, """{"theme":"light"}""", None);
+
+        await using (var scope = await Store.BeginExclusiveAsync(None))
+        {
+            // What an administrator's edit does: read the user, change a field, write it back.
+            var current = (await Store.FindUserAsync(user.Id, None))!;
+            await Store.UpdateUserAsync(current with { DisplayName = "Adele Edited" }, None);
+            await scope.CommitAsync(None);
+        }
+
+        var stored = (await Store.FindUserAsync(user.Id, None))!;
+        Assert.Equal("Adele Edited", stored.DisplayName);
+        Assert.Equal("""{"theme":"light"}""", stored.DisplayPreferences);
+    }
+
     /// <summary>
     /// Two "create the first user only if there is none" writers: the second scope cannot even begin until
     /// the first commits, so it sees the first user and writes nothing.
