@@ -136,6 +136,10 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md`](adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md)
     — **Proposed**: a compact/comfortable density switch, CSS-drawn icons and a high-contrast theme in the dashboard;
     the display choices following the account is designed there but not built.
+  - [`adr/0016-dashboard-single-sign-on-through-openid-connect.md`](adr/0016-dashboard-single-sign-on-through-openid-connect.md)
+    — **Proposed** 2026-11-09: optional OpenID Connect sign-in beside local accounts, provider groups mapped
+    onto existing teams so the permission model and the last-administrator rule are unchanged, the demo
+    staying provider-free; extends ADR 0006, supersedes nothing.
 
 ## History
 
