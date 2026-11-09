@@ -2,9 +2,10 @@
   box-sizing: border-box;
 }
 
-/* The two palettes. Dark is the default; the light one applies when the OS asks for it and the user has not
+/* The three palettes. Dark is the default; the light one applies when the OS asks for it and the user has not
    chosen (`:root:not([data-theme])`), or when the user chose Light (`data-theme='light'`). A user who chose Dark
-   under a light OS has `data-theme='dark'`, which the media rule skips, so the dark default stands.
+   under a light OS has `data-theme='dark'`, which the media rule skips, so the dark default stands. The
+   high-contrast one applies only when chosen (`data-theme='high-contrast'`).
    Every text pair is measured: see dashboard-web/DESIGN.md, "Colour roles". */
 @mixin dark-palette {
   /* The page is dark, so the browser's own widgets are too: scrollbars, the open list of a select, a date picker,
@@ -69,6 +70,39 @@
   --shadow-popup: 0 8px 24px rgba(20, 26, 38, 0.16);
 }
 
+/* The high-contrast palette: a black page, white text, and every text pair at 7:1 or better (WCAG AAA) on the
+   surfaces and on the 12 % tints; borders and control edges at 7:1 and 21:1. Dark-based; a light variant is not
+   built (ADR 0015). Measured in dashboard-web/DESIGN.md, "Colour roles". */
+@mixin high-contrast-palette {
+  color-scheme: dark;
+
+  --bg: #000000;
+  --bg-elevated: #0a0a0a;
+  --bg-hover: #1a1a1a;
+  --border: #9a9a9a;
+  --border-control: #ffffff;
+  --text: #ffffff;
+  --text-muted: #d0d0d0;
+  --accent: #9cc0ff;
+  --accent-soft: rgba(156, 192, 255, 0.16);
+  /* White text on these two is 8.3:1 and 7.8:1. */
+  --accent-solid: #0a3fc4;
+
+  --status-running: #9cc0ff;
+  --status-completed: #4ee0a0;
+  --status-failed: #ffa0aa;
+  --danger-solid: #a8001a;
+  --status-compensating: #ffc24d;
+  --status-compensated: #d6b8ff;
+  --status-timedout: #ffa66b;
+  --status-cancelled: #d0d0d0;
+
+  --kind-orchestrated: #9cc0ff;
+  --kind-choreographed: #55e3f2;
+
+  --shadow-popup: 0 0 0 1px #ffffff;
+}
+
 :root {
   @include dark-palette;
 
@@ -106,6 +140,19 @@
 
 :root[data-theme='light'] {
   @include light-palette;
+}
+
+:root[data-theme='high-contrast'] {
+  @include high-contrast-palette;
+}
+
+/* What a palette cannot do: a link is always underlined (not only on hover), and the focus ring is thicker. */
+:root[data-theme='high-contrast'] a:not(.btn):not(.brand) {
+  text-decoration: underline;
+}
+
+:root[data-theme='high-contrast'] :focus-visible {
+  outline-width: 3px;
 }
 
 html, body {

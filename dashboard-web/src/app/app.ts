@@ -23,7 +23,7 @@ export class App {
   protected readonly auth = inject(AuthService);
   // Created with the shell, so it is following the router before the first page is shown.
   protected readonly guide = inject(GuideService);
-  // Created with the shell, so a stored light or dark choice is on `<html>` before any page is shown.
+  // Created with the shell, so a stored theme choice is on `<html>` before any page is shown.
   protected readonly theme = inject(ThemeService);
   private readonly document = inject(DOCUMENT);
 

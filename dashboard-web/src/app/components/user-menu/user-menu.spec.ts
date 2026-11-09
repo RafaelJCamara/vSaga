@@ -335,7 +335,8 @@ describe('UserMenu', () => {
 
       key(focused()!, 'ArrowDown');
       key(focused()!, 'ArrowDown');
-      expect(focused()).toBe(themes()[2]);
+      key(focused()!, 'ArrowDown');
+      expect(focused()).toBe(themes()[3]);
 
       key(focused()!, 'ArrowDown');
       expect(focused()).toBe(signOutButton());
@@ -347,19 +348,24 @@ describe('UserMenu', () => {
       expect(focused()).toBe(signOutButton());
 
       key(focused()!, 'ArrowUp');
-      expect(focused()).toBe(themes()[2]);
+      expect(focused()).toBe(themes()[3]);
     });
   });
 
   describe('the theme', () => {
     const checked = () => themes().map((b) => b.getAttribute('aria-checked'));
 
-    it('offers System, Light and Dark as radio items in a group named Theme, System being the default', async () => {
+    it('offers System, Light, Dark and High contrast as radio items in a group named Theme, System being the default', async () => {
       create();
       await open();
 
-      expect(themes().map((b) => b.textContent?.trim())).toEqual(['System', 'Light', 'Dark']);
-      expect(checked()).toEqual(['true', 'false', 'false']);
+      expect(themes().map((b) => b.textContent?.trim())).toEqual([
+        'System',
+        'Light',
+        'Dark',
+        'High contrast',
+      ]);
+      expect(checked()).toEqual(['true', 'false', 'false', 'false']);
       const group = root().querySelector('[role="group"]')!;
       expect(root().querySelector(`#${group.getAttribute('aria-labelledby')}`)?.textContent).toBe('Theme');
     });
@@ -373,7 +379,7 @@ describe('UserMenu', () => {
 
       expect(document.documentElement.getAttribute('data-theme')).toBe('light');
       expect(themeStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
-      expect(checked()).toEqual(['false', 'true', 'false']);
+      expect(checked()).toEqual(['false', 'true', 'false', 'false']);
       expect(panel()).not.toBeNull();
 
       themes()[0].click();
@@ -381,7 +387,19 @@ describe('UserMenu', () => {
 
       expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
       expect(themeStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
-      expect(checked()).toEqual(['true', 'false', 'false']);
+      expect(checked()).toEqual(['true', 'false', 'false', 'false']);
+    });
+
+    it('applies High contrast and stores it', async () => {
+      create();
+      await open();
+
+      themes()[3].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('high-contrast');
+      expect(themeStorage.getItem(THEME_STORAGE_KEY)).toBe('high-contrast');
+      expect(checked()).toEqual(['false', 'false', 'false', 'true']);
     });
 
     it('shows a stored choice as the checked one', async () => {
@@ -389,7 +407,7 @@ describe('UserMenu', () => {
       create();
       await open();
 
-      expect(checked()).toEqual(['false', 'false', 'true']);
+      expect(checked()).toEqual(['false', 'false', 'true', 'false']);
     });
   });
 

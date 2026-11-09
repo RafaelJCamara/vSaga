@@ -26,7 +26,7 @@ describe('theme-init.js', () => {
     expect(script).toContain(`'${THEME_STORAGE_KEY}'`);
   });
 
-  it.each(['light', 'dark'])('puts a stored %s choice on <html>', (choice) => {
+  it.each(['light', 'dark', 'high-contrast'])('puts a stored %s choice on <html>', (choice) => {
     run((key) => (key === THEME_STORAGE_KEY ? choice : null), root);
 
     expect(root.getAttribute('data-theme')).toBe(choice);

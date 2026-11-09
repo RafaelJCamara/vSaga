@@ -16,9 +16,9 @@ text and shape, never by colour alone.
 
 ## Direction
 
-A flat console in two themes, dark and light. Surfaces are separated by a 1 px border, not by shadow; colour is
+A flat console in three themes: dark, light and a high-contrast one. Surfaces are separated by a 1 px border, not by shadow; colour is
 spent on status and on the one accent. The theme follows the operating system (`prefers-color-scheme`) and the user
-menu overrides it (System, Light, Dark). No component library, no icon font and no web fonts: the system font stack
+menu overrides it (System, Light, Dark, High contrast). No component library, no icon font and no web fonts: the system font stack
 keeps the page inside the container's Content Security Policy and costs no request. Nothing is an icon: state is a
 shape drawn in CSS beside a word.
 
@@ -35,8 +35,8 @@ the same names under `@media (prefers-color-scheme: light)` for `:root:not([data
 skips, so the dark base stands. `color-scheme` follows, so
 scrollbars, the open list of a native `select`, date pickers and autofill match the page.
 
-The choice is made in the user menu (`ThemeService`), stored in `localStorage` under `vsaga.theme` as `light` or `dark`
-(no value means System) and applied as `data-theme` on `<html>`. `public/theme-init.js`, a same-origin script
+The choice is made in the user menu (`ThemeService`), stored in `localStorage` under `vsaga.theme` as `light`, `dark` or
+`high-contrast` (no value means System) and applied as `data-theme` on `<html>`. `public/theme-init.js`, a same-origin script
 loaded from `<head>` (the CSP allows `script-src 'self'` and forbids only the inline kind), applies it before the
 first paint, so a stored choice that differs from the OS does not flash; `ThemeService` applies it again when the app
 starts and on every change. The script duplicates the storage key, which `theme-init.spec.ts` pins to the service's.
@@ -94,6 +94,32 @@ assumed. Text on `--bg-elevated`, then on `--bg-hover`:
 Status text on its own 12 % tint (banners, pills): dark 4.6 to 7.3, light 4.5 to 5.2, measured on `--bg-elevated`. A pill also sits on `--bg` and `--bg-hover` (the sibling links on the detail page, a hovered row), where the light teal first measured 4.39 and 4.06 and was darkened to `#08626f` (5.4 and 5.0 on those tints). A rendered-page scan (computed colours of every text element, both themes, three widths) is how that was found; repeat it after a palette change. The lowest are the light
 "completed" (4.53) and the dark failed red (4.64). A new colour pair is measured, not assumed; `--danger-solid` exists
 because the status red under white text is only 3.4.
+
+#### The high-contrast theme
+
+`:root[data-theme='high-contrast']`, chosen in the user menu and never selected by the OS setting (`prefers-contrast` is
+not read: see [ADR 0015](../docs/adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md)). It redefines the
+same names on a black page and aims at WCAG AAA: 7:1 for text, measured below. It is dark-based; there is no light
+high-contrast palette. It adds two rules a palette cannot: a link is always underlined (except `.btn` and the brand),
+and the focus ring is 3 px.
+
+| Token | Value | Token | Value |
+| --- | --- | --- | --- |
+| `--bg` | `#000000` | `--status-running`, `--kind-orchestrated`, `--accent` | `#9cc0ff` |
+| `--bg-elevated` | `#0a0a0a` | `--status-completed` | `#4ee0a0` |
+| `--bg-hover` | `#1a1a1a` | `--status-failed` | `#ffa0aa` |
+| `--border` | `#9a9a9a` | `--status-compensating` | `#ffc24d` |
+| `--border-control` | `#ffffff` | `--status-compensated` | `#d6b8ff` |
+| `--text` | `#ffffff` | `--status-timedout` | `#ffa66b` |
+| `--text-muted`, `--status-cancelled` | `#d0d0d0` | `--kind-choreographed` | `#55e3f2` |
+| `--accent-solid` | `#0a3fc4` | `--danger-solid` | `#a8001a` |
+
+Computed with the WCAG 2.x relative-luminance formula (the throwaway script is not in the repository), on
+`--bg-elevated`, on `--bg-hover`, and for the status colours on their own 12 % tint over each: `--text` 19.8, 17.4;
+`--text-muted` 12.8, 11.3; `--accent` 10.8, 9.5; completed 11.8, 10.4; failed 10.2, 9.0; compensating 12.3, 10.8;
+compensated 11.5, 10.1; timed out 10.3, 9.1; Choreographed 12.9, 11.3. On a tint the lowest is 7.1 (failed on the
+tinted hover row). White on `--accent-solid` 8.3 and on `--danger-solid` 7.8. `--border` on `--bg-elevated` 7.0 and on
+`--bg-hover` 6.2; `--border-control` 19.8.
 
 State is never carried by colour alone: a status badge is a **shape** and the status word (below).
 

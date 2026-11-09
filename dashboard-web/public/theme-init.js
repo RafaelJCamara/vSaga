@@ -5,7 +5,9 @@
    access: then the choice is System, which is no attribute. */
 try {
   var stored = localStorage.getItem('vsaga.theme');
-  if (stored === 'light' || stored === 'dark') document.documentElement.setAttribute('data-theme', stored);
+  if (stored === 'light' || stored === 'dark' || stored === 'high-contrast') {
+    document.documentElement.setAttribute('data-theme', stored);
+  }
 } catch (e) {
   /* System */
 }

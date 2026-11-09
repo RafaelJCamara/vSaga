@@ -84,8 +84,8 @@ build change. Part 4 is a design, not code.
   applied as `data-theme='high-contrast'`. System does not select it by itself: `prefers-contrast: more` is not read (see
   options).
 - A black page, white text, text and status colours at 7:1 or better on every surface and on the 12 % tints
-  (measured; the numbers go in `DESIGN.md` beside the other two themes), UI boundaries (`--border`, `--border-control`)
-  at 7:1 and 21:1, links always underlined, a 3 px focus ring. It is one palette, dark-based: a light high-contrast
+  (measured; the numbers are in `DESIGN.md` beside the other two themes), UI boundaries (`--border`, `--border-control`)
+  at 6:1 or better and 19.8:1, links always underlined, a 3 px focus ring. It is one palette, dark-based: a light high-contrast
   palette is not built.
 - It is a third palette mixin beside the dark and light ones (`src/styles.scss`), so a new token is added in three places
   and the spec that lists the tokens fails if one is missed.

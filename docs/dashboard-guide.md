@@ -72,13 +72,15 @@ dashboard page never uses it. See [API key](dashboard.md#api-key).
 | **Guide** | A switch: [guide mode](#guide-mode) explains the saga list, a saga's page and the administration pages the first time you open each. |
 | **Replay tour** | Appears while Guide is on and there is a tour to repeat. |
 | **User guide** | Opens this document in a new tab. The link goes to the copy on GitHub's `main` branch (`USER_GUIDE_URL` in `guide-areas.ts`), so it needs internet access and can be newer than the build you run; the file in your checkout is the one that matches it. |
-| Your name, with a small arrow | A menu: **Account**, the **Theme** (**System**, **Light** or **Dark**) and **Sign out**. |
+| Your name, with a small arrow | A menu: **Account**, the **Theme** (**System**, **Light**, **Dark** or **High contrast**) and **Sign out**. |
 
 Times are shown in your browser's local time, and the page is in English.
 
-**Light and dark.** The dashboard follows your operating system's light or dark setting. To choose for this browser
-instead, open the menu with your name and pick a **Theme**: **Light** or **Dark** applies at once, and **System** goes
-back to following the operating system. The choice is kept in this browser only (it does not follow your account to
+**Light, dark and high contrast.** The dashboard follows your operating system's light or dark setting. To choose for
+this browser instead, open the menu with your name and pick a **Theme**: **Light**, **Dark** or **High contrast**
+applies at once, and **System** goes back to following the operating system. **High contrast** is a black page with
+white text, brighter outlines, links that are always underlined and a thicker focus ring; it is never chosen for you
+(the operating system's contrast setting does not select it). The choice is kept in this browser only (it does not follow your account to
 another one). Where the browser blocks site storage, the choice lasts until you reload.
 
 ## Signing in

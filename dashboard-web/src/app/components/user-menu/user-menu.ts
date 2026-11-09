@@ -50,6 +50,7 @@ export class UserMenu {
     { value: 'system', label: 'System' },
     { value: 'light', label: 'Light' },
     { value: 'dark', label: 'Dark' },
+    { value: 'high-contrast', label: 'High contrast' },
   ];
   protected readonly user = this.auth.user;
   protected readonly open = signal(false);

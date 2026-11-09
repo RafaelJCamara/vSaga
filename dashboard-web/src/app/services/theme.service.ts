@@ -1,10 +1,13 @@
 import { DOCUMENT } from '@angular/common';
 import { Injectable, InjectionToken, inject, signal } from '@angular/core';
 
-/** The one browser storage key of the theme choice: `light` or `dark`; absent means System. */
+/** The one browser storage key of the theme choice: `light`, `dark` or `high-contrast`; absent means System. */
 export const THEME_STORAGE_KEY = 'vsaga.theme';
 
-export type ThemeChoice = 'system' | 'light' | 'dark';
+export type ThemeChoice = 'system' | 'light' | 'dark' | 'high-contrast';
+
+/** The choices that are stored and put on `<html>`; System is the absence of both. Repeated by `public/theme-init.js`. */
+const STORED_CHOICES: readonly string[] = ['light', 'dark', 'high-contrast'];
 
 /**
  * Where the theme choice is kept: the browser's `localStorage`, or null where there is none (a browser that blocks
@@ -23,8 +26,8 @@ export const THEME_STORAGE = new InjectionToken<Storage | null>('THEME_STORAGE',
 });
 
 /**
- * The user's theme: System (follow the OS, `prefers-color-scheme`), Light or Dark. The stylesheet does the
- * rest: a light or dark choice is `data-theme` on `<html>`, System is no attribute (see `src/styles.scss`).
+ * The user's theme: System (follow the OS, `prefers-color-scheme`), Light, Dark or High contrast. The stylesheet does
+ * the rest: any other choice than System is `data-theme` on `<html>`, System is no attribute (see `src/styles.scss`).
  * `public/theme-init.js` applies a stored choice before the first paint (a file, because the Content Security
  * Policy forbids an inline script), so a choice that differs from the OS does not flash; this service applies it
  * again when the shell is created and on every change. That script repeats `THEME_STORAGE_KEY`; a spec pins the two.
@@ -55,7 +58,7 @@ export class ThemeService {
   private read(): ThemeChoice {
     try {
       const stored = this.storage?.getItem(THEME_STORAGE_KEY);
-      return stored === 'light' || stored === 'dark' ? stored : 'system';
+      return stored && STORED_CHOICES.includes(stored) ? (stored as ThemeChoice) : 'system';
     } catch {
       return 'system';
     }
