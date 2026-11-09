@@ -110,18 +110,20 @@ docker compose -p vsaga-redis -f docker-compose.yml -f docker-compose.redis.yml 
 | RabbitMQ management | http://localhost:15672 | `guest` / `guest` |
 | RabbitMQ (AMQP) | `localhost:5672` | `guest` / `guest`, i.e. `amqp://guest:guest@localhost:5672/` |
 | Postgres | `localhost:5433` | `postgres`/`postgres`, database `vsaga` (port 5433, not 5432, to avoid clashing with a local Postgres) |
+| SQL Server | `localhost:1435` | SQL Server overlay only. Login `sa`, a development password set in `docker-compose.sqlserver.yml` (change it for anything else), database `vsaga`. Needs about 2 GB of memory |
 | MongoDB | `localhost:27018` | MongoDB overlay only. No auth, database `vsaga`, replica set `rs0`. Connect with `mongodb://localhost:27018/?directConnection=true`: the member advertises itself as `mongo:27017`, which only the compose network resolves |
 | Redis | `localhost:6479` | Redis overlay only. No auth, namespace `vsaga`, so every key starts with `{vsaga:vsaga}:` |
 
-The MongoDB and Redis overlays also move the plain stack's services to their own ports, so they can
+The SQL Server, MongoDB and Redis overlays also move the plain stack's services to their own ports, so they can
 run alongside it:
 
-| Service | MongoDB overlay (`-p vsaga-mongo`) | Redis overlay (`-p vsaga-redis`) |
-| --- | --- | --- |
-| Dashboard UI | `localhost:4700` | `localhost:4800` |
-| Dashboard API | `localhost:5580` | `localhost:5680` |
-| RabbitMQ (AMQP / management) | `localhost:6172` / `16172` | `localhost:6272` / `16272` |
-| Postgres (running, unused by that overlay) | `localhost:5448` | `localhost:5447` |
+| Service | SQL Server overlay (`-p vsaga-sqlserver`) | MongoDB overlay (`-p vsaga-mongo`) | Redis overlay (`-p vsaga-redis`) |
+| --- | --- | --- | --- |
+| Dashboard UI | `localhost:4900` | `localhost:4700` | `localhost:4800` |
+| Dashboard API | `localhost:5780` | `localhost:5580` | `localhost:5680` |
+| Sample: create orders | `localhost:5781` | `localhost:5581` | `localhost:5681` |
+| RabbitMQ (AMQP / management) | `localhost:6372` / `16372` | `localhost:6172` / `16172` | `localhost:6272` / `16272` |
+| Postgres (running, unused by that overlay) | `localhost:5449` | `localhost:5448` | `localhost:5447` |
 
 The sample submits ten orders when it starts, so the saga list has rows within a few seconds, and then
 stops. Try the chaos overlay for fault injection
@@ -188,7 +190,7 @@ compose UI and against the same API; see [`dashboard-web/README.md`](dashboard-w
 
 To see one persistence provider on its own rather than the whole stack,
 [`dotnet/samples/Persistence/`](dotnet/samples/Persistence/) has one small console sample per provider.
-All four run the same saga over the in-memory transport, so no broker is needed, and the provider is the
+All five run the same saga over the in-memory transport, so no broker is needed, and the provider is the
 only thing that differs between them:
 
 | Provider | Sample | Database |
@@ -233,7 +235,8 @@ Full index: [`docs/README.md`](docs/README.md). Straight to the reference docs:
 - [`docs/configuration.md`](docs/configuration.md) — every options class, including the
   transactional outbox and transport options, and every `Dashboard:*` key (sign-in, sessions, the identity
   store, the API key).
-- [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, MongoDB, Redis, in-memory, migrations.
+- [`docs/persistence.md`](docs/persistence.md) — EF Core/Postgres, EF Core/SQL Server, MongoDB, Redis, in-memory,
+  migrations, and how to choose between them.
 - [`docs/observability.md`](docs/observability.md) — traces, metrics, the persisted event log and its
   state snapshots, OTLP wiring.
 - [`docs/dashboard-guide.md`](docs/dashboard-guide.md) — the dashboard user guide: opening it, signing in, guide

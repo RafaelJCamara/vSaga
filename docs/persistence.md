@@ -219,6 +219,31 @@ waiting or double-claiming. The saga-type filter of `ClaimDueAsync` is a JSON ar
 - **Backups, HA and failover** are SQL Server's: an Always On availability group or Azure SQL's built-in HA gives
   the durability this provider inherits. vSaga adds no durability tier of its own.
 
+### Where it differs from Postgres
+
+| | EF Core / Postgres | EF Core / SQL Server |
+| --- | --- | --- |
+| Package | `VSaga.Persistence.EFCore.Postgres` | `VSaga.Persistence.EFCore.SqlServer` |
+| `Persistence:Provider` | `Postgres` (the default) | `SqlServer` |
+| `ConnectionStrings:VSaga` | Has a default in `appsettings.json` | No default: the string carries a login, so set it yourself |
+| Atomic claim | `FOR UPDATE SKIP LOCKED ... RETURNING` | `ROWLOCK, UPDLOCK, READPAST ... OUTPUT inserted.*` |
+| Key comparison | Case-sensitive | Follows the database collation (case-insensitive by default) except where a contract demands an exact match |
+| Timestamp resolution | 1 microsecond | 100 ns (`datetime2`) |
+| Migrations | Its own history | A single generated `InitialCreate` |
+| Dashboard health check | `CanConnect` | `CanConnect` (the same check) |
+
+The tables, the optimistic-concurrency rule, the unique `(SagaType, BusinessKey)` index and the event log are the
+same on both, and the cross-provider conformance suite holds them to the same contracts.
+
+### Supported servers
+
+SQL Server 2016 or later (compatibility level 130, for `OPENJSON`), Azure SQL Database and Azure SQL Managed
+Instance; EF Core 10 sets the same floor. What has been run against it: the whole conformance suite and the
+provider's own `READPAST` claim test on SQL Server 2022 in a Testcontainers container, and the compose stack
+below. Not yet verified: Azure SQL, SQL Server 2016 to 2019, two dispatcher replicas under load, and a
+case-sensitive database collation. Those work by design but have no recorded run
+([ADR 0009](adr/0009-sql-server-persistence-provider.md#implementation-and-verification-2026-11-02)).
+
 ### The compose overlay
 
 `docker-compose.sqlserver.yml` switches both hosts to SQL Server for a live run, like the Redis and MongoDB
@@ -228,9 +253,18 @@ overlays:
 docker compose -p vsaga-sqlserver -f docker-compose.yml -f docker-compose.sqlserver.yml up -d --build
 ```
 
-The dashboard is at http://localhost:4900 (the API on 5780, SQL Server on host port 1435). The `sqlserver`
-container needs about 2 GB of memory, accepts the SQL Server EULA through `ACCEPT_EULA`, and uses a development
-`sa` password you should change for anything else. A runnable single-process sample is in
+| Service | Host port |
+| --- | --- |
+| Dashboard UI | `localhost:4900` |
+| Dashboard API | `localhost:5780` |
+| Sample: create orders (`POST /orders`) | `localhost:5781` |
+| SQL Server | `localhost:1435` (login `sa`, database `vsaga`) |
+| RabbitMQ (AMQP / management) | `localhost:6372` / `16372` |
+| Postgres (running, unused by this overlay) | `localhost:5449` |
+
+The `sqlserver` container needs about 2 GB of memory, accepts the SQL Server EULA through `ACCEPT_EULA`, and uses a
+development `sa` password you should change for anything else. The database is created by `dashboard-api`'s
+`MigrateAsync`, and `order-processing` waits for it to be healthy. A runnable single-process sample is in
 [`dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.SqlServer`](../dotnet/samples/Persistence/VSaga.Samples.Persistence.EFCore.SqlServer/).
 
 ## Redis

@@ -100,7 +100,7 @@ from the property: a saga whose initiating message type has no extractor never h
 never found by one, even after a later step fills `OrderId`.
 
 Every persistence provider allows at most one instance per `(SagaType, BusinessKey)` for a non-null
-key: EF Core with a **partial unique index** (`WHERE BusinessKey IS NOT NULL`), MongoDB with a unique
+key: EF Core (Postgres and SQL Server alike) with a **partial unique index** (`WHERE BusinessKey IS NOT NULL`), MongoDB with a unique
 index partial on `businessKey: {$type: "string"}`, Redis and the in-memory store with a per-key
 reservation (see [`persistence.md`](persistence.md)). The constraint is partial so sagas that never set
 a business key (the common case, unaffected by this feature) impose no uniqueness constraint on

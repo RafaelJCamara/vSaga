@@ -45,6 +45,7 @@ by side (their commands are under
 | HTTP transport | <http://localhost:4600> |
 | MongoDB persistence | <http://localhost:4700> |
 | Redis persistence | <http://localhost:4800> |
+| SQL Server persistence | <http://localhost:4900> |
 
 Open the port of the stack you want to look at. Two stacks in one browser behave well, with one quirk: see
 [Two stacks in one browser](#two-stacks-in-one-browser).

@@ -17,7 +17,7 @@ code: the saga, its messages, a fake payment gateway and the scenario runner. It
 persistence package, so it compiles the same against every store.
 
 The host ports avoid both a locally installed server's default port and the reference stack's ports
-(`5433`, `27018`, `6479`; see the [root README](../../../README.md#run-the-demo)), so a sample's
+(`5433`, `1435`, `27018`, `6479`; see the [root README](../../../README.md#run-the-demo)), so a sample's
 database can run alongside either.
 
 ## Running one
@@ -70,7 +70,7 @@ of a durable store.
 
 ## Where the providers differ in the output
 
-- **Before/after count.** In-memory always starts at 0. The three durable providers keep counting up
+- **Before/after count.** In-memory always starts at 0. The four durable providers keep counting up
   across runs until you remove the compose volume (`docker compose ... down -v`).
 - **Timeline sequence numbers.** The in-memory store and EF Core number entries from one store-wide
   counter (a single in-process counter and an identity column, respectively), so the second saga's

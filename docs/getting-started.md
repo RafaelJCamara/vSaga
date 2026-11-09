@@ -57,8 +57,9 @@ dotnet add package Microsoft.Extensions.Hosting
 
 (Swap `VSaga.Persistence.InMemory`/`VSaga.Transport.InMemory` for `VSaga.Persistence.EFCore` +
 `VSaga.Persistence.EFCore.Postgres` + `VSaga.Transport.RabbitMQ` when you're ready for something that
-survives a restart — for `VSaga.Persistence.MongoDB` if you are already standardised on MongoDB and run
-a replica set, or for `VSaga.Persistence.Redis` if you would rather run Redis than Postgres and
+survives a restart — for `VSaga.Persistence.EFCore` + `VSaga.Persistence.EFCore.SqlServer` if you are
+already standardised on SQL Server or Azure SQL, for `VSaga.Persistence.MongoDB` if you are already
+standardised on MongoDB and run a replica set, or for `VSaga.Persistence.Redis` if you would rather run Redis than Postgres and
 accept its documented loss window — see [`persistence.md`](persistence.md) and
 [`transports/index.md`](transports/index.md).
 **Before you make that swap**, read the callout at the end of ["Run it"](#run-it) below: this page's own
@@ -220,9 +221,9 @@ See [`testing.md`](testing.md) for the full harness API.
 - [`configuration.md`](configuration.md) — the outbox, transport options, and everything else
   configurable.
 - [`persistence.md`](persistence.md) and [`transports/index.md`](transports/index.md) — moving from
-  in-memory to a durable store (EF Core/Postgres, MongoDB or Redis) and a real broker. The
+  in-memory to a durable store (EF Core/Postgres, EF Core/SQL Server, MongoDB or Redis) and a real broker. The
   [persistence samples](../dotnet/samples/Persistence/) run one saga on each store, so you can see the
   swap before making it.
-- [`dashboard.md`](dashboard.md) — the ops dashboard, once you have a durable store (Postgres, MongoDB
-  or Redis) and RabbitMQ (or the HTTP transport) running — see
+- [`dashboard.md`](dashboard.md) — the ops dashboard, once you have a durable store (Postgres, SQL Server,
+  MongoDB or Redis) and RabbitMQ (or the HTTP transport) running — see
   ["Run the demo"](../README.md#run-the-demo) for the fastest way to see it live.
