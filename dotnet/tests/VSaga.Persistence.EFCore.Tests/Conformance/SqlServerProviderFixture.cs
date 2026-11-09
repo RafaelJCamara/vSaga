@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using VSaga.Persistence.Conformance;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -11,10 +12,36 @@ namespace VSaga.Persistence.EFCore.Tests.Conformance;
 /// not the model-built one SQLite uses. SQL Server has no <c>CREATE DATABASE ... TEMPLATE</c>, so unlike the
 /// Postgres fixture the migration is applied afresh per case.
 /// </summary>
-public sealed class SqlServerProviderFixture : IProviderFixture, IAsyncLifetime
+public sealed partial class SqlServerProviderFixture : IProviderFixture, IAsyncLifetime
 {
     private readonly MsSqlContainer _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
     private int _databaseCount;
+
+    /// <summary>
+    /// Names the collation every case's database is created with. Unset, the databases take the server's
+    /// default (<c>SQL_Latin1_General_CP1_CI_AS</c>, case-insensitive). Set it to run the whole suite under
+    /// another one, e.g. <c>VSAGA_SQLSERVER_COLLATION=Latin1_General_CS_AS</c> for a case-sensitive database
+    /// (ADR 0009 leaves every key comparison but two to the collation, and this is how that is checked).
+    /// </summary>
+    public const string CollationVariable = "VSAGA_SQLSERVER_COLLATION";
+
+    /// <summary>The <c>COLLATE</c> clause for <c>CREATE DATABASE</c>, or nothing. The name is spliced into DDL, so only a plain collation identifier is accepted.</summary>
+    private static string CollateClause
+    {
+        get
+        {
+            var collation = Environment.GetEnvironmentVariable(CollationVariable);
+            if (string.IsNullOrWhiteSpace(collation))
+                return string.Empty;
+
+            return CollationName().IsMatch(collation)
+                ? $" COLLATE {collation}"
+                : throw new InvalidOperationException($"{CollationVariable} must be a collation name such as Latin1_General_CS_AS, not '{collation}'.");
+        }
+    }
+
+    [GeneratedRegex("^[A-Za-z][A-Za-z0-9_]*$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex CollationName();
 
     /// <summary>Every store shares one <see cref="VSagaDbContext"/> per unit of work, so a staged row is flushed only by a commit on it.</summary>
     public bool SupportsAtomicUnitOfWork => true;
@@ -39,7 +66,7 @@ public sealed class SqlServerProviderFixture : IProviderFixture, IAsyncLifetime
     internal async Task<MigratedDatabase> CreateMigratedDatabaseAsync(CancellationToken cancellationToken = default)
     {
         var database = $"vsaga_conformance_{Interlocked.Increment(ref _databaseCount)}";
-        await ExecuteAsync($"CREATE DATABASE [{database}]", cancellationToken);
+        await ExecuteAsync($"CREATE DATABASE [{database}]{CollateClause}", cancellationToken);
 
         var connectionString = ConnectionString(database);
         var options = new DbContextOptionsBuilder<VSagaDbContext>()
