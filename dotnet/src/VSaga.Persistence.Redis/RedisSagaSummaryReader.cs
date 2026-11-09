@@ -318,6 +318,25 @@ public sealed class RedisSagaSummaryReader(RedisConnection connection, RedisKeyS
     }
 
     /// <remarks>
+    /// The saga types from <c>ix:types</c> (one <c>HKEYS</c>), then one <c>ZINTERCARD</c> of the status bucket and the
+    /// type's own index per type, issued together (ADR 0013). It counts server-side and returns a number, so no member
+    /// crosses the wire, but the indexes are not grouped by status and type together, so each intersection walks the
+    /// smaller of its two sets: the refresh costs at most <c>types x members of the status</c>, and at most one pass over
+    /// every instance. A type with none is dropped. <c>ZINTERCARD</c> is Redis 7.0 and Valkey 7.2, the provider's minimum.
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<string, long>> CountByTypeAsync(SagaStatus status, CancellationToken cancellationToken = default)
+    {
+        var db = await connection.GetDatabaseAsync(cancellationToken);
+        var bucket = keys.IndexStatus(status);
+        var types = (await db.HashKeysAsync(keys.IndexTypes)).Select(t => t.ToString()).ToList();
+        var counts = await Task.WhenAll(types.Select(type => db.SortedSetIntersectionLengthAsync([bucket, keys.IndexType(type)])));
+
+        return types.Zip(counts, (type, count) => (type, count))
+            .Where(entry => entry.count > 0)
+            .ToDictionary(entry => entry.type, entry => entry.count, StringComparer.Ordinal);
+    }
+
+    /// <remarks>
     /// A single-shot read, patch, compare-and-set in C#: the blob is opaque bytes to Redis (no
     /// <c>cjson</c>), so the four engine-owned fields are patched here by exact property name -- the
     /// sibling of <c>EfCoreSagaSummaryReader.ResetStateAsync</c>, which must stay byte-identical in what

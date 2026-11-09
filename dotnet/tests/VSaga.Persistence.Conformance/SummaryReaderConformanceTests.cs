@@ -754,4 +754,129 @@ public abstract class SummaryReaderConformanceTests(IProviderFixture fixture) : 
             [new SagaTypeInfo("OrderSaga", SagaKind.Orchestrated), new SagaTypeInfo("ShippingChoreography", SagaKind.Choreographed)],
             types.OrderBy(t => t.SagaType, StringComparer.Ordinal));
     }
+
+    /// <summary>
+    /// ADR 0013's count: per saga type, only the instances in the asked status, and a type with none is absent. The
+    /// store holds every status at once, a type that has only finished instances and a status nobody is in, so a count
+    /// that ignores the status, counts every type or reports zeros fails here.
+    /// </summary>
+    [Fact]
+    public async Task CountByType_CountsOnlyTheAskedStatus_PerType_AndOmitsTypesWithNone()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        await InsertAsync(stores,
+            NewState("OrderSaga"), NewState("OrderSaga"), NewState("OrderSaga"),
+            NewState("OrderSaga", status: SagaStatus.Completed),
+            NewState("OrderSaga", status: SagaStatus.Failed),
+            NewState("ShippingChoreography"), NewState("ShippingChoreography"),
+            NewState("InvoiceSaga", status: SagaStatus.Completed),
+            NewState("InvoiceSaga", status: SagaStatus.Compensating));
+
+        AssertCounts(Tally(("OrderSaga", 3), ("ShippingChoreography", 2)), await CountsAsync(stores, SagaStatus.Running));
+        AssertCounts(Tally(("OrderSaga", 1), ("InvoiceSaga", 1)), await CountsAsync(stores, SagaStatus.Completed));
+        AssertCounts(Tally(("OrderSaga", 1)), await CountsAsync(stores, SagaStatus.Failed));
+        AssertCounts(Tally(("InvoiceSaga", 1)), await CountsAsync(stores, SagaStatus.Compensating));
+        Assert.Empty(await CountsAsync(stores, SagaStatus.Cancelled));
+        Assert.Empty(await CountsAsync(stores, SagaStatus.TimedOut));
+    }
+
+    [Fact]
+    public async Task CountByType_OnAnEmptyStore_IsEmpty()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+
+        Assert.Empty(await CountsAsync(stores, SagaStatus.Running));
+    }
+
+    /// <summary>
+    /// A count that was cached or kept apart from the instances would keep reporting a saga that finished: the count
+    /// follows a status change in both directions, and a type whose last running instance finished is absent again.
+    /// </summary>
+    [Fact]
+    public async Task CountByType_FollowsAStatusChange()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var first = NewState("OrderSaga");
+        var second = NewState("OrderSaga");
+        await InsertAsync(stores, first, second, NewState("ShippingChoreography"));
+        AssertCounts(Tally(("OrderSaga", 2), ("ShippingChoreography", 1)), await CountsAsync(stores, SagaStatus.Running));
+
+        first.Status = SagaStatus.Completed;
+        await RewriteAsync(stores, first);
+        AssertCounts(Tally(("OrderSaga", 1), ("ShippingChoreography", 1)), await CountsAsync(stores, SagaStatus.Running));
+        AssertCounts(Tally(("OrderSaga", 1)), await CountsAsync(stores, SagaStatus.Completed));
+
+        second.Status = SagaStatus.Failed;
+        await RewriteAsync(stores, second);
+        AssertCounts(Tally(("ShippingChoreography", 1)), await CountsAsync(stores, SagaStatus.Running));
+    }
+
+    /// <summary>
+    /// The count is the same set <c>ListAsync</c> filters to the status: its per-type sum is that list's total, and each
+    /// type's figure is the total of that type's own list. Walked past a page so a count that stopped at a page size
+    /// fails.
+    /// </summary>
+    [Fact]
+    public async Task CountByType_AgreesWithTheListFilteredToTheSameStatus()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        var states = Enumerable.Range(0, 30)
+            .Select(i => NewState(i % 3 == 0 ? "OrderSaga" : "InvoiceSaga", status: i % 5 == 0 ? SagaStatus.Failed : SagaStatus.Running))
+            .ToArray();
+        await InsertAsync(stores, states);
+
+        var counts = await CountsAsync(stores, SagaStatus.Running);
+
+        var all = await ListAsync(stores, new SagaListFilter { Status = SagaStatus.Running, PageSize = 1 });
+        Assert.Equal(all.TotalCount, counts.Values.Sum());
+        foreach (var (sagaType, count) in counts)
+            Assert.Equal(count, (await ListAsync(stores, new SagaListFilter { Status = SagaStatus.Running, SagaType = sagaType, PageSize = 1 })).TotalCount);
+    }
+
+    /// <summary>
+    /// The member's default implementation, run over the provider's own list and type reads: it must answer what the
+    /// provider's override answers, because a reader written before the member existed answers through it.
+    /// </summary>
+    [Fact]
+    public async Task CountByType_TheDefaultImplementation_AnswersWhatTheOverrideAnswers()
+    {
+        await using var stores = await Fixture.CreateStoresAsync();
+        await InsertAsync(stores,
+            NewState("OrderSaga"), NewState("OrderSaga"), NewState("OrderSaga", status: SagaStatus.Completed),
+            NewState("ShippingChoreography"), NewState("InvoiceSaga", status: SagaStatus.Failed));
+
+        await using var uow = await stores.BeginAsync();
+        ISagaSummaryReader listOnly = new ListOnlySummaryReader(uow.Summaries);
+
+        foreach (var status in Enum.GetValues<SagaStatus>())
+            AssertCounts(await uow.Summaries.CountByTypeAsync(status), await listOnly.CountByTypeAsync(status));
+    }
+
+    private static Dictionary<string, long> Tally(params (string SagaType, long Count)[] counts) =>
+        counts.ToDictionary(c => c.SagaType, c => c.Count, StringComparer.Ordinal);
+
+    private static void AssertCounts(IReadOnlyDictionary<string, long> expected, IReadOnlyDictionary<string, long> actual) =>
+        Assert.Equal(expected.OrderBy(p => p.Key, StringComparer.Ordinal), actual.OrderBy(p => p.Key, StringComparer.Ordinal));
+
+    private static async Task<IReadOnlyDictionary<string, long>> CountsAsync(IProviderStores stores, SagaStatus status)
+    {
+        await using var uow = await stores.BeginAsync();
+        return await uow.Summaries.CountByTypeAsync(status);
+    }
+}
+
+/// <summary>A reader that forwards every member but <see cref="ISagaSummaryReader.CountByTypeAsync"/>, which it leaves to the interface's default.</summary>
+file sealed class ListOnlySummaryReader(ISagaSummaryReader inner) : ISagaSummaryReader
+{
+    public Task<PagedResult<SagaSummary>> ListAsync(SagaListFilter filter, CancellationToken cancellationToken = default) => inner.ListAsync(filter, cancellationToken);
+
+    public Task<SagaSummary?> GetAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default) => inner.GetAsync(sagaType, correlationId, cancellationToken);
+
+    public Task<string?> GetDataJsonAsync(string sagaType, Guid correlationId, CancellationToken cancellationToken = default) => inner.GetDataJsonAsync(sagaType, correlationId, cancellationToken);
+
+    public Task<IReadOnlyList<SagaSummary>> FindByCorrelationIdAsync(Guid correlationId, CancellationToken cancellationToken = default) => inner.FindByCorrelationIdAsync(correlationId, cancellationToken);
+
+    public Task<IReadOnlyList<SagaSummary>> FindChildrenAsync(string parentSagaType, Guid parentCorrelationId, CancellationToken cancellationToken = default) => inner.FindChildrenAsync(parentSagaType, parentCorrelationId, cancellationToken);
+
+    public Task<IReadOnlyList<SagaTypeInfo>> GetSagaTypesAsync(CancellationToken cancellationToken = default) => inner.GetSagaTypesAsync(cancellationToken);
 }

@@ -77,6 +77,22 @@ public sealed class MongoSagaSummaryReader(MongoCollections collections) : ISaga
     }
 
     /// <remarks>
+    /// One aggregation, <c>$match</c> on the status and <c>$group</c> on the type with a <c>$sum</c> (ADR 0013). The
+    /// <c>Status, UpdatedAtTicks, SagaType, CorrelationId</c> index holds every field the pipeline touches, so the server
+    /// answers from index keys without reading a document.
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<string, long>> CountByTypeAsync(SagaStatus status, CancellationToken cancellationToken = default)
+    {
+        var group = new BsonDocument("$group", new BsonDocument { { "_id", "$sagaType" }, { "n", new BsonDocument("$sum", 1) } });
+        var groups = await collections.Instances.Aggregate()
+            .Match(Filter.Eq(d => d.Status, status))
+            .AppendStage<BsonDocument>(group)
+            .ToListAsync(cancellationToken);
+
+        return groups.ToDictionary(g => g["_id"].AsString, g => g["n"].ToInt64(), StringComparer.Ordinal);
+    }
+
+    /// <remarks>
     /// A single-shot read, patch, version-guarded replace: <c>dataJson</c> is an opaque JSON string, and
     /// MongoDB's update language cannot patch properties inside a string, so the four engine-owned fields
     /// are patched here by exact property name -- the sibling of <c>EfCoreSagaSummaryReader.ResetStateAsync</c>,
