@@ -201,10 +201,20 @@ only thing that differs between them:
 | MongoDB | [`VSaga.Samples.Persistence.MongoDB`](dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB/) | MongoDB 8 replica set on `localhost:27019` |
 | Redis | [`VSaga.Samples.Persistence.Redis`](dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis/) | Redis 7.4 on `localhost:6380` |
 
-```bash
-dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.InMemory
+One command per provider, from `dotnet/samples/Persistence/`. The launcher starts the sample's database
+(`docker compose up -d --wait`), runs the sample, and with `--down` (or `--clean`, which also removes
+the volume) removes the container afterwards. Use `.\run-sample.ps1` in PowerShell.
 
-# The durable ones start their database from the sample's own compose file first, e.g.:
+```bash
+cd dotnet/samples/Persistence
+./run-sample.sh inmemory     # also: postgres, sqlserver, mongodb, redis
+./run-sample.sh all --clean  # all five in turn, one database at a time, with a PASS/FAIL summary
+```
+
+The launcher is a convenience over two plain commands (see the
+[samples README](dotnet/samples/Persistence/README.md#running-one)), for example from the repository root:
+
+```bash
 docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB/docker-compose.yml up -d --wait
 dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB
 ```

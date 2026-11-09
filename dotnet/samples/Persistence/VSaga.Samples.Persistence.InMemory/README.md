@@ -3,6 +3,9 @@
 `CheckoutSaga` on **`VSaga.Persistence.InMemory`**: no database, no Docker, nothing to start first.
 The scenarios and output are described in the [persistence samples README](../README.md).
 
+From `dotnet/samples/Persistence`: `./run-sample.sh inmemory` (PowerShell: `./run-sample.ps1 inmemory`). Or directly,
+from the repository root:
+
 ```bash
 dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.InMemory
 ```

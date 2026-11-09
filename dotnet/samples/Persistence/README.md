@@ -22,7 +22,36 @@ database can run alongside either.
 
 ## Running one
 
-Every command below runs from the repository root. The in-memory sample needs nothing first:
+The launcher, from this directory, is the way in. It needs `dotnet`, and Docker for the four durable
+samples. It takes `inmemory`, `postgres`, `sqlserver`, `mongodb`, `redis` or `all`:
+
+```bash
+./run-sample.sh redis          # Bash
+./run-sample.ps1 redis         # PowerShell
+```
+
+For a durable sample it starts that sample's `docker-compose.yml` with `up -d --wait`, runs the sample,
+and leaves the database running so you can inspect what was written. The in-memory sample needs no
+database. Two options end the run by cleaning up, even when the sample failed:
+
+| Option | After the run |
+| --- | --- |
+| *(none)* | the database keeps running, with its data |
+| `--down` | `docker compose down`: the container is removed, the volume (and the sagas in it) stays |
+| `--clean` | `docker compose down -v`: the container and the volume are removed, so the next run starts empty |
+
+PowerShell also accepts `-Down` and `-Clean`. The exit status is `0` when everything passed, `1` when a
+database did not start or a sample failed, `2` for a usage error.
+
+`all` runs the five in turn (in-memory, Postgres, SQL Server, MongoDB, Redis), carries on after a
+failure, and ends with a summary table of PASS/FAIL and seconds per sample. Add `--clean` to run them
+one database at a time without leaving anything behind. Expect a few minutes on a cold machine: image
+pulls, and SQL Server needs about 2 GB of memory and the longest start. The reasoning (and why this is
+not one project with a `--provider` switch) is in
+[ADR 0012](../../../docs/adr/0012-persistence-demo-launcher-scripts.md).
+
+The launcher is a convenience over two commands, which still work from the repository root. The
+in-memory sample needs nothing first:
 
 ```bash
 dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.InMemory
