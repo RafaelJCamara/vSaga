@@ -127,6 +127,10 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0011-sample-orders-are-seeded-then-on-demand.md`](adr/0011-sample-orders-are-seeded-then-on-demand.md)
     — **Accepted** and **implemented** 2026-11-02: the sample submits a seed batch of orders at startup
     and more only through `POST /orders`, instead of one every 8 seconds forever.
+  - [`adr/0017-mongodb-keeps-saga-state-as-json-text.md`](adr/0017-mongodb-keeps-saga-state-as-json-text.md)
+    — **Proposed**: whether the MongoDB provider should store saga state as native BSON instead of JSON
+    text. Recommends not; a spike found no size gain and a byte-identity hazard, and an opt-in derived
+    projection is the shape to build if operators need to query business fields.
 
 ## History
 
