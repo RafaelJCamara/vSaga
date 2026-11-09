@@ -131,6 +131,11 @@ new here; the rest of this index is organized by topic, roughly in the order you
     — **Proposed**: whether the MongoDB provider should store saga state as native BSON instead of JSON
     text. Recommends not; a spike found no size gain and a byte-identity hazard, and an opt-in derived
     projection is the shape to build if operators need to query business fields.
+  - [`adr/0018-no-explicit-unit-of-work-seam-in-the-persistence-contracts.md`](adr/0018-no-explicit-unit-of-work-seam-in-the-persistence-contracts.md)
+    — **Proposed**: whether the persistence contracts should gain an explicit unit-of-work seam, the
+    precondition ADR 0002 set for a Redis-plus-Postgres split. Recommends not; a seam would not make the
+    outbox or the business-key reservation splittable, and the contract that can be split (timeouts)
+    needs only provider registration.
 
 ## History
 
