@@ -28,9 +28,10 @@ public static class VSagaDiagnostics
     // Deliberately NOT an UpDownCounter<long> "vsaga.saga.running" -- production-readiness.md §6/§8.18
     // calls that a trap: an UpDownCounter is process-local and non-idempotent, so a restart, a
     // redelivery, or a second replica desynchronizes it permanently with no way to self-correct. "How
-    // many sagas are running right now" needs an ObservableGauge backed by
-    // `COUNT(*) WHERE Status = Running` against the store instead, which needs scoped-store access from
-    // a meter callback that doesn't exist yet -- a named follow-up for VSaga.Observability, not built here.
+    // many sagas are running right now" is an ObservableGauge backed by a count of Status = Running in
+    // the store instead, and that lives in VSaga.Observability (AddVSagaRunningSagasGauge, ADR 0013): a
+    // background service reads the store through a scope of its own and the meter callback returns what it
+    // cached, so it needs no scoped-store access from a callback and nothing here.
 
     public const string TagSagaType = "saga.type";
     public const string TagSagaKind = "saga.kind";

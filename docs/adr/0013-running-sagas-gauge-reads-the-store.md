@@ -31,8 +31,7 @@ Four things shape the answer.
    The stores are async, and EF Core's `DbContext` is scoped. A callback that holds a store directly is the
    captive-dependency shape `SagaTimeoutDispatcherHostedService` had before it was fixed (a singleton holding a
    scoped service); a callback that blocks on the store (`.GetAwaiter().GetResult()`) holds a metric-reader thread
-   for the length of a database round trip, per scrape, and is rejected by the repository's analyzers
-   (`MA0045`, `S4462`).
+   for the length of a database round trip on every collection.
 2. **There is precedent.** The stuck-saga gauge (`vsaga.saga.stuck`, `SagaStuckMetrics` in
    `dotnet/src/VSaga.Core/Runtime`) reads the store from a hosted service on an interval, through an
    `IServiceScopeFactory` scope per sweep, caches the result, and lets the callback return the cache. A restart
@@ -69,8 +68,8 @@ One new member on `ISagaSummaryReader`:
 Task<IReadOnlyDictionary<string, long>> CountByTypeAsync(SagaStatus status, CancellationToken cancellationToken = default);
 ```
 
-It returns, per saga type, how many instances are in `status`, **omitting types with none**, keyed by the exact
-(ordinal) saga type name. It is a **default interface member**: its default implementation reads
+It returns, per saga type, how many instances are in `status`, **omitting types with none**, keyed by the saga type name
+as stored. It is a **default interface member**: its default implementation reads
 `GetSagaTypesAsync` and takes the `TotalCount` of one `ListAsync(Status, SagaType, PageSize = 1)` per type, so a
 third-party reader written before this ADR compiles and answers correctly, just expensively. Every provider in the
 repository overrides it with the cheapest form its storage has:
@@ -80,11 +79,11 @@ repository overrides it with the cheapest form its storage has:
 | InMemory | one pass over the snapshot dictionary, grouped by type; no I/O |
 | EF Core (Postgres, SQL Server, SQLite) | `SELECT SagaType, COUNT(*) FROM SagaInstances WHERE Status = @s GROUP BY SagaType` |
 | MongoDB | `aggregate [{$match: {status}}, {$group: {_id: "$sagaType", n: {$sum: 1}}}]`, served from the existing `Status, UpdatedAtTicks, SagaType, ...` index without reading a document |
-| Redis | the types from `ix:types` (`HGETALL`), then one `ZINTERCARD 2 ix:status:<n> ix:type:<type>` per type, issued together; no member is returned |
+| Redis | the types from `ix:types` (`HKEYS`), then one `ZINTERCARD 2 ix:status:<n> ix:type:<type>` per type, issued together; no member is returned |
 
 The conformance suite (`SummaryReaderConformanceTests`) gains cases that run against every provider: only the
 requested status is counted, per type, types with none are absent, an empty store answers empty, a status change is
-reflected, and the type name is matched exactly. This is a contract change: a third-party provider that does not
+reflected, and a type name is a key as stored. This is a contract change: a third-party provider that does not
 override it keeps working through the default and fails nothing, but it is only conformant, not cheap.
 
 ### The gauge (`VSaga.Observability`)
@@ -123,7 +122,7 @@ last refresh, so it is up to `RefreshInterval` old plus the exporter's own inter
 | Option | Verdict |
 | --- | --- |
 | `UpDownCounter` incremented on start and decremented on terminal status | Rejected in section 6 of the production-readiness design, and still: process-local, not idempotent, desynchronised for good by a restart, a redelivery or a second replica. |
-| Query the store inside the meter callback, blocking on the result | Rejected. It blocks a metric-reader thread (a request thread under a pull exporter) for a database round trip on every collection, makes the store's cost proportional to the scrape rate and to the number of exporters, and `MA0045`/`S4462` fail the build. |
+| Query the store inside the meter callback, blocking on the result | Rejected. It blocks a metric-reader thread (a request thread under a pull exporter) for a database round trip on every collection, makes the store's cost proportional to the scrape rate and to the number of exporters. |
 | Query inside the callback with a cache and a fire-and-forget refresh when the cache is stale | Rejected. It needs no timer and costs nothing with no scraper, but it makes every reading one scrape old, hides a failure inside an unobserved task, and needs its own single-flight and shutdown handling. The background service has all of that already (`SagaStuckSweepHostedService`). |
 | Hold the store in the callback by capturing a scope at startup | Rejected. That is the captive dependency: one `DbContext` for the life of the process, shared by every collection. |
 | Put the gauge in `VSaga.Core`, beside `vsaga.saga.stuck` | Rejected. The production-readiness review named `VSaga.Observability`, which is where a host that wires OpenTelemetry already looks, and which a participant-only host (no store) can leave out entirely. `VSaga.Core` would run a store query in every engine host whether or not anything scrapes it. |
