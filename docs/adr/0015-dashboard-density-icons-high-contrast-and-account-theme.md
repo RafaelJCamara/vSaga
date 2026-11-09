@@ -161,7 +161,9 @@ The design, ready to build once accepted:
   vanish silently (the words stay, so nothing is lost but the second cue). `DESIGN.md` records the dependency and the
   stack check watches the console.
 - **Browser support.** `mask-image` is unprefixed from Chrome 120, Firefox 53 and Safari 15.4; the `-webkit-` copy covers
-  the older ones. Firefox and Safari had never been looked at (ADR 0010, "Never tested"); this change's live check covers
-  Chromium, Firefox and WebKit (see its history record or the commit message for exactly what ran).
+  the older ones. Firefox and Safari had never been looked at (ADR 0010, "Never tested"); this change was checked in the
+  compose stack in Playwright's Chromium, Firefox and WebKit builds (WebKit on Windows, which is not Safari itself): the
+  menu, every theme and both densities, reload persistence and no horizontal overflow at 360 px. Not run: real Safari, a
+  real Windows High Contrast session (only the browsers' `forced-colors` media emulation), a screen reader.
 - **Part 4, if accepted, costs one generated migration** and a rollback story (a nullable column an older image ignores);
   until then nothing in the repository refers to it but this record.

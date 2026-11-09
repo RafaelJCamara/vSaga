@@ -52,11 +52,17 @@ $icons: (
 }
 
 /* Each banner tone leads with its icon, so the tone is not carried by the tint alone. The plain `.banner` has none.
-   The icon sits on the first line and the text wraps beside it. */
+   The icon hangs in the left padding, so a message that wraps keeps its lines aligned. `.banner.banner--x` is
+   needed to beat the `.banner` padding, which is declared after this partial. */
 @each $tone, $name in ('error': 'error', 'warning': 'warning', 'info': 'info', 'success': 'success') {
+  .banner.banner--#{$tone} {
+    padding-left: calc(var(--space-4) + 1.15em + var(--space-2));
+  }
+
   .banner--#{$tone}::before {
     @include icon($name);
     content: '';
+    margin-left: calc(-1.15em - var(--space-2));
     margin-right: var(--space-2);
   }
 }
