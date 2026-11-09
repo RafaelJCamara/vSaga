@@ -2,7 +2,8 @@
 //
 // The checkout saga (VSaga.Samples.Persistence.Common) on the in-memory store: no database, no Docker,
 // nothing to start first. Every [InMemory] block below is specific to this provider; the rest of the
-// file is identical in all four persistence samples.
+// file is identical in all five persistence samples. From dotnet/samples/Persistence,
+// ./run-sample.sh inmemory (or run-sample.ps1) runs it too.
 //
 //   dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.InMemory
 
@@ -31,7 +32,7 @@ try
     await CheckoutDemo.RunAsync(host.Services, "VSaga.Persistence.InMemory", CancellationToken.None);
 
     // [InMemory] Nothing survives this process. Run the sample again and the count starts at 0 — the
-    // durable samples (EFCore.Postgres, MongoDB, Redis) keep counting up.
+    // durable samples (EFCore.Postgres, EFCore.SqlServer, MongoDB, Redis) keep counting up.
     Console.WriteLine("In-memory: everything above is discarded when this process exits.");
 }
 finally

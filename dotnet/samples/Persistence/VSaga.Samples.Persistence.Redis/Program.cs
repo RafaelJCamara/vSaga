@@ -2,7 +2,8 @@
 //
 // The checkout saga (VSaga.Samples.Persistence.Common) on Redis: core data types and server-side Lua,
 // no modules, so Valkey works too. Every [Redis] block below is specific to this provider; the rest of
-// the file is identical in all four persistence samples. Start Redis first (see README.md):
+// the file is identical in all five persistence samples. From dotnet/samples/Persistence,
+// ./run-sample.sh redis (or run-sample.ps1) does the two steps below for you. Start Redis first (see README.md):
 //
 //   docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis/docker-compose.yml up -d --wait
 //   dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.Redis

@@ -1,8 +1,9 @@
 // Persistence sample: VSaga.Persistence.MongoDB
 //
 // The checkout saga (VSaga.Samples.Persistence.Common) on MongoDB, through the native driver. Every
-// [MongoDB] block below is specific to this provider; the rest of the file is identical in all four
-// persistence samples. Start the replica set first (see README.md):
+// [MongoDB] block below is specific to this provider; the rest of the file is identical in all five
+// persistence samples. From dotnet/samples/Persistence, ./run-sample.sh mongodb (or run-sample.ps1) does
+// the two steps below for you. Start the replica set first (see README.md):
 //
 //   docker compose -f dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB/docker-compose.yml up -d --wait
 //   dotnet run --project dotnet/samples/Persistence/VSaga.Samples.Persistence.MongoDB
