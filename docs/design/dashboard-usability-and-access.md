@@ -1739,5 +1739,8 @@ defects). What the run of 2026-10-13 covered and found is in
   for the snapshot read cost; the trigger is a saga type whose steps × state size passes about 1 MB.
 - **The device-cookie lockout bypass** (a Data-Protected, HttpOnly "known device" cookie that lets a
   browser that has signed in before skip a shared lock). Until then lockout can deny a known username;
-  what ends a lock is documented (§8.4).
-- **Single sign-on.**
+  what ends a lock is documented (§8.4). [ADR 0016](../adr/0016-dashboard-single-sign-on-through-openid-connect.md)
+  (Proposed) explains why single sign-on keeps this deferred and sketches the shape it would take, and that
+  it would need its own ADR.
+- **Single sign-on.** Proposed in [ADR 0016](../adr/0016-dashboard-single-sign-on-through-openid-connect.md):
+  not built, not accepted.
