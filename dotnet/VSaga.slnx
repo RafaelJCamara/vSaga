@@ -44,6 +44,7 @@
     <Project Path="tests/VSaga.Dashboard.Api.Tests/VSaga.Dashboard.Api.Tests.csproj" />
     <Project Path="tests/VSaga.Dashboard.Identity.Tests/VSaga.Dashboard.Identity.Tests.csproj" />
     <Project Path="tests/VSaga.Http.Tests/VSaga.Http.Tests.csproj" />
+    <Project Path="tests/VSaga.Observability.Tests/VSaga.Observability.Tests.csproj" />
     <Project Path="tests/VSaga.Persistence.Conformance/VSaga.Persistence.Conformance.csproj" />
     <Project Path="tests/VSaga.Persistence.EFCore.Tests/VSaga.Persistence.EFCore.Tests.csproj" />
     <Project Path="tests/VSaga.Persistence.InMemory.Tests/VSaga.Persistence.InMemory.Tests.csproj" />
