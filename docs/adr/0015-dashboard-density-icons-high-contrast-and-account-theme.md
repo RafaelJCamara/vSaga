@@ -1,8 +1,8 @@
 # ADR 0015: The dashboard gets a density switch, CSS-drawn icons and a high-contrast theme now, and keeps display choices on the account later
 
 **Status:** **Accepted** — 2026-11-09, by the maintainer. Parts 1 to 3 **implemented** — 2026-11-09, `6250d15`,
-`f6dbbbb`, `dd75aef`, `6734ed7`; part 4 (the
-per-account choice) is accepted as a design and deliberately not built yet.
+`f6dbbbb`, `dd75aef`, `6734ed7`; part 4 (the per-account choice) **implemented** — 2026-11-09, `0818c63` (API, store and
+migration) and `f97d7e7` (SPA).
 **Date:** 2026-11-09
 **Relates to:** [`0010-dashboard-design-tokens-and-light-theme.md`](0010-dashboard-design-tokens-and-light-theme.md)
 (this builds what that record deferred: its item 9, "density switch, icons", and its "stated limitation: the choice is
@@ -45,7 +45,8 @@ authentication and API contracts stay as they are; EF Core migrations are genera
 ## Decision
 
 Parts 1 to 3 are SPA-only: CSS, templates, two small services and `public/theme-init.js`. No API, route, dependency or
-build change. Part 4 is a design, not code.
+build change. Part 4 is the one part that is not: it adds a column, an endpoint and a field of the session (see its
+section, which records what was built).
 
 ### 1. Density: Comfortable (default) and Compact
 
@@ -91,10 +92,10 @@ build change. Part 4 is a design, not code.
 - It is a third palette mixin beside the dark and light ones (`src/styles.scss`), so a new token is added in three places
   and the spec that lists the tokens fails if one is missed.
 
-### 4. Account-level choice: accepted, not built
+### 4. Account-level choice: built
 
-Everything above is per browser, and says so in the guide. The maintainer asked for the choice to follow the account.
-The accepted design, ready to build:
+Parts 1 to 3 were per browser. The maintainer asked for the choice to follow the account; it was accepted as the
+design below and built on 2026-11-09. The design, and then what the build settled that the design left open:
 
 - **Storage.** One nullable column on the identity store's `Users` table, `DisplayPreferences` (text, at most 256
   characters), holding a small JSON object, `{"theme":"dark","density":"compact"}`. A column of JSON instead of one
@@ -115,11 +116,38 @@ The accepted design, ready to build:
   on every sign-in, so a different account on the same browser does not flash the previous one's theme for more than the
   first load. The first sign-in of an account with no stored choice uploads the browser's current choice once, so
   nobody loses the choice they already made; after that the account wins.
-- **Why it is not in this change.** It is a schema change (a generated migration, which the maintainer asked to be asked
-  about), a store-interface change with its tests in three projects (`VSaga.Dashboard.Identity.Tests`,
-  `VSaga.Dashboard.Api.Tests`, the SPA's session model in `src/app/models/auth.model.ts`), a session DTO change and a
-  live check on the compose stack's identity volume. That is not small, and half of it (a column nothing reads, or an
-  endpoint with no migration) is worse than none.
+- **Why it was not in the first change.** It is a schema change (a generated migration, which the maintainer asked to be
+  asked about), a store-interface change with its tests in three projects, a session DTO change and a live check on the
+  compose stack's identity volume. Half of it (a column nothing reads, or an endpoint with no migration) is worse than
+  none, so it waited until all of it could land together.
+
+**What the build settled** (the design above stands; these are the points it left open or that the build changed):
+
+- **A request that names an unknown key is a 400, as every other request body under `/api/auth` is.** The design said
+  an unknown key "is dropped". On the way in the API is strict (an unknown or duplicate member, a value outside the
+  closed set, a non-object body: `400` `validation` naming the member), because silently ignoring a member is what the
+  rest of the API refuses to do. The tolerant side is the read: `DisplayPreferences.Parse` drops an unknown key and an
+  unknown value from the stored text (written by a newer image, then rolled back) instead of failing a sign-in.
+- **`system` and `comfortable` are values, not absences.** A null member means "no account choice for it", so the
+  browser's own stays; `{}` clears the account's choice. The account can therefore say "follow the OS" and have it win
+  over a browser that had picked Dark.
+- **No second read method.** The design named one new store method, `SetDisplayPreferencesAsync(userId, json)`, and that
+  is the only one. Reading rides on what is already read: `DashboardUser.DisplayPreferences` carries the stored text, and
+  `CallerAccessResolver`, which loads the user on every request, parses it into `CallerAccess.Preferences`, so the session
+  needs no extra query. `UpdateUserAsync` leaves the column alone, so an administrator's edit of a user never undoes a
+  preference, and writing it touches nothing else (not `UpdatedAtUtc`, not the security stamp).
+- **`PUT` answers `200` with what is now stored**, not the whole session: nothing about the identity changed, so the
+  antiforgery token and the cookie stand.
+- **The upload of the browser's choice is conditional.** An account with none is given the browser's choice only when
+  it is not System and Comfortable: with nothing to lose there is nothing to upload, and the account stays "no choice".
+- **A failed write is retried while the page lives, and not overwritten meanwhile.** The SPA keeps a choice that could not
+  be saved as unsaved and sends it again at the next session read, instead of letting the account's older value replace
+  what the user just picked. The flag is in memory: a reload before the retry lets the account's stored choice win (a
+  stated limitation; persisting the flag in `localStorage` would close it). A session read that was sent before a
+  confirmed change cannot undo it (`preferencesEpoch` in `AuthService`).
+- **Switching account on one browser** applies the new account's choice. An account with none that signs in on a
+  browser still holding the previous account's non-default choice is given that choice, which is what "the browser's
+  current choice" means; signing out does not clear the cache.
 
 ## Options weighed
 
@@ -145,8 +173,8 @@ The accepted design, ready to build:
   table for two values. A JSON column on `Users` is the smaller thing that works.
 - **Per-account storage in the session cookie or in a claim.** Would need no migration, but the cookie is rewritten only
   at sign-in, so a change would not follow the user until the next sign-in, and the cookie is size-limited. Rejected.
-- **Keep it per browser (ADR 0010's answer).** Free, and already built. Rejected by the maintainer's request; it remains
-  the behaviour until part 4 is built.
+- **Keep it per browser (ADR 0010's answer).** Free, and already built. Rejected by the maintainer's request; it is now
+  only the behaviour for a visitor who is not signed in, and the cache `theme-init.js` reads.
 
 ## Consequences
 
@@ -156,8 +184,11 @@ The accepted design, ready to build:
   settings and a second service to keep in step with `theme-init.js`, which a spec pins; every new spacing literal that is
   not a token is now also a density bug.
 - **Stated limitations.** Compact moves only what uses the spacing tokens; about fifty literals stay put. The
-  high-contrast palette is dark-based only and is not selected by `prefers-contrast`. Until part 4 ships the choices are
-  per browser: they do not follow the account, and a browser that blocks storage loses them on reload.
+  high-contrast palette is dark-based only and is not selected by `prefers-contrast`. The choices follow the account, but
+  the first paint can only use the browser's cache (the CSP forbids reading the session from an inline script): a
+  browser that blocks storage, or a first visit on a new browser, shows the default look until the session is read, and
+  the sign-in page uses the browser's choice. A change made in another browser arrives at the next session read (sign-in,
+  or returning to the tab), not live. The account holds two choices, not a general settings store.
 - **A dependency on the CSP.** The masks need `img-src ... data:`; if a later hardening removes `data:`, the icons
   vanish silently (the words stay, so nothing is lost but the second cue). `DESIGN.md` records the dependency and the
   stack check watches the console.
@@ -166,5 +197,17 @@ The accepted design, ready to build:
   compose stack in Playwright's Chromium, Firefox and WebKit builds (WebKit on Windows, which is not Safari itself): the
   menu, every theme and both densities, reload persistence and no horizontal overflow at 360 px. Not run: real Safari, a
   real Windows High Contrast session (only the browsers' `forced-colors` media emulation), a screen reader.
-- **Part 4, when built, costs one generated migration** and a rollback story (a nullable column an older image ignores);
-  until then nothing in the repository refers to it but this record.
+- **Part 4, what was checked.** Unit and API tests (the store contract, the resolver, 20 endpoint cases, the SPA's
+  session, the preferences service and the menu), then the compose stack (Wolverine overlay, Chromium, the console
+  watched): signing in, choosing Dark and Compact in the menu (two `PUT 200`, the server holds them); a second browser
+  context with empty storage signing in as the same account and coming up Dark and Compact with the right items
+  checked and no upload; a change in that context reaching the first at the next session read; a `PUT` that fails
+  (kept on the page, not reverted by a session read, re-sent once the network is back); an account cleared server-side
+  receiving the browser's choice exactly once on reload; `400` for a value outside the set and for an unknown member,
+  `400 antiforgery` without the token, `401` anonymous, `403` for the API key (whose session has `preferences: null`).
+  The migration was run on an old-schema identity file (made by the previous image on a fresh volume): the new image
+  upgraded it in place, the existing user and password survived, and the previous image then ran against the upgraded
+  file and signed in and listed users, so the rollback claim holds for that image. Not run: Firefox and WebKit for this
+  part (the earlier parts were), a real Safari, an identity file with many users, and a storage-blocked browser.
+- **Part 4 cost one generated migration** (`AddUserDisplayPreferences`, a nullable column, no backfill) and has a rollback
+  story: a nullable column an older image should ignore.

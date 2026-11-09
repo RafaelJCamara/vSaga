@@ -43,9 +43,10 @@ grants exactly (ordinal, case-sensitive), as the route gave it.
 
 ### Sign-in routes (`/api/auth`)
 
-All five are described under [Authentication](#authentication). Each of them answers `503
-identity_unavailable` while the identity store is not ready, and each answers the caller's session (below) except
-the failures.
+The first five are described under [Authentication](#authentication), the sixth under
+[Display preferences](#display-preferences). Each of them answers `503 identity_unavailable` while the identity store
+is not ready, and each answers the caller's session (below) except the failures and the preferences route, which
+answers the choices it stored.
 
 | Method | Route | Who | Purpose |
 | --- | --- | --- | --- |
@@ -54,6 +55,7 @@ the failures.
 | `POST` | `/api/auth/logout` | anonymous | Deletes the session cookie and closes the user's live hub connections. `200` with an anonymous session, also when there was no session. |
 | `POST` | `/api/auth/setup` | anonymous, only while no user exists | `{ username, displayName, password, code }`: creates the first administrator with the one-time setup code and signs them in. `400` `invalid_credentials` (`errors.code`) for a missing or wrong code, `409` `setup_unavailable` when setup is not open. |
 | `POST` | `/api/auth/password` | a signed-in user | `{ currentPassword, newPassword }`. `200` with a new session (the user's other sessions end); `400` `invalid_credentials` (`errors.currentPassword`) for a wrong current password or a locked or disabled account, `400` `validation` (`errors.newPassword`) for a new password that breaks the policy. The API key gets `403`. |
+| `PUT` | `/api/auth/preferences` | a signed-in user | `{ theme, density }`: replaces the user's [display preferences](#display-preferences). `200` with what is now stored; `400` `validation` naming the member for a value the dashboard does not offer; the API key gets `403`. |
 
 The session, `GET /api/auth/session` and every other answer above, is:
 
@@ -68,7 +70,8 @@ The session, `GET /api/auth/session` and every other answer above, is:
     "permissions": [],
     "scoped": [ { "sagaType": "OrderSaga", "permissions": ["sagas.view", "sagas.data", "sagas.retry"] } ]
   },
-  "passwordMinLength": 12
+  "passwordMinLength": 12,
+  "preferences": { "theme": "dark", "density": null }
 }
 ```
 
@@ -76,7 +79,40 @@ The session, `GET /api/auth/session` and every other answer above, is:
 saga type, what the caller has for that type alone. `user` is `null` for an anonymous caller and for the API
 key, and `access` is `null` when anonymous. `setupRequired` is true while no user exists; `setupAvailable`
 says the one-time setup can be completed now, and `setupProblem` (`{ code: "setup_unavailable", detail }`)
-says why it cannot when it is required but not available.
+says why it cannot when it is required but not available. `preferences` is the signed-in user's
+[display preferences](#display-preferences), or `null` for an anonymous caller, for the API key and for a user who
+has stored none.
+
+### Display preferences
+
+A user's **theme** and **density** (ADR 0015) follow their account, so a second browser or a new profile starts
+with what they chose before. They are one nullable JSON text on the user's row in the identity store (the
+`Users.DisplayPreferences` column, at most 256 characters), written by `PUT /api/auth/preferences`:
+
+```json
+{ "theme": "high-contrast", "density": "compact" }
+```
+
+- **A closed set.** `theme` is `system`, `light`, `dark` or `high-contrast`; `density` is `comfortable` or `compact`.
+  `system` is a choice (follow the operating system), not an absence. A value outside the set, an unknown member, a
+  member named twice or a body that is not a JSON object is a `400` `validation` problem, like every request body
+  under `/api/auth`. The route replaces what was stored: a member left out (or `null`) means "no account choice for
+  it", so the browser's own stays, and `{}` clears the account's choice.
+- **Only a user has them.** The API key has no account: `PUT` answers `403` for it and its session carries
+  `preferences: null`. Anonymous callers get `401`. The route needs the antiforgery token like every unsafe request.
+- **Nothing else changes.** Storing them does not touch the user's update time, security stamp or sessions, and an
+  administrator's edit of the user leaves them alone.
+- **What reads them back is tolerant.** A stored value this version does not offer (written by a newer image, then
+  rolled back) is dropped, not an error: a cosmetic setting never blocks a sign-in.
+- **The SPA** applies the session's preferences whenever it reads the session, so a change made in another browser
+  shows up at the next read (a new sign-in, or returning to the tab). An account with none is given the browser's
+  current choice once, when that is not the default, so nobody loses a choice they had made. The browser's
+  `localStorage` (`vsaga.theme`, `vsaga.density`) stays as a cache that `theme-init.js` reads before the first paint.
+  A write that fails leaves the choice on that page and is sent again at the next session read; the unsaved flag is
+  kept in memory, so a reload before that lets the account's stored choice win.
+- **The column** was added by the generated migration `AddUserDisplayPreferences`: nullable, no backfill (existing
+  users keep `NULL`, "no account choice"), so an existing identity volume upgrades in place at start and an older image
+  run against the upgraded file ignores the column.
 
 ### Administration routes (`/api/admin`)
 

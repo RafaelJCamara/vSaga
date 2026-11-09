@@ -76,8 +76,8 @@ dashboard page never uses it. See [API key](dashboard.md#api-key).
 
 Times are shown in your browser's local time, and the page is in English.
 
-**Light, dark and high contrast.** The dashboard follows your operating system's light or dark setting. To choose for
-this browser instead, open the menu with your name and pick a **Theme**: **Light**, **Dark** or **High contrast**
+**Light, dark and high contrast.** The dashboard follows your operating system's light or dark setting. To choose
+instead, open the menu with your name and pick a **Theme**: **Light**, **Dark** or **High contrast**
 applies at once, and **System** goes back to following the operating system. **High contrast** is a black page with
 white text, brighter outlines, links that are always underlined and a thicker focus ring; it is never chosen for you
 (the operating system's contrast setting does not select it).
@@ -89,8 +89,14 @@ is fixed and does not change, so a page with little to tighten changes little.
 **Icons.** Messages at the top of a page start with a small icon for their kind (information, success, warning or
 error), and the items of the user menu have one each. They are a second cue beside the colour and the words, never the only one.
 
-Theme and density are kept in this browser only (they do not follow your account to another one). Where the browser
-blocks site storage, the choices last until you reload.
+**Your choices follow your account.** Theme and density are saved with your account, so when you sign in from another
+browser or a new profile they are already applied there, and a change you make in one browser shows up in the others the
+next time they read your session (when you sign in again, or come back to the tab). If you had already picked a theme or
+density in a browser and your account had none saved, the browser's choice is saved to your account the first time you
+sign in. A choice that could not be saved (the dashboard was unreachable) stays on that page and is sent again the
+next time the page reads your session; if you reload the page first, the choice your account holds applies instead. Before you sign in, on the sign-in page, the choice is the one this browser last used (or the
+operating system's). Where the browser blocks site storage, your account's choice is still applied each time the
+dashboard loads, but only once it has read your session, so the page may briefly show the default look first.
 
 ## Signing in
 

@@ -43,6 +43,12 @@ first paint, so a stored choice that differs from the OS does not flash; `ThemeS
 starts and on every change. The script duplicates the storage key, which `theme-init.spec.ts` pins to the service's.
 A browser that blocks storage keeps System.
 
+The choice also follows the account (ADR 0015, part 4): `DisplayPreferencesService` applies the signed-in user's stored
+choice (`session.preferences`) through `ThemeService` and `DensityService` whenever the session is read, and writes a
+change made in the menu through `PUT /api/auth/preferences`. `localStorage` is then a cache of the account's choice, the
+one `theme-init.js` can read before the first paint; it is also where the choice lives for a visitor who is not signed in.
+The menu calls the service, not `ThemeService.set` directly, or the choice would stay on the browser.
+
 ### Colour roles
 
 | Token | Dark | Light | Role |
@@ -170,7 +176,7 @@ decision for the maintainer, not a mechanical one.
 Two: **Comfortable** (the table above, the default) and **Compact**. The user menu offers them (`DensityService`),
 stored in `localStorage` under `vsaga.density` as `compact` (no value means Comfortable) and applied as
 `data-density="compact"` on `<html>`; `public/theme-init.js` applies it before the first paint, and a spec pins the
-key. Independent of the theme. Compact redefines the spacing tokens under `:root[data-density='compact']` and nothing
+key. Kept on the account like the theme (see above). Independent of the theme. Compact redefines the spacing tokens under `:root[data-density='compact']` and nothing
 else except the body's line height (1.5 to 1.4):
 
 | Token | Comfortable | Compact | Token | Comfortable | Compact |
@@ -325,14 +331,14 @@ affordance, touch targets and density, and icons. What it returned and what we d
 
 Answered by ADR 0010: light theme (System / Light / Dark), spacing, radius and shadow tokens, a five-step type scale,
 status colour and shape, table row affordance, icons (none), and density (deferred). Answered by
-[ADR 0015](../docs/adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md) (proposed): a high-contrast theme,
-Comfortable and Compact density, and a small set of decorative icons.
+[ADR 0015](../docs/adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md) (accepted): a high-contrast theme,
+Comfortable and Compact density, a small set of decorative icons, and keeping the theme and density on the account.
 
 Still open:
 
-1. **The display choices are per browser.** ADR 0015 designs a per-account store (a column on the identity store's
-   `Users` table, one generated migration) and does not build it; until it is accepted and built the choices live in
-   `localStorage`.
+1. **The display choices are two, not a general store.** The account keeps the theme and the density
+   (`Users.DisplayPreferences`, a JSON text over a closed set of keys); a third preference is a new member of
+   `DisplayPreferences` in the API and in `DisplayPreferencesService`, with no new migration.
 2. **Compact reaches only the tokenised spacing.** About fifty literals between scale steps do not follow it; snapping
    them would finish the switch and moves pixels.
 3. **A light high-contrast palette**, and choosing the high-contrast one from `prefers-contrast: more`. Neither built.
