@@ -205,8 +205,10 @@ waiting or double-claiming. The saga-type filter of `ClaimDueAsync` is a JSON ar
   places where the contracts demand an exact match are exact here regardless: a set of saga types in a list
   filter (`SagaListFilter.SagaTypes`) and the saga types a timeout claim is scoped to are compared under
   `Latin1_General_100_BIN2`, the claim with a length check for the trailing space as well. CLR type names do not
-  differ only by case in practice. Do not switch an existing database to a case-sensitive collation without
-  testing: every key comparison changes with it.
+  differ only by case in practice. A new database created under `Latin1_General_CS_AS` passes the whole
+  conformance suite (see "Supported servers"), but do not switch an existing database to a case-sensitive
+  collation without testing: every key comparison changes with it. Only a database created under that collation
+  was run, not a conversion of an existing one.
 - **One key can exceed the clustered-index limit.** The primary key of `SagaConsumerRegistrations` is
   `(ServiceName nvarchar(200), MessageType nvarchar(400))`, a declared maximum of 1,200 bytes against SQL Server's
   900-byte limit for a clustered key. The table is created with a warning, and only a row whose actual service
@@ -238,10 +240,23 @@ same on both, and the cross-provider conformance suite holds them to the same co
 ### Supported servers
 
 SQL Server 2016 or later (compatibility level 130, for `OPENJSON`), Azure SQL Database and Azure SQL Managed
-Instance; EF Core 10 sets the same floor. What has been run against it: the whole conformance suite and the
-provider's own `READPAST` claim test on SQL Server 2022 in a Testcontainers container, and the compose stack
-below. Not yet verified: Azure SQL, SQL Server 2016 to 2019, two dispatcher replicas under load, and a
-case-sensitive database collation. Those work by design but have no recorded run
+Instance; EF Core 10 sets the same floor. What has been run against it, all on SQL Server 2022 (the
+`2022-latest` image):
+
+- The whole conformance suite and the provider's own `READPAST` claim test, in a Testcontainers container, on the
+  server's default collation (2026-11-02).
+- The same suite and claim test again with every database created under the case-sensitive collation
+  `Latin1_General_CS_AS` (2026-11-09; all 111 cases passed). Set `VSAGA_SQLSERVER_COLLATION` to a collation name to
+  run the SQL Server cases under it; a case then checks the database really carries that collation.
+- Two complete hosts (the real engine, timeout dispatcher and outbox dispatcher, each with its own connection pool)
+  against one database under load, 2026-11-09: 1,000 sagas submitted through both while 1,500 orphaned outbox rows
+  were seeded, polling sped up 25 times. Every timeout and every outbox row was claimed by exactly one host, both
+  hosts claimed about half, and no saga ended inconsistent with its timeline. The two hosts were in one process
+  over the in-memory transport, so this exercises contention on the database, not a broker or two machines.
+- The compose stack below (2026-11-02).
+
+Not verified: Azure SQL Database and Managed Instance, and SQL Server 2016 to 2019. They work by design (the
+provider uses nothing newer than `OPENJSON` and `READPAST`) but have no recorded run
 ([ADR 0009](adr/0009-sql-server-persistence-provider.md#implementation-and-verification-2026-11-02)).
 
 ### The compose overlay
