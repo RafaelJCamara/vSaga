@@ -547,6 +547,10 @@ scoped store reachable from the meter callback, the same captive-dependency shap
 and leave a proper gauge as a named follow-up for `VSaga.Observability`, which already has the
 `IServiceScopeFactory` access this would need.
 
+*Follow-up done (2026-11-09): [ADR 0013](../adr/0013-running-sagas-gauge-reads-the-store.md). A hosted service
+in `VSaga.Observability` reads the store through a scope of its own and caches the count for the callback, so no
+scoped store is captured; the count is the new `ISagaSummaryReader.CountByTypeAsync`.*
+
 TS mirror: `protocol/src/headers.ts`, `protocol/src/envelope.ts:60-70`,
 `transport-http/src/transport.ts:336`, and `participant/src/participant.ts:239`, where the reply
 envelope is built from scratch and must thread `traceparent` from `received.headers`. Decide

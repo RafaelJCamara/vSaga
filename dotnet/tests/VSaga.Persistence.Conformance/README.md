@@ -59,6 +59,17 @@ not declare that it lacks it. A reader that ignores it still never shows a calle
 API drops those), but gives a scoped caller short pages and a total over the wrong set. The same rule is stated on
 `ISagaSummaryReader.ListAsync` and `SagaListFilter.SagaTypes`.
 
+## What a green run covers for `CountByTypeAsync`
+
+`ISagaSummaryReader.CountByTypeAsync(status)` (the per-type count behind the `vsaga.saga.running` gauge, ADR 0013) is
+a default interface member, so a reader written before it existed still compiles and answers through `ListAsync`.
+The summary-reader suite holds the member to the same answers whether a reader overrides it or not: only the asked
+status is counted, per type, a type with none is absent (not zero), an empty store answers empty, a status change shows
+in the next count, the per-type sum equals the `TotalCount` of the list filtered to that status, and the default
+implementation answers what the override answers. A provider that overrides it should do so with a grouped query or a
+set cardinality, not by paging; the default exists for compatibility, and its cost is one sort and one page read per
+saga type.
+
 ## What a green run covers on reads, nulls and updates
 
 The summary-reader cases hold every item `ListAsync` and `FindChildrenAsync` return to the state that was

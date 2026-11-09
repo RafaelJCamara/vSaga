@@ -130,6 +130,9 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0012-persistence-demo-launcher-scripts.md`](adr/0012-persistence-demo-launcher-scripts.md)
     — **Proposed** 2026-11-09: `run-sample.ps1` / `run-sample.sh` start a persistence sample's database
     and run it (one provider or all five), instead of a single project with a `--provider` switch.
+  - [`adr/0013-running-sagas-gauge-reads-the-store.md`](adr/0013-running-sagas-gauge-reads-the-store.md)
+    — **Proposed**: a `vsaga.saga.running` gauge that counts `Running` instances in the store through a new
+    `ISagaSummaryReader.CountByTypeAsync`, refreshed by a background service in `VSaga.Observability`.
 
 ## History
 

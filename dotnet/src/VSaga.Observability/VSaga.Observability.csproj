@@ -11,6 +11,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The refresh service and its metrics are internal; their tests drive them with a fake clock and a faulty reader. -->
+    <InternalsVisibleTo Include="VSaga.Observability.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
   </ItemGroup>
 

@@ -82,4 +82,38 @@ public interface ISagaSummaryReader
     /// badges and the list view's type filter dropdown.
     /// </summary>
     Task<IReadOnlyList<SagaTypeInfo>> GetSagaTypesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// How many instances are in <paramref name="status"/>, per saga type, keyed by the saga type name as stored (the key
+    /// comparer is ordinal; a database whose collation folds two names that differ only by case folds them here too). A
+    /// type with none is <b>absent</b>, not zero, so an empty store answers an empty dictionary. Powers the <c>vsaga.saga.running</c> gauge (ADR 0013), which reads it on an interval.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A count, not a page: a provider answers it from its own aggregate (a grouped query, a set-intersection
+    /// cardinality) without sorting, paging or materialising a row, which is the whole reason it is a member of its
+    /// own and not a <see cref="ListAsync"/> call. It sees what a <see cref="ListAsync"/> filtered to the same status
+    /// sees, so the counts sum to <see cref="PagedResult{T}.TotalCount"/> of that list.
+    /// </para>
+    /// <para>
+    /// The default implementation reads <see cref="GetSagaTypesAsync"/> and takes the <c>TotalCount</c> of one
+    /// <c>ListAsync(Status, SagaType, PageSize = 1)</c> per type. It is correct for any reader that honours
+    /// <see cref="SagaListFilter"/>, which is what lets a reader written before this member existed keep compiling,
+    /// and it is expensive (one sort and one page read per type, and on a provider that materialises a filtered
+    /// list, the whole list). Every provider in this repository overrides it, and the
+    /// <c>VSaga.Persistence.Conformance</c> suite holds the default and each override to the same answers.
+    /// </para>
+    /// </remarks>
+    async Task<IReadOnlyDictionary<string, long>> CountByTypeAsync(SagaStatus status, CancellationToken cancellationToken = default)
+    {
+        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var sagaType in (await GetSagaTypesAsync(cancellationToken)).Select(type => type.SagaType))
+        {
+            var page = await ListAsync(new SagaListFilter { Status = status, SagaType = sagaType, PageSize = 1 }, cancellationToken);
+            if (page.TotalCount > 0)
+                counts[sagaType] = page.TotalCount;
+        }
+
+        return counts;
+    }
 }

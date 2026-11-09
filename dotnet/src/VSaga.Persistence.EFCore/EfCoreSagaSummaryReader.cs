@@ -136,6 +136,23 @@ public sealed class EfCoreSagaSummaryReader(VSagaDbContext db) : ISagaSummaryRea
         return rows.Select(r => new SagaTypeInfo(r.SagaType, r.Kind)).ToList();
     }
 
+    /// <remarks>
+    /// One grouped query, <c>SELECT SagaType, COUNT(*) ... WHERE Status = @s GROUP BY SagaType</c>, with no sort and no
+    /// page (ADR 0013). The group key is the column's own, like <see cref="GetSagaTypesAsync"/>'s <c>DISTINCT</c>: two
+    /// type names that differ only by case are one group where the database's collation folds them (SQL Server's default),
+    /// which is the same fold its primary key already applies to them.
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<string, long>> CountByTypeAsync(SagaStatus status, CancellationToken cancellationToken = default)
+    {
+        var rows = await db.SagaInstances.AsNoTracking()
+            .Where(x => x.Status == status)
+            .GroupBy(x => x.SagaType)
+            .Select(g => new { SagaType = g.Key, Count = g.LongCount() })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(r => r.SagaType, r => r.Count, StringComparer.Ordinal);
+    }
+
     public async Task ResetStateAsync(string sagaType, Guid correlationId, string currentState, SagaStatus status, int expectedVersion, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken = default)
     {
         var entity = await db.SagaInstances.FirstOrDefaultAsync(x => x.SagaType == sagaType && x.CorrelationId == correlationId, cancellationToken)

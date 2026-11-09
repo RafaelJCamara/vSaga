@@ -160,6 +160,29 @@ A saga is judged by its state's own timeout when it has one, plus `TimeoutGrace`
 a 24-hour timeout is never flagged after one hour. `IdleThreshold` applies only where no timeout does. The
 notifier is not an option: register your own `ISagaStuckNotifier` (see [Stuck sagas](observability.md#stuck-sagas)).
 
+## `RunningSagasOptions`
+
+The `vsaga.saga.running` gauge is **off by default**: an upgrade adds no query on its own. Calling
+`AddVSagaRunningSagasGauge` (from `VSaga.Observability`, after the persistence registration) turns it on, on the
+processes that call it:
+
+```csharp
+using VSaga.Observability; // AddVSagaRunningSagasGauge, RunningSagasOptions
+
+services.AddVSagaOpenTelemetry(configureMetrics: m => m.AddOtlpExporter());
+services.AddVSagaRunningSagasGauge(opt => opt.RefreshInterval = TimeSpan.FromMinutes(1));
+```
+
+It counts the instances in status `Running`, per saga type, with one grouped read of the store every
+`RefreshInterval` and reports the last answer (see [Running sagas](observability.md#running-sagas) for what it counts
+and what each provider pays). A `RefreshInterval` of zero, below or over one day throws `ArgumentOutOfRangeException`
+from the call. Calling it twice keeps one service and the last call's options. A process that calls it without an
+`ISagaSummaryReader` registered logs a warning once and reports nothing.
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `RefreshInterval` | `30 seconds` | Time between reads of the store, and the deadline of each read. The first read runs when the host starts. The store's cost is one read per interval however often the metric is scraped; the number is up to this old, plus the exporter's own interval. |
+
 ## Transport options
 
 Every broker-backed or HTTP `IMessageTransport` adapter has its own options class, registered by its
@@ -612,6 +635,10 @@ app's OpenTelemetry pipeline, and sets the SDK's process-wide default propagator
 W3C trace-context and baggage propagators (trace-context being the wire format vSaga's own
 `traceparent`/`tracestate` handling uses, so a host that set a different default propagator first —
 e.g. B3 — would otherwise silently disagree with what actually goes out on the wire).
+
+`VSaga.Observability` also has `AddVSagaRunningSagasGauge(Action<RunningSagasOptions>? configure = null)`, the opt-in
+for the store-backed `vsaga.saga.running` gauge ([`RunningSagasOptions`](#runningsagasoptions)); `AddVSagaOpenTelemetry`
+itself keeps its signature and adds no store read.
 
 It never assumes an OTel collector is present — the dashboard reads the persisted event log instead of
 an OTel backend, so nothing here is required for the dashboard to work. See

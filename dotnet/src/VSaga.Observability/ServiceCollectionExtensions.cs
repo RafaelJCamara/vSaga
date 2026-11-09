@@ -1,5 +1,7 @@
 using VSaga.Abstractions.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using OpenTelemetry;
 using OpenTelemetry.Context.Propagation;
 using OpenTelemetry.Metrics;
@@ -47,6 +49,34 @@ public static class ServiceCollectionExtensions
                 metrics.AddMeter(VSagaDiagnostics.MeterName);
                 configureMetrics?.Invoke(metrics);
             });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Turns on the <c>vsaga.saga.running</c> gauge (ADR 0013): how many saga instances are <c>Running</c> right now, by
+    /// saga type, read from the store. A hosted service counts them through <c>ISagaSummaryReader.CountByTypeAsync</c>
+    /// every <see cref="RunningSagasOptions.RefreshInterval"/> and the meter callback reports the last answer, so a
+    /// restart or a second replica cannot skew it the way an up-down counter would be skewed. Opt-in because every
+    /// refresh is a read the store did not do before: call it on one process per store, after the persistence
+    /// registration, and aggregate across replicas with <c>max</c>, not <c>sum</c>. Needs <see cref="AddVSagaOpenTelemetry"/>
+    /// (or any other subscription to the <c>VSaga.Saga</c> meter) to be seen anywhere.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The delegate set a <see cref="RunningSagasOptions.RefreshInterval"/> of zero, below, or over a day.</exception>
+    public static IServiceCollection AddVSagaRunningSagasGauge(
+        this IServiceCollection services,
+        Action<RunningSagasOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        var options = new RunningSagasOptions();
+        configure?.Invoke(options);
+        options.Validate();
+
+        // A second call replaces the options and does not add a second service.
+        services.Replace(ServiceDescriptor.Singleton(options));
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, RunningSagasRefreshHostedService>());
 
         return services;
     }

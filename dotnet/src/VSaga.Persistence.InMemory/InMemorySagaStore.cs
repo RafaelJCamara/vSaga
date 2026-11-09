@@ -244,6 +244,17 @@ public sealed class InMemorySagaStore : ISagaSummaryReader, ISagaEventLogStore, 
         return Task.FromResult(children);
     }
 
+    /// <summary>One pass over the snapshots, grouped by type: no I/O, and no per-type page read as the interface's default would do.</summary>
+    public Task<IReadOnlyDictionary<string, long>> CountByTypeAsync(SagaStatus status, CancellationToken cancellationToken = default)
+    {
+        IReadOnlyDictionary<string, long> counts = _snapshots.Values
+            .Where(s => s.Status == status)
+            .GroupBy(s => s.SagaType, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => (long)g.Count(), StringComparer.Ordinal);
+
+        return Task.FromResult(counts);
+    }
+
     public Task<IReadOnlyList<SagaTypeInfo>> GetSagaTypesAsync(CancellationToken cancellationToken = default)
     {
         IReadOnlyList<SagaTypeInfo> types = _snapshots.Values
