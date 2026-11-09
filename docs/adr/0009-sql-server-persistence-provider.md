@@ -151,3 +151,32 @@ What was built and what was checked, recorded here because the questions above w
   `SqlServerClaimTests` cover it at the store level), Azure SQL, SQL Server 2016 to 2019, and a case-sensitive
   database collation. The CI compose job's new `sqlserver` leg and the release workflow's package count were edited
   but not run here.
+
+**Closed 2026-11-09, except Azure SQL and SQL Server 2016 to 2019.** The gaps above were run afterwards, on a local
+Windows machine with Docker, against SQL Server 2022. Nothing in the decision changed.
+
+- **Case-sensitive collation: run.** The whole SQL Server conformance suite and `SqlServerClaimTests` passed, 111
+  cases, with every case's database created `COLLATE Latin1_General_CS_AS`
+  (`VSAGA_SQLSERVER_COLLATION`, a new fixture setting; a case reads `DATABASEPROPERTYEX` back so a run whose
+  variable was ignored fails). A database created that way works; converting an existing one was not tried.
+- **Two replicas under load: run.** Two complete hosts in one process (the real engine and both dispatcher hosted
+  services, separate connection pools) shared one migrated database over the in-memory transport. 1,000
+  `CheckoutSaga` orders (60% never answered by the gateway, so their timeouts fired) were submitted through both
+  hosts while 1,500 aged outbox rows were seeded, with the dispatcher timers sped up 25 times and the outbox batch
+  at 7. Recording wrappers on the timeout and outbox stores logged each claimed row per host: 986 timeouts and 1,500
+  orphaned outbox rows, none claimed twice, each host about half; every saga finished, and each ended `TimedOut` if
+  and only if its timeline held exactly one `TimeoutFired`; no error-level log entry. Not covered: two operating
+  system processes or containers, a real broker (a second `order-processing` container against RabbitMQ was not
+  run), and a run at the unscaled five-second poll. The harness is not in the repository.
+- **CI compose job's `sqlserver` leg: run in equivalent, not in the workflow.** The leg is configuration checks, no
+  container (`ci.yml`): the dashboard port pair for the overlay (5780 and 4900, both on 127.0.0.1) and the identity
+  database sitting on the `vsaga-dashboard-identity` volume. The same predicates, applied to
+  `docker compose ... config --format json` for the base file and every overlay, all pass. They were
+  re-implemented in Python because `jq`, which the workflow uses, is not installed on that machine, so the workflow
+  file itself was not executed.
+- **Release workflow's package count: run in equivalent.** `dotnet build` of the solution in Release (zero warnings),
+  then `dotnet pack` with the workflow's flags at `0.0.1-dryrun.1` produced 20 `.nupkg` and 20 `.snupkg`, and the
+  workflow's "Check the packages" script, run unchanged, accepted them against `EXPECTED_PACKAGES: 20`. The
+  workflow's own `dotnet test` step and the GitHub-hosted runner were not run.
+- **Still not verified:** Azure SQL Database and Managed Instance, and SQL Server 2016 to 2019. Neither is
+  available on that machine; the floor stays a design claim (`OPENJSON`, `READPAST`).
