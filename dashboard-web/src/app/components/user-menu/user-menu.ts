@@ -14,12 +14,14 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { filter } from 'rxjs';
 import { AuthService } from '../../services/auth.service';
+import { DensityChoice, DensityService } from '../../services/density.service';
 import { ThemeChoice, ThemeService } from '../../services/theme.service';
 
 /**
  * The signed-in user in the top bar: a button with their name that opens a small menu (who they are, the
- * account page, the theme, sign out). The theme items are radio items (System, Light, Dark): choosing one applies
- * it at once and leaves the menu open, so the effect can be seen and another tried. A menu button as the WAI-ARIA authoring practices describe it: opening moves
+ * account page, the theme, the density, sign out). The theme items (System, Light, Dark, High contrast) and the
+ * density items (Comfortable, Compact) are radio items: choosing one applies it at once and leaves the menu open,
+ * so the effect can be seen and another tried. A menu button as the WAI-ARIA authoring practices describe it: opening moves
  * focus into the menu, the arrow keys (and Home and End) move between its items, Space activates the
  * account link as Enter does, and Escape closes the menu and returns focus to the button. Choosing an
  * item, a click outside, tabbing out of the component and any navigation close it too. The items are not in
@@ -40,6 +42,7 @@ import { ThemeChoice, ThemeService } from '../../services/theme.service';
 export class UserMenu {
   private readonly auth = inject(AuthService);
   protected readonly theme = inject(ThemeService);
+  protected readonly density = inject(DensityService);
   private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -51,6 +54,10 @@ export class UserMenu {
     { value: 'light', label: 'Light' },
     { value: 'dark', label: 'Dark' },
     { value: 'high-contrast', label: 'High contrast' },
+  ];
+  protected readonly densityOptions: readonly { value: DensityChoice; label: string }[] = [
+    { value: 'comfortable', label: 'Comfortable' },
+    { value: 'compact', label: 'Compact' },
   ];
   protected readonly user = this.auth.user;
   protected readonly open = signal(false);

@@ -38,10 +38,15 @@
   font-weight: 600;
 }
 
-.user-menu-theme {
-  margin: var(--space-1) 0;
+/* The theme and the density groups: a rule above each, and one under the last, before Sign out. */
+.user-menu-choices {
+  margin-top: var(--space-1);
   padding: var(--space-1) 0;
   border-top: 1px solid var(--border);
+}
+
+.user-menu-choices:last-of-type {
+  margin-bottom: var(--space-1);
   border-bottom: 1px solid var(--border);
 }
 
@@ -54,18 +59,18 @@
   color: var(--text-muted);
 }
 
-/* The chosen theme is marked by a check as well as the tint, so it does not rest on colour. The check's
-   column is always reserved, so the three words stay aligned. */
-.user-menu-theme button::before {
+/* The chosen option is marked by a check as well as the tint, so it does not rest on colour. The check's
+   column is always reserved, so the words stay aligned. */
+.user-menu-choices button::before {
   display: inline-block;
   width: 1.25rem;
   content: '';
 }
 
-.user-menu-theme button[aria-checked='true'] {
+.user-menu-choices button[aria-checked='true'] {
   background: var(--accent-soft);
 }
 
-.user-menu-theme button[aria-checked='true']::before {
+.user-menu-choices button[aria-checked='true']::before {
   content: '✓' / '';
 }

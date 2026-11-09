@@ -164,6 +164,25 @@ stylesheet (the computed padding, margin, gap, radius and font size of every ele
 `.4rem`, `.6rem`, `.9rem` and the like) and are still literals: snapping them moves pixels, so it is a design
 decision for the maintainer, not a mechanical one.
 
+### Density
+
+Two: **Comfortable** (the table above, the default) and **Compact**. The user menu offers them (`DensityService`),
+stored in `localStorage` under `vsaga.density` as `compact` (no value means Comfortable) and applied as
+`data-density="compact"` on `<html>`; `public/theme-init.js` applies it before the first paint, and a spec pins the
+key. Independent of the theme. Compact redefines the spacing tokens under `:root[data-density='compact']` and nothing
+else except the body's line height (1.5 to 1.4):
+
+| Token | Comfortable | Compact | Token | Comfortable | Compact |
+| --- | --- | --- | --- | --- | --- |
+| `--space-1` | `.25rem` (4 px) | unchanged | `--space-5` | `1.25rem` (20 px) | `1rem` (16 px) |
+| `--space-2` | `.5rem` (8 px) | `.375rem` (6 px) | `--space-6` | `1.5rem` (24 px) | `1.125rem` (18 px) |
+| `--space-3` | `.75rem` (12 px) | `.5625rem` (9 px) | `--space-7` | `2rem` (32 px) | `1.5rem` (24 px) |
+| `--space-4` | `1rem` (16 px) | `.75rem` (12 px) | `--space-8` | `3rem` (48 px) | `2.25rem` (36 px) |
+
+`--space-1` stays so a `.btn` (its vertical padding) keeps the 24 px pointer target. The limit of the switch: only what
+uses a token follows. The spacing literals between steps (see above) and the text sizes do not move, so a page with many
+of them changes less than one built on tokens. Snapping those literals is what would finish it.
+
 ### Status and kind marks
 
 A status badge is a dot of the status colour in a **shape of its own**, then the word:

@@ -72,7 +72,7 @@ dashboard page never uses it. See [API key](dashboard.md#api-key).
 | **Guide** | A switch: [guide mode](#guide-mode) explains the saga list, a saga's page and the administration pages the first time you open each. |
 | **Replay tour** | Appears while Guide is on and there is a tour to repeat. |
 | **User guide** | Opens this document in a new tab. The link goes to the copy on GitHub's `main` branch (`USER_GUIDE_URL` in `guide-areas.ts`), so it needs internet access and can be newer than the build you run; the file in your checkout is the one that matches it. |
-| Your name, with a small arrow | A menu: **Account**, the **Theme** (**System**, **Light**, **Dark** or **High contrast**) and **Sign out**. |
+| Your name, with a small arrow | A menu: **Account**, the **Theme** (**System**, **Light**, **Dark** or **High contrast**), the **Density** (**Comfortable** or **Compact**) and **Sign out**. |
 
 Times are shown in your browser's local time, and the page is in English.
 
@@ -80,8 +80,14 @@ Times are shown in your browser's local time, and the page is in English.
 this browser instead, open the menu with your name and pick a **Theme**: **Light**, **Dark** or **High contrast**
 applies at once, and **System** goes back to following the operating system. **High contrast** is a black page with
 white text, brighter outlines, links that are always underlined and a thicker focus ring; it is never chosen for you
-(the operating system's contrast setting does not select it). The choice is kept in this browser only (it does not follow your account to
-another one). Where the browser blocks site storage, the choice lasts until you reload.
+(the operating system's contrast setting does not select it).
+
+**Density.** The same menu has a **Density** choice: **Comfortable** (the default) or **Compact**, which tightens the
+space between and inside elements so more fits on a screen. It applies at once and works with any theme. Some spacing
+is fixed and does not change, so a page with little to tighten changes little.
+
+Theme and density are kept in this browser only (they do not follow your account to another one). Where the browser
+blocks site storage, the choices last until you reload.
 
 ## Signing in
 

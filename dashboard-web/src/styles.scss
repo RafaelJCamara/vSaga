@@ -132,6 +132,23 @@
   --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
 
+/* Compact density: the spacing steps from 8 px up shrink to about three quarters; the 4 px step does not move, so a
+   button (its vertical padding is --space-1) stays at the 24 px pointer target DESIGN.md requires. Only what uses
+   the tokens follows: a rem literal between steps does not (ADR 0015). */
+:root[data-density='compact'] {
+  --space-2: 0.375rem;
+  --space-3: 0.5625rem;
+  --space-4: 0.75rem;
+  --space-5: 1rem;
+  --space-6: 1.125rem;
+  --space-7: 1.5rem;
+  --space-8: 2.25rem;
+}
+
+:root[data-density='compact'] body {
+  line-height: 1.4;
+}
+
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     @include light-palette;

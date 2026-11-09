@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { TestBed, ComponentFixture } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
+import { DENSITY_STORAGE_KEY } from '../../services/density.service';
 import { THEME_STORAGE, THEME_STORAGE_KEY } from '../../services/theme.service';
 import { AuthMock, createAuthMock, provideAuthMock } from '../../testing/auth-mock';
 import { MemoryStorage } from '../../testing/guide';
@@ -23,7 +24,10 @@ describe('UserMenu', () => {
     themeStorage = new MemoryStorage();
   });
 
-  afterEach(() => document.documentElement.removeAttribute('data-theme'));
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-density');
+  });
 
   function create(options: Parameters<typeof createAuthMock>[0] = {}): void {
     auth = createAuthMock({
@@ -45,8 +49,14 @@ describe('UserMenu', () => {
   const trigger = () => root().querySelector<HTMLButtonElement>('button.user-menu-trigger')!;
   const panel = () => root().querySelector<HTMLElement>('.user-menu-panel');
   const items = () => Array.from(root().querySelectorAll<HTMLElement>('[role="menuitem"]'));
-  const themes = () =>
-    Array.from(root().querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+  const radios = (group: number) =>
+    Array.from(
+      root().querySelectorAll<HTMLElement>('[role="group"]')[group].querySelectorAll<HTMLButtonElement>(
+        '[role="menuitemradio"]',
+      ),
+    );
+  const themes = () => radios(0);
+  const densities = () => radios(1);
   const account = () => items()[0] as HTMLAnchorElement;
   const signOutButton = () => items()[1] as HTMLButtonElement;
   const focused = () => document.activeElement;
@@ -339,6 +349,10 @@ describe('UserMenu', () => {
       expect(focused()).toBe(themes()[3]);
 
       key(focused()!, 'ArrowDown');
+      expect(focused()).toBe(densities()[0]);
+
+      key(focused()!, 'ArrowDown');
+      key(focused()!, 'ArrowDown');
       expect(focused()).toBe(signOutButton());
 
       key(focused()!, 'ArrowDown');
@@ -348,7 +362,7 @@ describe('UserMenu', () => {
       expect(focused()).toBe(signOutButton());
 
       key(focused()!, 'ArrowUp');
-      expect(focused()).toBe(themes()[3]);
+      expect(focused()).toBe(densities()[1]);
     });
   });
 
@@ -408,6 +422,60 @@ describe('UserMenu', () => {
       await open();
 
       expect(checked()).toEqual(['false', 'false', 'true', 'false']);
+    });
+  });
+
+  describe('the density', () => {
+    const checked = () => densities().map((b) => b.getAttribute('aria-checked'));
+
+    it('offers Comfortable and Compact as radio items in a group named Density, Comfortable being the default', async () => {
+      create();
+      await open();
+
+      expect(densities().map((b) => b.textContent?.trim())).toEqual(['Comfortable', 'Compact']);
+      expect(checked()).toEqual(['true', 'false']);
+      const group = root().querySelectorAll('[role="group"]')[1];
+      expect(root().querySelector(`#${group.getAttribute('aria-labelledby')}`)?.textContent).toBe('Density');
+    });
+
+    it('applies Compact at once, stores it, and Comfortable clears both', async () => {
+      create();
+      await open();
+
+      densities()[1].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.getAttribute('data-density')).toBe('compact');
+      expect(themeStorage.getItem(DENSITY_STORAGE_KEY)).toBe('compact');
+      expect(checked()).toEqual(['false', 'true']);
+      expect(panel()).not.toBeNull();
+
+      densities()[0].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.hasAttribute('data-density')).toBe(false);
+      expect(themeStorage.getItem(DENSITY_STORAGE_KEY)).toBeNull();
+      expect(checked()).toEqual(['true', 'false']);
+    });
+
+    it('is independent of the theme', async () => {
+      create();
+      await open();
+
+      themes()[2].click();
+      densities()[1].click();
+      fixture.detectChanges();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(document.documentElement.getAttribute('data-density')).toBe('compact');
+    });
+
+    it('shows a stored choice as the checked one', async () => {
+      themeStorage.setItem(DENSITY_STORAGE_KEY, 'compact');
+      create();
+      await open();
+
+      expect(checked()).toEqual(['false', 'true']);
     });
   });
 

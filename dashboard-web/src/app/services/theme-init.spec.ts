@@ -1,5 +1,6 @@
 // @ts-expect-error The file is plain JavaScript in public/, imported as text so the spec runs the very file the page loads.
 import script from '../../../public/theme-init.js' with { loader: 'text' };
+import { DENSITY_STORAGE_KEY } from './density.service';
 import { THEME_STORAGE_KEY } from './theme.service';
 
 /**
@@ -26,6 +27,24 @@ describe('theme-init.js', () => {
     expect(script).toContain(`'${THEME_STORAGE_KEY}'`);
   });
 
+  it('reads the key DensityService writes', () => {
+    expect(DENSITY_STORAGE_KEY).toBe('vsaga.density');
+    expect(script).toContain(`'${DENSITY_STORAGE_KEY}'`);
+  });
+
+  it('puts a stored Compact density on <html>, apart from the theme', () => {
+    run((key) => (key === DENSITY_STORAGE_KEY ? 'compact' : null), root);
+
+    expect(root.getAttribute('data-density')).toBe('compact');
+    expect(root.hasAttribute('data-theme')).toBe(false);
+  });
+
+  it.each([null, 'comfortable', 'tiny', ''])('leaves the density alone for %j (Comfortable)', (value) => {
+    run((key) => (key === DENSITY_STORAGE_KEY ? value : null), root);
+
+    expect(root.hasAttribute('data-density')).toBe(false);
+  });
+
   it.each(['light', 'dark', 'high-contrast'])('puts a stored %s choice on <html>', (choice) => {
     run((key) => (key === THEME_STORAGE_KEY ? choice : null), root);
 
@@ -45,5 +64,6 @@ describe('theme-init.js', () => {
       }, root),
     ).not.toThrow();
     expect(root.hasAttribute('data-theme')).toBe(false);
+    expect(root.hasAttribute('data-density')).toBe(false);
   });
 });
