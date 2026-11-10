@@ -133,9 +133,12 @@ new here; the rest of this index is organized by topic, roughly in the order you
   - [`adr/0013-running-sagas-gauge-reads-the-store.md`](adr/0013-running-sagas-gauge-reads-the-store.md)
     — **Accepted** and **implemented** 2026-11-09: a `vsaga.saga.running` gauge that counts `Running` instances in the store through a new
     `ISagaSummaryReader.CountByTypeAsync`, refreshed by a background service in `VSaga.Observability`.
+  - There is no ADR 0014: the number was never used (no file, commit or reference to it exists in the history). It is
+    left empty rather than reused or the later records renumbered, because their numbers are cited in commits, code
+    and other records. The next new ADR takes the number after the highest one.
   - [`adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md`](adr/0015-dashboard-density-icons-high-contrast-and-account-theme.md)
-    — **Accepted** 2026-11-09: a compact/comfortable density switch, CSS-drawn icons and a high-contrast theme in the
-    dashboard, all implemented; the display choices following the account is accepted as a design but not built.
+    — **Accepted** and **implemented** 2026-11-09: a compact/comfortable density switch, CSS-drawn icons and a high-contrast
+    theme in the dashboard, and the theme and density following the account instead of the browser.
   - [`adr/0016-dashboard-single-sign-on-through-openid-connect.md`](adr/0016-dashboard-single-sign-on-through-openid-connect.md)
     — **Accepted** 2026-11-09 (not yet built): optional OpenID Connect sign-in beside local accounts, provider groups mapped
     onto existing teams so the permission model and the last-administrator rule are unchanged, the demo

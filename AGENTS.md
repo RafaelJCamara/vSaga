@@ -28,8 +28,8 @@ a short one costs less than a decision that exists only in a commit message.
 How:
 
 1. Copy the shape of an existing record in [`docs/adr/`](docs/adr/) (for example
-   [`0008`](docs/adr/0008-dashboard-retry-reruns-the-failed-step.md)). Number it with the next free
-   four-digit number and name the file `NNNN-short-kebab-title.md`.
+   [`0008`](docs/adr/0008-dashboard-retry-reruns-the-failed-step.md)). Number it with the number after
+   the highest one in `docs/adr/` (a skipped number such as 0014 is not reused) and name the file `NNNN-short-kebab-title.md`.
 2. It carries, in this order: the title (`# ADR NNNN: <decision as a sentence>`); `Status`, `Date` and
    `Relates to` lines; **Context** (the forces and constraints, with file references); **Decision**; the
    **options weighed**, including the ones rejected and why; and **Consequences** (what gets easier, what
