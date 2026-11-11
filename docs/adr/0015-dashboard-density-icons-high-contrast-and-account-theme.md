@@ -8,7 +8,7 @@ migration) and `f97d7e7` (SPA).
 (this builds what that record deferred: its item 9, "density switch, icons", and its "stated limitation: the choice is
 per browser", and the high-contrast variant its Consequences call cheap);
 [`0006-dashboard-authentication-and-identity-store.md`](0006-dashboard-authentication-and-identity-store.md) (the
-identity store that part 4 would extend); [`../frontend.md`](../frontend.md); [`../../dashboard-web/DESIGN.md`](../../dashboard-web/DESIGN.md).
+identity store that part 4 extends); [`../frontend.md`](../frontend.md); [`../../dashboard-web/DESIGN.md`](../../dashboard-web/DESIGN.md).
 **Design:** none beyond this record; the decided values go into `DESIGN.md` with the code.
 
 ---
