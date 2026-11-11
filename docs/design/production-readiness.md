@@ -7,10 +7,10 @@ design record rather than rewritten past tense throughout; treat every "would"/"
 describing intent that was in fact carried out, not a still-open proposal, unless a progress note says
 otherwise.
 
-**Status correction (one workstream is incomplete): the release half of §3 never shipped.** There is no
-`release.yml`, nothing is published to nuget.org or npm, and tagging/publishing are manual. That does not
+**Status correction (2026-10-13, superseded): the release half of §3 did not ship with the rest, and now has.** Until `b9f6cef` there was no
+`release.yml` and publishing was manual; the workflow now exists, but no `v*` tag has been cut, so nothing is published to nuget.org yet (the npm half went with the TypeScript SDK). That does not
 contradict the §8 claim above — `release.yml` was only ever described in §3's prose and was never given a
-numbered §8 item — which is exactly why the gap is invisible from here. See the status note at the end of §3.
+numbered §8 item — which is exactly why the gap was invisible from here. See the status notes at the end of §3 and "Releasing" in `CONTRIBUTING.md`.
 
 **Status note (2026-09-27): the TypeScript participant SDK has since been removed.** The
 `typescript/packages/*` workspace — the seven `@vsaga/*` npm packages — and its docs were deleted from
@@ -152,7 +152,7 @@ New `.github/workflows/release.yml` on `v*` tags reusing `ci.yml`'s steps, then 
 Release` and `npm publish`. Add `permissions: contents: read` and a concurrency group, neither of
 which `ci.yml` has. Secrets needed: `NUGET_API_KEY`, `NPM_TOKEN`.
 
-> **Status note: this paragraph did not ship, and the rest of §3 did.** `.github/workflows/` still
+> **Status note (superseded by the 2026-10-13 note below): this paragraph did not ship, and the rest of §3 did.** `.github/workflows/` then
 > contains only `ci.yml` — no `release.yml`, no `dotnet pack` or `npm publish` step anywhere in CI, and
 > neither `NUGET_API_KEY` nor `NPM_TOKEN` is referenced by any workflow. The *metadata* half of packaging
 > landed in full (§8 items 1–3: MinVer with `MinVerTagPrefix=v`, the two 0.0.0 pack guards,
